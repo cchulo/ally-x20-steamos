@@ -22,6 +22,8 @@ SPDX header check skips them.
 | `patches/gamescope/*` | BSD-2-Clause | [ValveSoftware/gamescope](https://github.com/ValveSoftware/gamescope) |
 | `patches/libdisplay-info/*` | MIT | [emersion/libdisplay-info](https://gitlab.freedesktop.org/emersion/libdisplay-info) |
 | `overlay/inputplumber/devices.d/50-rog_xbox_ally_x20.yaml` | GPL-3.0-or-later | InputPlumber upstream device profile (PR #756) |
+| `overlay/inputplumber/devices.d/50-rog_xbox_ally_x20.stock.yaml` | GPL-3.0-or-later | the same profile adapted for older InputPlumber daemons (changes listed in its header) |
+| `overlay/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml` | GPL-3.0-or-later | InputPlumber upstream `ally_type2.yaml` capability map (v0.83.0), renamed id |
 
 ## Things we deliberately do not commit
 

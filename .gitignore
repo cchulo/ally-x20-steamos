@@ -1,0 +1,20 @@
+# Build outputs and binaries that must never be committed (see X20-STEAMOS-PLAN.md)
+*.ko
+*.ko.zst
+*.o
+*.so
+*.so.*
+build/out/
+build/cache/
+*.img
+*.qcow2
+*.iso
+# Firmware blobs and HRTF sets are downloaded at install time, never committed
+firmware/*.bin
+overlay/home/hrtf/*.sofa
+# Tooling
+__pycache__/
+.pytest_cache/
+*.pyc
+.DS_Store
+tests/.tmp/

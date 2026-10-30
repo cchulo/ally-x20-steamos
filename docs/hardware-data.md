@@ -18,3 +18,6 @@ marked `TODO(hw)`.
 | EDID of the internal panel (`AMS740LS02`) | HDR verification in VM | pending |
 | `pipewire --version`, `libmysofa` presence, LV2/LADSPA plugins shipped | audio DSP chain | pending |
 | Windows reference recording of the speakers | speaker chain tuning | pending |
+| UCM route names for jack/speaker (`pw-dump` device `Route` params) and whether unplug sets `available = no` | audio DSP router (`x20-route-core.lua`) | pending |
+| WirePlumber profile in use (`systemctl --user cat wireplumber`) | audio DSP loader fragment | pending |
+| Speaker positions/orientation on the chassis | XTC stretch goal (`docs/xtc-notes.md`) | pending |

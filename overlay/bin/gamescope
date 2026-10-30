@@ -270,6 +270,7 @@ ax20_gs_main() {
         LD_LIBRARY_PATH="$ax20_gs_libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         export LD_LIBRARY_PATH
     fi
+    # shellcheck disable=SC2093  # exec only returns when it fails; then fall back
     exec "$ax20_gs_ours" "${ax20_gs_argv[@]}"
     ax20_gs_fallback "exec of custom build failed"
 }

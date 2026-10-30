@@ -130,6 +130,7 @@ fw_speaker_id_file() {
     return 1
 }
 
+# shellcheck disable=SC2120  # the optional [file] argument is used by tests
 # fw_speaker_id [file] : decimal value of the SPEAKER_ID efivar. efivarfs
 # files start with a 4-byte little-endian attribute word; the value follows
 # (1, 2 or 4+ bytes, little-endian; only the first 4 are read).

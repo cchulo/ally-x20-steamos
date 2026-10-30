@@ -1,0 +1,47 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+# RAUC post-install handler of ally-x20-steamos (registered in
+# /etc/rauc/system.conf by lib/rauc.sh, installed as
+# /var/lib/ally-x20-steamos/libexec/rauc-post-install.hook).
+#
+# RAUC runs it after the new slot was written, before the reboot. Order:
+#   1. the stock post-install handler first (chained). On SteamOS it rsyncs
+#      the booted /var into the new slot's var and regenerates the new
+#      slot's GRUB config, both of which we build on. If it fails we stop
+#      and return its status, exactly as without us;
+#   2. ours: `ally-x20-steamos.sh rauc-handler post-install` (mount the new
+#      slot, apply --slot, boot entry, stage modules, pending-reboot-check).
+#      Its failures are logged and never fail the update: the boot service
+#      retries the same steps on first boot.
+# Self-contained on purpose (see pre-install.hook).
+set -u
+
+AX20_STATE_DIR=${AX20_STATE_DIR:-${AX20_ROOT:-}/var/lib/ally-x20-steamos}
+AX20_SRC=${AX20_SRC:-$AX20_STATE_DIR/src}
+export AX20_SRC
+cli=$AX20_SRC/ally-x20-steamos.sh
+
+say() { printf 'ally-x20-steamos rauc post-install: %s\n' "$*" >&2; }
+chained() { sed -n "s/^$1=//p" "$AX20_STATE_DIR/state/rauc-chain" 2>/dev/null | head -n1; }
+
+stock=$(chained post-install)
+if [ -n "$stock" ]; then
+    if [ -x "${AX20_ROOT:-}$stock" ]; then
+        src=0
+        "${AX20_ROOT:-}$stock" "$@" || src=$?
+        if [ "$src" -ne 0 ]; then
+            say "stock handler $stock failed ($src); not touching the new slot"
+            exit "$src"
+        fi
+    else
+        say "chained handler $stock is not executable; skipping it"
+    fi
+fi
+
+if [ -x "$cli" ] && [ -f "$AX20_SRC/cmd/rauc-handler.sh" ]; then
+    "$cli" rauc-handler post-install \
+        || say "re-apply to the new slot failed; ally-x20-steamos.service will retry on first boot"
+else
+    say "checkout not found at $AX20_SRC; nothing to re-apply"
+fi
+exit 0

@@ -1,0 +1,8 @@
+0001-cta-include-sys-types.h.patch
+0002-displayid2-decode-data-blocks-structure.patch
+0003-cta-introduce-struct-di_cta.patch
+0004-cta-make-di_cta.flags-optional.patch
+0005-cta-expose-_di_cta_data_block_-parse-destroy.patch
+0006-displayid2-add-support-for-CTA-861-data-blocks.patch
+0007-info-don-t-use-di_-prefix-for-static-helpers.patch
+0008-info-search-CTA-blocks-in-DisplayID-v2-extensions.patch

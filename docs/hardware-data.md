@@ -16,6 +16,7 @@ marked `TODO(hw)`.
 | `inputplumber --version`, stock `devices/` listing, `sys_vendor` (upstream profile/hwdb expect `ASUS`), IMU axes vs. the converted matrix in `50-rog_xbox_ally_x20.stock.yaml` | InputPlumber profile variant, hwdb match ([docs/inputplumber.md](inputplumber.md)) | pending |
 | N-KEY hidraw report for the Quick Access button (`0xa0` expected) | `hid-asus-ally` patch | pending |
 | EDID of the internal panel (`AMS740LS02`) | HDR verification in VM | pending |
+| Panel EDID vendor/product (gamescope's X20 profile matches `SDC` / `0x4501`), `gamescope --version`, `ls /usr/lib/libdisplay-info.so*`, `ldconfig -p \| grep libdisplay-info` after apply | `components/hdr.sh` (profile, probe, ld.so.conf.d precedence) | pending |
 | `pipewire --version`, `libmysofa` presence, LV2/LADSPA plugins shipped | audio DSP chain | pending |
 | Windows reference recording of the speakers | speaker chain tuning | pending |
 | SoundWire peripherals: TAS2783 uids `0x8`/`0xB` on link 0, RT721 uid 0 on link 1 (`/sys/bus/soundwire/devices/`) | `patches/kernel/0001` | pending |

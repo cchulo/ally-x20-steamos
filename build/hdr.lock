@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Pinned inputs for build/build-hdr.sh (component: hdr). KEY=VALUE, no shell.
+# Every value here is recorded in BUILD-INFO. See docs/hdr.md for why.
+
+# libdisplay-info: SteamOS 3.9 ships 0.3.0 (soname libdisplay-info.so.3).
+# Upstream 0.4.0 (soname .so.4) is the first release that searches DisplayID 2
+# CTA data blocks, but a .so.4 is never loaded by stock KWin. We therefore
+# build the 0.3.0 tag plus the eight upstream commits in
+# patches/libdisplay-info/series, which keeps soname .so.3 and the 0.3.0 ABI.
+LDI_URL=https://gitlab.freedesktop.org/emersion/libdisplay-info.git
+LDI_VERSION=0.3.0
+LDI_TAG=0.3.0
+LDI_COMMIT=47a5590e9c4eb35d67651b8c05a55f1a48259329
+LDI_SONAME=libdisplay-info.so.3
+
+# gamescope: the version SteamOS 3.9 ships (jupiter-3.9 gamescope 3.16.30.1-2,
+# 2026-10-21) plus PR #2493 (patches/gamescope/series). Same version as stock
+# means the same command-line flags as the session passes.
+GAMESCOPE_URL=https://github.com/ValveSoftware/gamescope.git
+GAMESCOPE_VERSION=3.16.30.1
+GAMESCOPE_TAG=3.16.30.1
+GAMESCOPE_COMMIT=d93118d95c786702e588973f7c4a400356897f1d
+
+# Alternative (--gamescope-mode upstream): the first upstream tag containing
+# PR #2493 (jupiter-main ships it as 3.17.0-1, 2026-10-23). No patches applied.
+GAMESCOPE_UPSTREAM_VERSION=3.17.0
+GAMESCOPE_UPSTREAM_TAG=3.17.0
+GAMESCOPE_UPSTREAM_COMMIT=e6674a98118ca7b098b98a3874b8f195ae1bf750

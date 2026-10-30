@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# build/Containerfile — Arch Linux build environment for the patched kernel
+# modules (X20-STEAMOS-PLAN.md §4.5). Works with rootless podman on SteamOS
+# and Fedora, and with docker/podman in CI:
+#   podman build -t localhost/ally-x20-steamos-build -f build/Containerfile build
+# The base image is pinned by digest and packages by Arch Linux Archive date,
+# so the compiler matches the one Valve used as closely as we can control.
+# How to refresh both pins: build/kernel-sources.md ("Refreshing the image").
+ARG ARCH_IMAGE=docker.io/library/archlinux:base-devel@sha256:624bdc7fc6615155d67bc34cf7146c0c9fd0e3c92943977da63a630e4ca49c30
+FROM ${ARCH_IMAGE}
+
+# Snapshot of the Arch repositories the image is built against (YYYY/MM/DD).
+ARG ARCH_ARCHIVE_DATE=2026/10/27
+
+# Packages only ever installed inside this container, never on the host.
+RUN printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "${ARCH_ARCHIVE_DATE}" \
+        >/etc/pacman.d/mirrorlist \
+    && pacman -Syyuu --noconfirm --needed \
+        base-devel bc kmod zstd xz cpio pahole python git curl rsync \
+        libelf openssl perl gettext tar flex bison \
+    && pacman -Scc --noconfirm
+
+# Non-root build user. uid 1000 matches the SteamOS "deck" user, so with
+# rootless podman (--userns=keep-id) build outputs are owned by the caller.
+RUN useradd -m -u 1000 -U builder
+
+COPY build-modules.sh /usr/local/bin/build-modules.sh
+RUN chmod 0755 /usr/local/bin/build-modules.sh
+
+USER builder
+WORKDIR /home/builder
+ENV OUT_DIR=/out CACHE_DIR=/cache PATCHES_DIR=/src/patches/kernel
+ENTRYPOINT ["/usr/local/bin/build-modules.sh"]

@@ -47,6 +47,18 @@ setup() {
     [ "$(ax20_mkdir_p "$AX20_ROOT/new/dir")" = existed ]
 }
 
+@test "ax20_mkdir_p_list prints created ancestors top-most first" {
+    mkdir -p "$AX20_ROOT/a"
+    run ax20_mkdir_p_list "$AX20_ROOT/a/b/c"
+    assert_success
+    [ "$output" = "$AX20_ROOT/a/b
+$AX20_ROOT/a/b/c" ]
+    [ -d "$AX20_ROOT/a/b/c" ]
+    run ax20_mkdir_p_list "$AX20_ROOT/a/b/c"
+    assert_success
+    [ -z "$output" ]
+}
+
 @test "readonly check passes on an untouched fixture root" {
     ax20_check_readonly_root
 }

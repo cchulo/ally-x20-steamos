@@ -18,3 +18,7 @@ marked `TODO(hw)`.
 | EDID of the internal panel (`AMS740LS02`) | HDR verification in VM | pending |
 | `pipewire --version`, `libmysofa` presence, LV2/LADSPA plugins shipped | audio DSP chain | pending |
 | Windows reference recording of the speakers | speaker chain tuning | pending |
+| SoundWire peripherals: TAS2783 uids `0x8`/`0xB` on link 0, RT721 uid 0 on link 1 (`/sys/bus/soundwire/devices/`) | `patches/kernel/0001` | pending |
+| DMI `board_vendor` / `board_name` (`ASUSTeK COMPUTER INC.` / `RC74XA` expected) and `acp-audio-config-flag` value | `patches/kernel/0002` | pending |
+| Both amps audible, left/right correct with the 0001 layout | `patches/kernel/0001` | pending |
+| `SND_SOC_ACPI_AMD_MATCH`, `SND_AMD_ACP_CONFIG`, `SND_SOC_ACPI_AMD_SDCA_QUIRKS` in `/proc/config.gz`; `snd-acp-config` in initramfs or not | module build / substitution | pending |

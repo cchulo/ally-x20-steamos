@@ -58,6 +58,19 @@ here works with the per-slot `/var` by writing into the new slot during
 post-install. `/opt` is already on `/home` via the offload bind mount
 (TODO(vm): confirm on the X20 image).
 
+## Decision taken: the state directory lives in `/home`
+
+Because of the above, `/var/lib/ally-x20-steamos` is a relative symlink to
+`/home/.ally-x20-steamos` (the same pattern SteamOS uses for
+`/home/.steamos/offload`). The canonical path in code and docs stays
+`/var/lib/ally-x20-steamos`; only its storage moved. Effects:
+
+- kernel headers, module builds, the git checkout and firmware no longer
+  compete for the 256 MiB `var` partition, and are not copied on every update;
+- the symlink itself is a tiny file in `var`, carried over by the stock
+  rsync; `apply --slot` re-creates it in the new slot's `var` regardless;
+- the standalone uninstaller removes `/home/.ally-x20-steamos` and the link.
+
 ## How an update flows
 
 ```

@@ -5,9 +5,13 @@ Each file is in `git format-patch` format and applies with `git apply` or
 `patch -p1` from the top of a kernel tree. They are derivative works of
 GPL-2.0 kernel code and are licensed GPL-2.0-only (see `LICENSE.md`).
 
-This directory currently holds the two speaker-audio patches (plan §1.1,
-problems 1 and 2). The `hid-asus-ally` patches (`0010`–`0012`) are a separate
-work package.
+This file documents the two speaker-audio patches (plan §1.1, problems 1
+and 2), listed in `modules.list`. The `hid-asus-ally` patches (`0010`–`0012`,
+joystick-ring RGB in Steam, Aura effects, Quick Access `0xa0`) are documented
+in [`README-hid.md`](README-hid.md) and listed in `modules-hid.list`. The
+build script reads every `modules*.list` file. Note the difference in source
+trees: the audio patches apply to linux-stable `v7.2.7` and Valve's tree
+alike, while `hid-asus-ally.c` exists only in Valve's tree.
 
 ## Target kernel
 

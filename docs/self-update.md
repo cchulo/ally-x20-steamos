@@ -111,3 +111,13 @@ stops the run, is not recorded, and is retried by the next self-update;
 
 `0` updated or nothing to do; `1` refused or failed (message explains);
 `2` usage error; `3` origin unreachable (offline).
+
+## Where the trusted keys come from
+
+`install` copies `keys/` from the checkout it was run from into
+`/var/lib/ally-x20-steamos/keys` ("pinning"). Later self-updates verify
+against the pinned copy only, so a fetched release cannot bring its own key.
+If `install` was never run (a developer running the CLI straight from a
+clone), `su_keys_dir` falls back to the checkout's own `keys/` with a
+warning: that is trust-on-first-clone, acceptable for development, and the
+warning is there so it is never mistaken for the pinned case.

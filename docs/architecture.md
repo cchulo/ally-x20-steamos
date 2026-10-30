@@ -55,15 +55,29 @@ Planned components and the plan sections they implement:
 
 | component | plan | what it owns |
 |---|---|---|
-| `audio` | §1.1 | ACPI override initrd, modprobe.d, UCM overlay, environment.d, TAS2783 firmware fetch |
-| `modules` | §3 | version-gated kernel module substitution (`load-or-fallback`), build cache |
-| `inputplumber` | §1.2 | devices.d profile, hwdb, optional ExecStart override (fallback) |
-| `rgb` | §1.3 | nothing to install beyond the `hid-asus-ally` module; probe + status only |
-| `hdr` | §1.4 | libdisplay-info overlay via ld.so.conf.d, gamescope wrapper with stock fallback |
-| `audio_dsp` | §1.5 | per-user PipeWire/WirePlumber configuration under `~/.config`, HRTF sets |
-| `update` | §4 | RAUC pre/post-install handlers, boot service, user notifier |
+| `audio` | §1.1 | ACPI override initrd on the ESP + boot-entry request, UCM overlay (symlink tree), environment.d, TAS2783 firmware fetch keyed on `SPEAKER_ID`, modprobe hook for `firmware_class.path` ([docs/audio.md](audio.md)) |
+| `modules` | §1.3, §3 | version-gated kernel module substitution (`load-or-fallback`, generated modprobe.d), staging of built `.ko.zst`, lockdown detection; covers the RGB and Quick Access fixes, which are kernel-only ([docs/kernel-modules.md](kernel-modules.md), [docs/rgb.md](rgb.md)) |
+| `inputplumber` | §1.2 | upstream X20 `devices.d` profile (verbatim or adapted to the stock 0.78 daemon), hwdb autostart, opt-in ExecStart fallback ([docs/inputplumber.md](inputplumber.md)) |
+| `hdr` | §1.4 | libdisplay-info 0.3.0 + DisplayID 2 backport via ld.so.conf.d (Desktop Mode), gamescope Lua display profile for the X20 panel (Game Mode on stock gamescope), opt-in custom gamescope behind a stock-fallback wrapper ([docs/hdr.md](hdr.md)) |
+| `audio_dsp` | §1.5 | per-user PipeWire `filter-chain` sinks (5.1/7.1 HRTF, speaker chain), no-upmix, WirePlumber channel-count router, HRTF sets ([docs/audio-dsp.md](audio-dsp.md)) |
+| `update` | §4 | RAUC pre/post-install handlers, `system.conf` delimited block, boot service, user notifier, boot-entry reconcile ([docs/update-survival.md](update-survival.md)) |
 
-## 4. Manifest
+Shared libraries behind them: `lib/slots.sh` (A/B slots, boot-entry
+save/edit/restore, other-slot mount), `lib/rauc.sh` (handler registration),
+`lib/modules.sh` (module staging/resolution), `lib/selfupdate.sh` and
+`lib/notify.sh` (release verification, notification queue), `lib/status.sh`
+(the single `status.json` writer).
+
+## 4. State directory and manifest
+
+Everything persistent lives under `/var/lib/ally-x20-steamos` (`AX20_STATE_REL`,
+the canonical path used everywhere). On SteamOS that path is a **relative
+symlink to `/home/.ally-x20-steamos`**: `var-A`/`var-B` are separate 256 MiB
+partitions that RAUC rsyncs across on update, while `/home` is shared and
+large. `install` creates the symlink, `apply --slot` re-creates it in a
+freshly staged slot, and the standalone uninstaller removes both the target
+and the link (`ax20_state_dir_ensure` in `lib/common.sh`). Fixture roots in
+tests keep a plain directory.
 
 `/var/lib/ally-x20-steamos/manifest` is JSON lines, one object per path we
 created: `path`, `component`, `kind` (`file|symlink|dir`), `sha256`, `slot`,

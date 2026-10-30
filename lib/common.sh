@@ -174,6 +174,26 @@ ax20_mkdir_p() {
     printf 'created\n'
 }
 
+# ax20_mkdir_p_list <dir> : like ax20_mkdir_p, but prints every directory
+# that had to be created, top-most first, one per line (nothing if all
+# existed). Used by the manifest so uninstall can remove each of them again.
+ax20_mkdir_p_list() {
+    local d=$1 missing="" out
+    while [ -n "$d" ] && [ "$d" != / ] && [ ! -d "$d" ]; do
+        missing="$d
+$missing"
+        d=$(dirname "$d")
+    done
+    [ -n "$missing" ] || return 0
+    if [ "$AX20_DRY_RUN" = 1 ]; then
+        printf '[dry-run] mkdir -p %s\n' "$1" >&2
+    else
+        mkdir -p "$1" || die "cannot create directory $1"
+    fi
+    out=$(printf '%s' "$missing" | grep -v '^$')
+    printf '%s\n' "$out"
+}
+
 # ax20_atomic_write <dest> [mode] : write stdin to dest via temp+rename.
 ax20_atomic_write() {
     local dest=$1 mode=${2:-0644} tmp

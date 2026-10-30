@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Matthew Schwartz <matthew.schwartz@linux.dev>
+Date: Fri, 16 Oct 2026 00:59:03 -0700
+Subject: [PATCH 1/3] DRMBackend: find HDR blocks in DisplayID 2 extensions
+
+Some panels without a CTA-861 extension carry their HDR static metadata
+and colorimetry blocks in a CTA-861 data block of a DisplayID 2
+extension, as the ROG Xbox Ally X20's AMS740LS02 does. Only the CTA
+extension is searched, so these panels report no HDR support even
+though they advertise PQ and BT.2020.
+
+Read both through libdisplay-info's di_info accessors, which need 0.2.0
+and search DisplayID 2 from 0.4.0. Older releases keep the current
+behavior.
+---
+SPDX-License-Identifier: BSD-2-Clause
+Copyright (c) 2013-2022, Valve Corporation; Copyright (c) 2022, NVIDIA CORPORATION
+Upstream: https://github.com/ValveSoftware/gamescope/commit/03f38b00bf3bb30bb0478d25330f5d3654511ce7
+(PR #2493, merged 2026-10-18)
+Applied unmodified to gamescope 3.16.30.1 by ally-x20-steamos. The full
+BSD-2-Clause text is in patches/gamescope/LICENSE.
+
+ src/Backends/DRMBackend.cpp | 36 ++++--------------------------------
+ src/meson.build             |  2 +-
+ 2 files changed, 5 insertions(+), 33 deletions(-)
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 9aaab7b..baa82f1 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -53,7 +53,6 @@
+ #include <wlr/types/wlr_buffer.h>
+ #include "libdisplay-info/info.h"
+ #include "libdisplay-info/edid.h"
+-#include "libdisplay-info/cta.h"
+ #include "wlr_end.hpp"
+ 
+ #include "gamescope-control-protocol.h"
+@@ -2754,38 +2753,11 @@ namespace gamescope
+ 		/////////////////////
+ 		if ( !bHasKnownHDRInfo || !ofScriptMaxCLL || !ofScriptMaxFALL || !ofScriptMinCLL )
+ 		{
+-			const di_cta_hdr_static_metadata_block *pHDRStaticMetadata = nullptr;
+-			const di_cta_colorimetry_block *pColorimetry = nullptr;
++			// libdisplay-info 0.4.0 and newer also find these in DisplayID 2 CTA-861 data blocks.
++			const di_hdr_static_metadata *pHDRStaticMetadata = di_info_get_hdr_static_metadata( pInfo );
++			const di_supported_signal_colorimetry *pColorimetry = di_info_get_supported_signal_colorimetry( pInfo );
+ 
+-			const di_edid_cta* pCTA = NULL;
+-			const di_edid_ext *const *ppExts = di_edid_get_extensions( pEdid );
+-			for ( ; *ppExts != nullptr; ppExts++ )
+-			{
+-				if ( ( pCTA = di_edid_ext_get_cta( *ppExts ) ) )
+-					break;
+-			}
+-
+-			if ( pCTA )
+-			{
+-				const di_cta_data_block *const *ppBlocks = di_edid_cta_get_data_blocks( pCTA );
+-				for ( ; *ppBlocks != nullptr; ppBlocks++ )
+-				{
+-					if ( di_cta_data_block_get_tag( *ppBlocks ) == DI_CTA_DATA_BLOCK_HDR_STATIC_METADATA )
+-					{
+-						pHDRStaticMetadata = di_cta_data_block_get_hdr_static_metadata( *ppBlocks );
+-						continue;
+-					}
+-
+-					if ( di_cta_data_block_get_tag( *ppBlocks ) == DI_CTA_DATA_BLOCK_COLORIMETRY )
+-					{
+-						pColorimetry = di_cta_data_block_get_colorimetry( *ppBlocks );
+-						continue;
+-					}
+-				}
+-			}
+-
+-			if ( pColorimetry && pColorimetry->bt2020_rgb &&
+-				 pHDRStaticMetadata && pHDRStaticMetadata->eotfs && pHDRStaticMetadata->eotfs->pq )
++			if ( pColorimetry->bt2020_rgb && pHDRStaticMetadata->pq )
+ 			{
+ 				if ( !bHasKnownHDRInfo )
+ 				{
+diff --git a/src/meson.build b/src/meson.build
+index ae3ac16..da05f9d 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -32,7 +32,7 @@ wlroots_dep = dependency(
+ 
+ displayinfo_dep = dependency(
+   'libdisplay-info',
+-  version: ['>= 0.0.0', '< 0.5.0'],
++  version: ['>= 0.2.0', '< 0.5.0'],
+   fallback: 'libdisplay-info',
+   default_options: ['default_library=static'],
+ )

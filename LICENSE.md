@@ -19,8 +19,9 @@ SPDX header check skips them.
 |---|---|---|
 | `overlay/ucm2/sof-soundwire/tas2783.conf` | BSD-3-Clause | [alsa-project/alsa-ucm-conf](https://github.com/alsa-project/alsa-ucm-conf) |
 | `patches/inputplumber/*` (fallback path only) | GPL-3.0-or-later | [ShadowBlip/InputPlumber](https://github.com/ShadowBlip/InputPlumber) |
-| `patches/gamescope/*` | BSD-2-Clause | [ValveSoftware/gamescope](https://github.com/ValveSoftware/gamescope) |
-| `patches/libdisplay-info/*` | MIT | [emersion/libdisplay-info](https://gitlab.freedesktop.org/emersion/libdisplay-info) |
+| `patches/gamescope/*` | BSD-2-Clause | [ValveSoftware/gamescope](https://github.com/ValveSoftware/gamescope) (PR #2493); license text in `patches/gamescope/LICENSE` |
+| `patches/libdisplay-info/*` | MIT | [emersion/libdisplay-info](https://gitlab.freedesktop.org/emersion/libdisplay-info) (DisplayID 2 backport onto 0.3.0); license text in `patches/libdisplay-info/LICENSE` |
+| `overlay/gamescope/scripts/90-ally-x20-steamos-rogallyx20-oled.lua` | BSD-2-Clause | gamescope `scripts/00-gamescope/displays/asus.rogallyx20.oled.lua` (PR #2493), unchanged except for a provenance header and a guard that skips it when stock gamescope already defines the profile |
 | `overlay/inputplumber/devices.d/50-rog_xbox_ally_x20.yaml` | GPL-3.0-or-later | InputPlumber upstream device profile (PR #756) |
 
 ## Things we deliberately do not commit

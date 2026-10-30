@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# ally-x20-steamos: InputPlumber autostart for the ROG Xbox Ally X20.
+# Same entry upstream InputPlumber added to
+# rootfs/usr/lib/udev/hwdb.d/60-inputplumber-autostart.hwdb in PR #756 (v0.83.0).
+# The stock rule 90-inputplumber-autostart.rules turns USE_INPUTPLUMBER=1 into
+# TAG+="uaccess", TAG+="systemd", SYSTEMD_WANTS+="inputplumber.service".
+# Upstream matches sys_vendor "ASUS" (not "ASUSTeK COMPUTER INC." like the
+# older Allys). TODO(hw): confirm /sys/class/dmi/id/sys_vendor on a real X20.
+# ASUS ROG Xbox Ally X20
+dmi:*svnASUS:*rnRC74XA:*
+  USE_INPUTPLUMBER=1

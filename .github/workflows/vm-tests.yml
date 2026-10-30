@@ -1,0 +1,161 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# VM tests: stock SteamOS under QEMU/KVM on a GitHub-hosted x86-64 runner
+# (X20-STEAMOS-PLAN.md §6, §6.0).
+#
+# Not run on every PR: one run downloads a multi-GB base image, boots
+# SteamOS and runs install -> status -> uninstall, which takes tens of
+# minutes (much more once A/B update tests are added). Unit tests in
+# test.yml stay on every push/PR; this runs nightly and on demand.
+#
+# Prerequisites, produced once by hand (the recovery installer is
+# interactive; see docs/vm-testing.md and vm/ci/make-base-image.sh):
+#   - release assets steamos-base.tar.zst.part-* + SHA256SUMS under the tag
+#     in vm/ci/base-image.conf (or the base_tag input), and
+#   - the AX20_VM_SSH_KEY secret: the private key the base image trusts.
+# If either is missing the roundtrip job is skipped with a notice, so the
+# workflow is never red just because no base image exists yet. The validate
+# job always runs `make lint` and the VM unit tests.
+name: vm-tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_tag:
+        description: Release tag of the base image (default from vm/ci/base-image.conf)
+        required: false
+        default: ""
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vm-tests
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bats shellcheck shfmt jq python3-pytest zstd
+      - name: Lint (shellcheck, shfmt, SPDX)
+        run: make lint
+      - name: VM tooling unit tests
+        run: ./tests/run.sh tests/vm
+
+  base-image:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.probe.outputs.tag }}
+      available: ${{ steps.probe.outputs.available }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: probe
+        name: Look for the base image and ssh key
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.base_tag }}
+          HAS_KEY: ${{ secrets.AX20_VM_SSH_KEY != '' }}
+        run: |
+          tag=${INPUT_TAG:-$(sed -n 's/^AX20_VM_BASE_TAG=//p' vm/ci/base-image.conf)}
+          available=false
+          if [ -z "$tag" ]; then
+            echo "::notice::No base image tag configured (vm/ci/base-image.conf); VM roundtrip skipped."
+          elif [ "$HAS_KEY" != true ]; then
+            echo "::notice::Secret AX20_VM_SSH_KEY is not set; VM roundtrip skipped."
+          elif ! gh release view "$tag" >/dev/null 2>&1; then
+            echo "::notice::Release $tag not found; VM roundtrip skipped."
+          else
+            available=true
+          fi
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "available=$available" >>"$GITHUB_OUTPUT"
+
+  roundtrip:
+    needs: [validate, base-image]
+    if: needs.base-image.outputs.available == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      BASE_TAG: ${{ needs.base-image.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      AX20_VM_SSH_PORT: "2222"
+      AX20_VM_ACCEL: kvm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Paths
+        run: |
+          echo "VM_DIR=$RUNNER_TEMP/vms" >>"$GITHUB_ENV"
+          echo "OUT_DIR=$RUNNER_TEMP/vm-out" >>"$GITHUB_ENV"
+          echo "AX20_VM_SSH_KEY_FILE=$HOME/.ssh/ax20_vm" >>"$GITHUB_ENV"
+      - name: Enable KVM for the runner user
+        # GitHub-hosted x86-64 Linux runners expose /dev/kvm, owned by root;
+        # this udev rule (GitHub's documented recipe) makes it usable.
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+      - name: Free disk space for the image
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h / "$RUNNER_TEMP"
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf zstd openssh-client
+      - name: SSH key
+        env:
+          KEY: ${{ secrets.AX20_VM_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" >"$AX20_VM_SSH_KEY_FILE"
+          chmod 600 "$AX20_VM_SSH_KEY_FILE"
+      - name: Restore cached base image
+        id: cache
+        # The repository cache limit is 10 GB; if the image does not fit the
+        # save is skipped and every run downloads from the release instead.
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VM_DIR }}/disks
+          key: steamos-base-${{ env.BASE_TAG }}
+      - name: Download base image
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: vm/ci/vm-ci.sh fetch "$BASE_TAG" "$VM_DIR"
+      - name: Boot SteamOS (KVM, SMBIOS = X20)
+        run: |
+          vm/ci/vm-ci.sh boot "$VM_DIR"
+          vm/ci/vm-ci.sh wait-ssh 900
+      - name: Copy the checkout into the guest
+        run: vm/ci/vm-ci.sh push-repo "$GITHUB_WORKSPACE"
+      - name: Guest baseline (DMI must read RC74XA)
+        run: |
+          vm/ci/vm-ci.sh ssh 'cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/board_name; uname -r; cat /etc/os-release'
+          vm/ci/vm-ci.sh collect "$OUT_DIR"
+      - name: Install / status / uninstall round-trip
+        run: |
+          rc=0
+          vm/ci/vm-ci.sh roundtrip "$OUT_DIR" || rc=$?
+          if [ "$rc" = 77 ]; then
+            echo "::notice::The CLI has no install/uninstall yet; roundtrip skipped."
+            exit 0
+          fi
+          exit "$rc"
+      - name: Shut down
+        if: always()
+        run: vm/ci/vm-ci.sh shutdown "$VM_DIR" || true
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm-tests-logs
+          path: |
+            ${{ env.OUT_DIR }}
+            ${{ env.VM_DIR }}/logs
+          if-no-files-found: ignore

@@ -199,6 +199,7 @@ bm_check_patch_scope() {
         for f in $(bm_patch_touched_files "$dir/$p"); do
             case "$f" in
                 "$m"/*) ;;
+                Documentation/*) ;; # ABI docs ride along; excluded when applying
                 *)
                     bm_warn "$p touches $f, outside M=$m (needed for $k)"
                     bad=1
@@ -738,9 +739,9 @@ bm_make_worktree() {
 
 # bm_patch_state <tree> <patch> : applies | upstream | conflict
 bm_patch_state() {
-    if (cd "$1" && bm_git apply --check -p1 "$2") >/dev/null 2>&1; then
+    if (cd "$1" && bm_git apply --check -p1 --exclude='Documentation/*' "$2") >/dev/null 2>&1; then
         echo applies
-    elif (cd "$1" && bm_git apply --check --reverse -p1 "$2") >/dev/null 2>&1; then
+    elif (cd "$1" && bm_git apply --check --reverse -p1 --exclude='Documentation/*' "$2") >/dev/null 2>&1; then
         echo upstream
     else
         echo conflict
@@ -771,7 +772,9 @@ bm_apply_patches() {
             fi
         done
         bm_log "applying $p"
-        (cd "$tree" && bm_git apply -p1 "$PATCHES_DIR/$p") || bm_die "applying $p failed"
+        # Documentation/ hunks are excluded: the sparse source tree has only the
+        # M= directories, and docs do not change the built module.
+        (cd "$tree" && bm_git apply -p1 --exclude='Documentation/*' "$PATCHES_DIR/$p") || bm_die "applying $p failed"
         BM_PATCH_STATUS="$BM_PATCH_STATUS$p applied
 "
     done

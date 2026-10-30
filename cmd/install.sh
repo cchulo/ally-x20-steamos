@@ -166,9 +166,8 @@ cmd_install() {
     _install_check_board "$force_board"
     ax20_have git || die "git is required (it ships with SteamOS)"
 
-    base=$(ax20_state_dir)
+    base=$(ax20_state_dir_ensure)
     target=$(ax20_path "$SU_SRC_REL")
-    ax20_mkdir_p "$base" >/dev/null
     for d in $SU_STATE_SUBDIRS; do
         ax20_mkdir_p "$base/$d" >/dev/null
     done

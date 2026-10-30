@@ -300,3 +300,28 @@ post-install=/x
     run sh "$UNINSTALL" --bogus
     assert_failure 2
 }
+
+@test "state dir behind the /home symlink is removed together with its target" {
+    rm -rf "$STATE"
+    mkdir -p "$AX20_ROOT/home/deck"
+    ax20_state_dir_ensure >/dev/null
+    [ -L "$STATE" ]
+    install_demo
+    [ -f "$AX20_ROOT/home/.ally-x20-steamos/manifest" ]
+    run_uninstall
+    assert_success
+    [ ! -L "$STATE" ] && [ ! -e "$STATE" ]
+    [ ! -e "$AX20_ROOT/home/.ally-x20-steamos" ]
+    [ -d "$AX20_ROOT/home/deck" ]
+}
+
+@test "a state symlink pointing somewhere unexpected is removed but its target is left alone" {
+    rm -rf "$STATE"
+    mkdir -p "$AX20_ROOT/srv/elsewhere"
+    ln -s /srv/elsewhere "$STATE"
+    run_uninstall
+    assert_success
+    assert_output_contains "unexpected"
+    [ -d "$AX20_ROOT/srv/elsewhere" ]
+    [ ! -L "$STATE" ]
+}

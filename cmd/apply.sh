@@ -143,6 +143,8 @@ cmd_apply() {
         [ -d "$slot_root" ] || die "apply --slot: not a directory: $slot_root"
         AX20_ROOT=${slot_root%/}
         export AX20_ROOT
+        # The new slot's var must reach the shared state (symlink into /home).
+        ax20_state_dir_ensure >/dev/null
         if [ -z "${AX20_KVER:-}" ]; then
             k=$(apply_slot_kver || true)
             if [ -n "$k" ]; then

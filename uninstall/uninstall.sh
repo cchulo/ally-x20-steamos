@@ -573,7 +573,19 @@ $path"
         if [ "$SKIPPED" -gt 0 ]; then
             warn "keeping $state because $SKIPPED item(s) were skipped; re-run with --force or inspect the log"
         else
-            act "rm -rf $state" rm -rf "$state"
+            if [ -L "$state" ]; then
+                # State lives in the shared /home partition behind a symlink.
+                starget=$(readlink "$state")
+                case "$starget" in
+                    /home/.ally-x20-steamos | ../../home/.ally-x20-steamos)
+                        act "rm -rf /home/.ally-x20-steamos" rm -rf "$(rpath /home/.ally-x20-steamos)"
+                        ;;
+                    *) warn "state symlink points at unexpected $starget; leaving its target alone" ;;
+                esac
+                act "rm symlink /var/lib/$NAME" rm -f "$state"
+            else
+                act "rm -rf $state" rm -rf "$state"
+            fi
             real=$(rpath "/opt/$NAME")
             if [ -d "$real" ]; then act "rm -rf /opt/$NAME" rm -rf "$real"; fi
         fi

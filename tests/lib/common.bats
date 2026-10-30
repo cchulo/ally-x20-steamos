@@ -86,3 +86,34 @@ $AX20_ROOT/a/b/c" ]
     [ "$status" -eq 7 ]
     assert_output_contains "boom"
 }
+
+@test "ax20_state_dir_ensure keeps an existing real state dir" {
+    [ "$(ax20_state_dir_ensure)" = "$AX20_ROOT/var/lib/ally-x20-steamos" ]
+    [ -d "$AX20_ROOT/var/lib/ally-x20-steamos" ] && [ ! -L "$AX20_ROOT/var/lib/ally-x20-steamos" ]
+}
+
+@test "ax20_state_dir_ensure creates /home/.ally-x20-steamos and a symlink when /home exists" {
+    rmdir "$AX20_ROOT/var/lib/ally-x20-steamos"
+    mkdir -p "$AX20_ROOT/home/deck"
+    ax20_state_dir_ensure >/dev/null
+    [ -L "$AX20_ROOT/var/lib/ally-x20-steamos" ]
+    [ "$(readlink "$AX20_ROOT/var/lib/ally-x20-steamos")" = ../../home/.ally-x20-steamos ]
+    [ -d "$AX20_ROOT/home/.ally-x20-steamos" ]
+    # writing through the canonical path lands in /home
+    touch "$AX20_ROOT/var/lib/ally-x20-steamos/x"
+    [ -f "$AX20_ROOT/home/.ally-x20-steamos/x" ]
+    # idempotent
+    ax20_state_dir_ensure >/dev/null
+    [ -L "$AX20_ROOT/var/lib/ally-x20-steamos" ]
+}
+
+@test "ax20_state_dir_ensure falls back to a real dir without /home, and dry-run creates nothing" {
+    rmdir "$AX20_ROOT/var/lib/ally-x20-steamos"
+    ax20_state_dir_ensure >/dev/null
+    [ -d "$AX20_ROOT/var/lib/ally-x20-steamos" ] && [ ! -L "$AX20_ROOT/var/lib/ally-x20-steamos" ]
+    rmdir "$AX20_ROOT/var/lib/ally-x20-steamos"
+    mkdir -p "$AX20_ROOT/home"
+    AX20_DRY_RUN=1 ax20_state_dir_ensure >/dev/null 2>&1
+    [ ! -e "$AX20_ROOT/var/lib/ally-x20-steamos" ]
+    [ ! -e "$AX20_ROOT/home/.ally-x20-steamos" ]
+}

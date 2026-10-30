@@ -532,6 +532,30 @@ slots_entry_reconcile() {
     fi
 }
 
+# slot_set_early_initrd <slot|active> <initrd-abs-path> [kernel-args]
+# Compatibility entry point for components (the audio component's ACPI
+# override): record the desired boot-entry state and reconcile the slot's
+# entry. Existing desired args are kept unless new ones are given. Returns
+# non-zero (never dies) when the slot or the initrd cannot be resolved, so a
+# component can log and carry on.
+slot_set_early_initrd() {
+    local slot=$1 initrd=$2 args=${3:-}
+    if [ "$slot" = active ] || [ -z "$slot" ]; then
+        slot=$(slots_active 2>/dev/null) || {
+            log_warn "boot entry: cannot determine the booted slot; run '$AX20_NAME boot-entry set --initrd $initrd' later"
+            return 1
+        }
+    fi
+    slots_valid_name "$slot" || return 1
+    slots_initrd_validate "$initrd" || {
+        log_warn "boot entry: $initrd is not a valid uncompressed cpio; not referencing it"
+        return 1
+    }
+    [ -n "$args" ] || args=$(slots_desired_get args 2>/dev/null || true)
+    slots_desired_set "$args" "$initrd"
+    slots_entry_reconcile "$slot"
+}
+
 # ---------------------------------------------------- composite slot root --
 # Used by the RAUC post-install handler: build a view of the *other* slot
 # at <dir> that looks like its booted root, so `apply --slot <dir>` writes

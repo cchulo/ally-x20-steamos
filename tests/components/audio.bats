@@ -500,13 +500,13 @@ acpi_device() {
     ! [ -e "$BATS_TEST_TMPDIR/tool-args" ]
 }
 
-@test "ACPI: without lib/slots.sh the boot entry step is reported pending" {
+@test "ACPI: when the booted slot cannot be determined the boot entry step is deferred, not fatal" {
     stock_lacks_everything
     acpi_device
     fake_acpi_tool 0
     run component_apply audio
     assert_success
-    assert_output_contains "boot entry step pending"
+    assert_output_contains "boot entry not updated"
     [ -f "$AX20_ROOT/efi/EFI/steamos/ally-x20-steamos-acpi.img" ]
 }
 

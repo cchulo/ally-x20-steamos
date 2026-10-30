@@ -28,6 +28,13 @@
 # shellcheck disable=SC2034  # read by lib/component.sh
 COMPONENT_DESCRIPTION="TAS2783 speakers: UCM profile overlay, amp tuning firmware, ACPI flag override"
 
+# The boot-entry library is optional at load time (fixture roots, partial
+# checkouts); when present its slot_set_early_initrd shim is used below.
+if [ -f "$AX20_SRC/lib/slots.sh" ]; then
+    # shellcheck source=lib/slots.sh
+    . "$AX20_SRC/lib/slots.sh"
+fi
+
 # shellcheck source=firmware/fetch-tas2783.sh
 . "$AX20_SRC/firmware/fetch-tas2783.sh"
 
@@ -463,8 +470,8 @@ _audio_acpi_current() {
 
 _audio_acpi_boot_entry() {
     if declare -F slot_set_early_initrd >/dev/null 2>&1; then
-        slot_set_early_initrd "${AX20_SLOT:-active}" "$AUDIO_ESP_IMG_REL" \
-            || log_warn "ACPI: slot_set_early_initrd failed; boot entry not updated"
+        slot_set_early_initrd "${AX20_SLOT:-active}" "$AUDIO_ESP_IMG_REL" "$(audio_kernel_cmdline)" \
+            || log_warn "ACPI: boot entry not updated (see message above); the update component re-applies it on the next apply"
     else
         log_info "ACPI: boot entry step pending (lib/slots.sh slot_set_early_initrd not available)"
     fi

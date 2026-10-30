@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: test
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  lint-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bats shellcheck shfmt jq python3-pytest zstd
+      - name: Lint
+        run: make lint
+      - name: Unit tests (bats + pytest)
+        run: make test
+  bash32-compat:
+    # macOS dev hosts run bash 3.2; make sure the shell libraries still load there.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run suites under /bin/bash 3.2
+        run: |
+          brew install bats-core jq >/dev/null
+          /bin/bash --version | head -n1
+          ./tests/run.sh

@@ -1,0 +1,5 @@
+# Shared shellcheck config. All scripts must pass `shellcheck -x`.
+shell=bash
+external-sources=true
+# SC1091: sourced files are resolved at runtime from the repo root.
+disable=SC1091

@@ -1,0 +1,118 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Build the patched kernel modules for every known SteamOS kernel
+# (build/kernels.txt) in the Arch build container, upload them as artifacts,
+# and attach them to the GitHub release on tags (X20-STEAMOS-PLAN.md §3).
+name: build-modules
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'build/**'
+      - 'patches/kernel/**'
+      - '.github/workflows/build-modules.yml'
+  workflow_dispatch:
+    inputs:
+      kver:
+        description: 'Kernel release (full uname -r); empty = everything in build/kernels.txt'
+        required: false
+        default: ''
+      channel:
+        description: 'Package repo searched first'
+        required: false
+        default: 'jupiter-main'
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      kernels: ${{ steps.list.outputs.kernels }}
+      has_lists: ${{ steps.list.outputs.has_lists }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        env:
+          IN_KVER: ${{ github.event.inputs.kver }}
+          IN_CHANNEL: ${{ github.event.inputs.channel }}
+        run: |
+          if [ -n "${IN_KVER:-}" ]; then
+            printf '%s %s\n' "$IN_KVER" "${IN_CHANNEL:-jupiter-main}" >kernels.sel
+          else
+            grep -Ev '^[[:space:]]*(#|$)' build/kernels.txt >kernels.sel
+          fi
+          json=$(awk '{ printf "%s{\"kver\":\"%s\",\"channel\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }' kernels.sel)
+          echo "kernels=[$json]" >>"$GITHUB_OUTPUT"
+          if ls patches/kernel/modules*.list >/dev/null 2>&1; then
+            echo has_lists=true >>"$GITHUB_OUTPUT"
+          else
+            echo "no patches/kernel/modules*.list yet: nothing to build" >&2
+            echo has_lists=false >>"$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: matrix
+    if: needs.matrix.outputs.has_lists == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.kernels) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache headers and Valve sources
+        uses: actions/cache@v4
+        with:
+          path: build/cache
+          key: kernel-${{ matrix.kver }}-v1
+      - name: Build container image
+        run: podman build -t localhost/ally-x20-steamos-build:ci -f build/Containerfile build
+      - name: Build modules
+        env:
+          KVER: ${{ matrix.kver }}
+          CHANNEL: ${{ matrix.channel }}
+        run: |
+          mkdir -p build/out build/cache
+          digest=$(podman image inspect --format '{{.Digest}}' localhost/ally-x20-steamos-build:ci)
+          podman run --rm --userns=keep-id --security-opt label=disable \
+            -v "$PWD:/src:ro" -v "$PWD/build/cache:/cache" -v "$PWD/build/out:/out" \
+            -e KVER -e CHANNEL -e HOME=/tmp -e "AX20_COMMIT=$GITHUB_SHA" \
+            -e CONTAINER_IMAGE=localhost/ally-x20-steamos-build:ci -e "CONTAINER_IMAGE_DIGEST=$digest" \
+            localhost/ally-x20-steamos-build:ci
+      - name: Package
+        env:
+          KVER: ${{ matrix.kver }}
+        run: |
+          mkdir -p dist
+          tar -C build/out -cf - "$KVER" | zstd -19 -q -o "dist/modules-$KVER.tar.zst"
+          (cd dist && sha256sum "modules-$KVER.tar.zst" >"modules-$KVER.tar.zst.sha256")
+          cp "build/out/$KVER/BUILD-INFO" "dist/BUILD-INFO-$KVER"
+          cat "dist/BUILD-INFO-$KVER"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: modules-${{ matrix.kver }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --notes "Patched kernel modules: see BUILD-INFO-* for sources and hashes."
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber dist/*

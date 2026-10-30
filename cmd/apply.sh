@@ -67,6 +67,13 @@ apply_components() {
             continue
         fi
         if [ "$missing" = 1 ]; then
+            # Re-apply only what was installed and drifted. A component with no
+            # manifest entries was never installed (or was uninstalled on
+            # purpose); the boot service must not bring it back.
+            if ! component_installed "$c"; then
+                log_debug "$c: not installed, not re-applying"
+                continue
+            fi
             st=$(component_status "$c" 2>/dev/null || printf 'stock')
             case "$st" in
                 active | superseded)

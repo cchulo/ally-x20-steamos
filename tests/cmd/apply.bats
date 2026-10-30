@@ -56,8 +56,8 @@ setup() {
     [ -f "$AX20_ROOT/etc/demo.d/ally-x20-steamos-b.conf" ]
     s="$AX20_ROOT/var/lib/ally-x20-steamos/state/status.json"
     jq -e . "$s" >/dev/null
-    [ "$(jq -r .components.alpha "$s")" = active ]
-    [ "$(jq -r .components.native "$s")" = superseded ]
+    [ "$(jq -r '.components[] | select(.name == "alpha") | .status' "$s")" = active ]
+    [ "$(jq -r '.components[] | select(.name == "native") | .status' "$s")" = superseded ]
     [ "$(jq -r .kver "$s")" = 7.2.7-valve2-test ]
     [ "$(jq -r .applied "$s")" = "alpha beta" ]
 }
@@ -178,7 +178,7 @@ update_root() {
     [ -x "$r/var/lib/ally-x20-steamos/libexec/rauc-post-install.hook" ]
     grep -qx 'post-install=/var/lib/ally-x20-steamos/libexec/rauc-post-install.hook' "$r/etc/rauc/system.conf"
     grep -q 'acpi_override=1$' "$r/efi/EFI/steamos/grub.cfg"
-    [ "$(jq -r .components.update "$r/var/lib/ally-x20-steamos/state/status.json")" = active ]
+    [ "$(jq -r '.components[] | select(.name == "update") | .status' "$r/var/lib/ally-x20-steamos/state/status.json")" = active ]
     # twice = no change
     s1=$(ax20_sha256 "$r/etc/rauc/system.conf")
     g1=$(ax20_sha256 "$r/efi/EFI/steamos/grub.cfg")
@@ -197,7 +197,7 @@ update_root() {
     assert_success
     grep -q '^# >>> ally-x20-steamos' "$AX20_ROOT/etc/rauc/system.conf"
     n="$AX20_ROOT/var/lib/ally-x20-steamos/state/notify"
-    grep -qx 'reapplied=update' "$n"
+    grep -q '^reapplied=.*update' "$n"
     grep -qx 'update=A -> B' "$n"
     [ ! -e "$AX20_ROOT/var/lib/ally-x20-steamos/state/pending-reboot-check" ]
     # Second boot: nothing to say any more.

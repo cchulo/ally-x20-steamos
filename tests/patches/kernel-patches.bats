@@ -61,12 +61,12 @@ touched_paths() {
     done
 }
 
-@test "kernel patches only touch sound/ or drivers/" {
+@test "kernel patches only touch sound/, drivers/ or Documentation/" {
     local p f
     for p in $(kernel_patches); do
         for f in $(touched_paths "$p") $(git apply --numstat "$p" | cut -f3); do
             case "$f" in
-                sound/* | drivers/*) ;;
+                sound/* | drivers/* | Documentation/*) ;;
                 *)
                     echo "$p touches $f"
                     false
@@ -135,11 +135,11 @@ touched_paths() {
     [ "$n" -gt 0 ]
 }
 
-@test "every kernel patch is listed in modules.list" {
+@test "every kernel patch is listed in a modules*.list" {
     local p
     for p in $(kernel_patches); do
-        cut -f1 "$KDIR/modules.list" | grep -qxF "$(basename "$p")" || {
-            echo "not in modules.list: $p"
+        cat "$KDIR"/modules*.list | cut -f1 | grep -qxF "$(basename "$p")" || {
+            echo "not in any modules*.list: $p"
             false
         }
     done

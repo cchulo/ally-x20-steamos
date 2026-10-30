@@ -159,12 +159,12 @@ C
     echo "$output" | grep -Eq '^demo +stock'
 }
 
-@test "lib/status.sh status_write_json is used when present" {
+@test "lib/status.sh status_write_json is the writer of status.json" {
     # Stand-in for the slots/RAUC package's writer, in a private copy of the tree.
     src="$BATS_TEST_TMPDIR/src"
     mkdir -p "$src"
     cp -R "$REPO_ROOT/ally-x20-steamos.sh" "$REPO_ROOT/VERSION" "$REPO_ROOT/lib" "$REPO_ROOT/cmd" "$src/"
-    cat >"$src/lib/status.sh" <<'L'
+    cat >>"$src/lib/status.sh" <<'L'
 status_write_json() {
     printf '{"writer":"lib/status.sh"}\n' | ax20_atomic_write "$(ax20_path "$AX20_STATUS_JSON_REL")"
 }
@@ -172,5 +172,5 @@ L
     mkdir -p "$AX20_ROOT$STATE/state"
     run "$src/ally-x20-steamos.sh" status --json
     assert_success
-    assert_output_contains '"writer":"lib/status.sh"'
+    grep -q '"writer":"lib/status.sh"' "$AX20_ROOT$STATE/state/status.json"
 }

@@ -71,8 +71,14 @@ fake_src() {
     mkdir -p "$s/cmd"
     cp "$REPO_ROOT/ally-x20-steamos.sh" "$s/"
     cp "$REPO_ROOT/VERSION" "$s/"
-    ln -sfn "$REPO_ROOT/lib" "$s/lib"
-    ln -sfn "$REPO_ROOT/overlay" "$s/overlay"
+    # Mirror every top-level directory of the checkout (components source
+    # helpers from firmware/, acpi/, build/, ...), except cmd/ (filtered
+    # below) and tests/.
+    for f in "$REPO_ROOT"/*/; do
+        n=$(basename "$f")
+        case "$n" in cmd | tests | worktrees | components) continue ;; esac
+        ln -sfn "$REPO_ROOT/$n" "$s/$n"
+    done
     ln -sfn "${AX20_COMPONENTS_DIR:-$REPO_ROOT/components}" "$s/components"
     for f in "$REPO_ROOT"/cmd/*.sh; do
         n=$(basename "$f" .sh)

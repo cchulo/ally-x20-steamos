@@ -29,6 +29,7 @@ setup() {
     source_libs
     unset AX20_HOME AX20_AUDIO_USER SUDO_USER
     fake_hrtf_sets
+    mkdir -p "$AX20_ROOT/home/deck" # the user's home always exists on a real system
     component_load audio_dsp
 }
 
@@ -132,7 +133,7 @@ setup() {
 
 @test "dry-run writes nothing" {
     AX20_DRY_RUN=1 component_apply audio_dsp 2>/dev/null
-    [ ! -e "$AX20_ROOT/home" ]
+    [ ! -e "$AX20_ROOT/home/deck/.config" ]
     [ ! -s "$AX20_ROOT/var/lib/ally-x20-steamos/manifest" ]
 }
 

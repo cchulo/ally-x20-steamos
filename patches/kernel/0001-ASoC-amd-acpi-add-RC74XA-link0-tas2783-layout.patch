@@ -1,0 +1,132 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Carlos Chulo <cchulo.dev@gmail.com>
+Date: Fri, 30 Oct 2026 06:27:17 -0700
+Subject: [PATCH 1/2] ASoC: amd: acp70: add RC74XA TAS2783 x2 link 0 + RT721
+ link 1 layout
+
+The ASUS ROG Xbox Ally X20 (board RC74XA, ACP 7.0, PCI SSID 1043:1954)
+has its two TI TAS2783 speaker amps on SoundWire link 0 and the Realtek
+RT721 headset codec on link 1. No entry in
+snd_soc_acpi_amd_acp70_sdw_machines[] describes that wiring:
+
+  - acp70_tas2783_2 wants four amps with unique IDs 0x9/0xA/0xC/0xD,
+  - acp70_rt721_l1u0_tas2783x2_l1u8b (ASUS ProArt PX13) wants the two
+    amps on link 1 next to the RT721,
+
+so acp63_sdw_machine_select() falls through to acp70_rt721_only. The
+card then exposes the headset jack and DMIC, and speaker playback goes
+to the RT721 internal amp endpoint (AIF2), which drives nothing on this
+board.
+
+Add a two-link layout ahead of the acp70_rt721_only fallback:
+
+  link 0  0x0000380102000001  TAS2783, uid 0x8  "tas2783-1"  spk_l
+          0x00003B0102000001  TAS2783, uid 0xB  "tas2783-2"  spk_r
+  link 1  0x000130025D072101  RT721,   uid 0x0  "rt721"      jack + DMIC
+
+(_ADR: bits 51:48 link, 47:44 SoundWire version, 43:40 unique ID,
+39:24 manufacturer 0x0102 TI / 0x025D Realtek, 23:8 part, 7:0 class.)
+The RT721 keeps only endpoints 0 (UAJ) and 2 (DMIC, AIF3), reusing
+jack_dmic_endpoints; its AIF2 amp endpoint is not used here.
+
+Both amps get one aggregated endpoint each in group 1 (positions 0 and
+1), i.e. the usual stereo amp pair. This patch deliberately does NOT
+pair with the "one channel per mono amp" proposal for tas2783-sdw
+("ASoC: tas2783-sdw: split a stereo stream across the two mono amps",
+linux-sound, July/August 2026). On RC74XA each amp already picks its
+own side from the full stereo stream, as programmed by the BIOS SDCA
+init table (PPU21 = 0x01 left, 0x04 right), and keeps its full
+feedback (SmartAmp capture) path. Handing each amp a one-channel mask
+instead was reported to silence the right amp on this device. With
+this layout and the stock v7.2.7 tas2783-sdw driver, playback is
+correct stereo.
+
+The hunk is byte-identical to the RC74XA machine entry Valve carries in
+its 7.2.10-valve1 kernel; applied to v7.2.7 the resulting file has git
+blob ee51de5f1fb3737e41267e527d9b48159d2fb19f, the same as in
+7.2.10-valve1. Builds into snd-soc-acpi-amd-match.ko.
+
+Derived from:
+  - hungarianhc/rog-ally-x20-steamos-speakers,
+    patches/0001-ASoC-amd-acp70-add-TAS2783-x2-on-link-0-with-RT721-on-link-1.patch
+    (layout, unique IDs, "do not apply the mono split" note in README.md)
+  - Valve linux-integration (mirror github.com/evlaV/linux-integration),
+    commit 5f7b3941a10f "[FOR-UPSTREAM] ASoC: amd: acp: add ACP70
+    SoundWire machine entry for ASUS RC74XA" by Matthew Schwartz,
+    in tag 7.2.10-valve1 (identical table and placement)
+  - anatase-org/kernel-anatase release 7.2.7-an22,
+    patch-2-anatase.patch (same commit, backported to 7.2.7)
+  - stoneharborent/aquarius-os PR #40,
+    build_files/x20-audio/rc74xa-soundwire-links.patch (same IDs)
+  - mono split discussion:
+    https://ratatoskr.run/linux-sound/2026/07/17279211/t
+
+Validated with "git apply --check" against linux-stable v7.2.7 and
+Valve 7.2.7-valve2 (the file is byte-identical in both, blob
+ccd01152c87d). Not compiled or run on hardware by this project yet.
+---
+ sound/soc/amd/acp/amd-acp70-acpi-match.c | 44 ++++++++++++++++++++++++
+ 1 file changed, 44 insertions(+)
+
+diff --git a/sound/soc/amd/acp/amd-acp70-acpi-match.c b/sound/soc/amd/acp/amd-acp70-acpi-match.c
+index ccd01152c..ee51de5f1 100644
+--- a/sound/soc/amd/acp/amd-acp70-acpi-match.c
++++ b/sound/soc/amd/acp/amd-acp70-acpi-match.c
+@@ -659,6 +659,45 @@ static const struct snd_soc_acpi_link_adr acp70_rt721_l1u0_tas2783x2_l1u8b[] = {
+ 	{}
+ };
+ 
++static const struct snd_soc_acpi_adr_device tas2783x2_l0u8b_adr[] = {
++	{
++		.adr = 0x0000380102000001ull,
++		.num_endpoints = 1,
++		.endpoints = &spk_l_endpoint,
++		.name_prefix = "tas2783-1",
++	},
++	{
++		.adr = 0x00003B0102000001ull,
++		.num_endpoints = 1,
++		.endpoints = &spk_r_endpoint,
++		.name_prefix = "tas2783-2",
++	},
++};
++
++static const struct snd_soc_acpi_adr_device rt721_l1u0_jack_dmic_adr[] = {
++	{
++		.adr = 0x000130025D072101ull,
++		.num_endpoints = ARRAY_SIZE(jack_dmic_endpoints),
++		.endpoints = jack_dmic_endpoints,
++		.name_prefix = "rt721",
++	}
++};
++
++/* ASUS ROG Xbox Ally X20 (RC74XA) */
++static const struct snd_soc_acpi_link_adr acp70_tas2783x2_l0u8b_rt721_l1u0[] = {
++	{
++		.mask = BIT(0),
++		.num_adr = ARRAY_SIZE(tas2783x2_l0u8b_adr),
++		.adr_d = tas2783x2_l0u8b_adr,
++	},
++	{
++		.mask = BIT(1),
++		.num_adr = ARRAY_SIZE(rt721_l1u0_jack_dmic_adr),
++		.adr_d = rt721_l1u0_jack_dmic_adr,
++	},
++	{}
++};
++
+ static const struct snd_soc_acpi_endpoint rt721_endpoints[] = {
+ 	{ /* Jack Playback/Capture Endpoint (AIF1) */
+ 		.num = 0,
+@@ -795,6 +834,11 @@ struct snd_soc_acpi_mach snd_soc_acpi_amd_acp70_sdw_machines[] = {
+ 		.links = acp70_rt721_l1u0_tas2783x2_l1u8b,
+ 		.drv_name = "amd_sdw",
+ 	},
++	{
++		.link_mask = BIT(0) | BIT(1),
++		.links = acp70_tas2783x2_l0u8b_rt721_l1u0,
++		.drv_name = "amd_sdw",
++	},
+ 	{
+ 		.link_mask = BIT(1),
+ 		.links = acp70_rt721_only,

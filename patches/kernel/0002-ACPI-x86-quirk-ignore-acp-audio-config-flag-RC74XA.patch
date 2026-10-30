@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Carlos Chulo <cchulo.dev@gmail.com>
+Date: Fri, 30 Oct 2026 06:27:58 -0700
+Subject: [PATCH 2/2] ASoC: amd: acp-config: ignore acp-audio-config-flag on
+ ASUS RC74XA
+
+The ASUS ROG Xbox Ally X20 (board RC74XA, ACP 7.0) BIOS reports
+acp-audio-config-flag = 0x10 (FLAG_AMD_LEGACY_ONLY_DMIC) in the ACP
+device _DSD. For ACP >= 7.0, snd_amd_acp_find_config() returns that
+value as-is unless the board is in acp70_acpi_flag_override_table, and
+snd_pci_ps (sound/soc/amd/ps/pci-ps.c) refuses to probe when the flag
+is non-zero. The SoundWire links carrying the two TAS2783 amps (link 0)
+and the RT721 (link 1) are then never scanned; only the legacy DMIC
+driver binds. Windows ignores the flag.
+
+Add the board to acp70_acpi_flag_override_table, the existing
+dmi_check_system() table used for other ACP 7.0 machines with the same
+BIOS problem, so the flag is treated as 0 and snd_pci_ps probes. The
+legacy (snd-acp-pci) and SOF (snd-sof-amd-acp70) drivers keep backing
+off, as they only accept the LEGACY/SOF flag values.
+
+This is the in-kernel alternative to the early-initrd ACPI table
+override that clears the flag in the DSDT. It changes
+snd-acp-config.ko only and needs patch 0001 (machine layout) to get
+speakers.
+
+The match is on board vendor "ASUSTeK COMPUTER INC." and board name
+"RC74XA" (DMI_MATCH, substring), as in Valve's kernel; the hunk is
+byte-identical to it, and applied to v7.2.7 the file has git blob
+45c7501851841a4d6a3eb88e4efcb4eb06e01ee4, the same as Valve's
+7.2.10-valve1.
+
+Derived from:
+  - Valve linux-integration (mirror github.com/evlaV/linux-integration),
+    commit 045b13e03d29 "[FOR-UPSTREAM] ASoC: amd: acp-config: force
+    SoundWire probe on ASUS RC74XA" by Matthew Schwartz, in tag
+    7.2.10-valve1
+  - ovenham/rog-ally-x20-steamos-speaker-qam-fix,
+    upstream/acp-config-rog-xbox-ally-x20.patch (proposed quirk,
+    matches DMI_PRODUCT_NAME "RC74XA" instead)
+  - anatase-org/kernel-anatase release 7.2.7-an22, patch-2-anatase.patch
+  - stoneharborent/aquarius-os PR #40,
+    build_files/x20-audio/rc74xa-acp-config.patch (DMI_EXACT_MATCH on
+    the same board vendor/name)
+  - hungarianhc/rog-ally-x20-steamos-speakers, README.md and
+    ally-audio-fix.sh (diagnosis of the 0x10 flag; initrd override)
+
+Validated with "git apply --check" against linux-stable v7.2.7 and
+Valve 7.2.7-valve2 (the file is byte-identical in both, blob
+8e1563824a97). Not compiled or run on hardware by this project yet.
+---
+ sound/soc/amd/acp-config.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/sound/soc/amd/acp-config.c b/sound/soc/amd/acp-config.c
+index 8e1563824..45c750185 100644
+--- a/sound/soc/amd/acp-config.c
++++ b/sound/soc/amd/acp-config.c
+@@ -63,6 +63,13 @@ static const struct dmi_system_id acp70_acpi_flag_override_table[] = {
+ 			DMI_MATCH(DMI_PRODUCT_NAME, "Vivobook 18 M1807GA"),
+ 		},
+ 	},
++	{
++		/* ASUS ROG Xbox Ally X20 (Strix Point, ACP 7.0) */
++		.matches = {
++			DMI_MATCH(DMI_BOARD_VENDOR, "ASUSTeK COMPUTER INC."),
++			DMI_MATCH(DMI_BOARD_NAME, "RC74XA"),
++		},
++	},
+ 	{}
+ };
+ 

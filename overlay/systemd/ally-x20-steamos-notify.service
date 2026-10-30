@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# User-session half of SteamOS update survival (plan §4.2 step 3): one
+# notification per new boot summary (re-applied / pending rebuild /
+# superseded / update blocked), read from
+# /var/lib/ally-x20-steamos/state/notify. Already-shown summaries are
+# remembered in ~/.local/state/ally-x20-steamos/notified.
+# TODO(vm): confirm Game Mode (gamescope-session) shows freedesktop
+# notifications; Desktop Mode (Plasma) does.
+[Unit]
+Description=ally-x20-steamos: notify about re-applied, pending and superseded fixes
+After=graphical-session.target
+ConditionPathExists=/var/lib/ally-x20-steamos/state/notify
+
+[Service]
+Type=oneshot
+ExecStartPre=-/bin/sleep 10
+ExecStart=/var/lib/ally-x20-steamos/src/ally-x20-steamos.sh notify
+TimeoutStartSec=60s
+
+[Install]
+WantedBy=default.target

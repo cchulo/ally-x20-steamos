@@ -3,7 +3,7 @@
 *.ko.zst
 *.o
 *.so
-*.so.*
+*.so.[0-9]*
 build/out/
 build/cache/
 *.img

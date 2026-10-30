@@ -1,0 +1,272 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Carlos Chulo <cchulo.dev@gmail.com>
+Date: Fri, 30 Oct 2026 06:26:43 -0700
+Subject: [PATCH] HID: asus-ally: register ring LED as go_s:rgb:joystick_rings
+ and use R/G/B subleds
+
+The joystick ring LED registered by hid-asus-ally cannot be driven from
+the Steam client's Customization menu, for two independent reasons.
+
+1. Name. The Steam client only enumerates three hardcoded LED class
+   names: go:rgb:joystick_rings, go_s:rgb:joystick_rings and valve-leds
+   (ValveSoftware/SteamOS#2260). The driver registers
+   ally:rgb:joystick_rings, so Steam never sees it.
+
+2. Channel layout. In 7.2.7-valve2 ally_rgb_register() allocates twelve
+   struct mc_subled entries, fills in four of them with
+   color_index = LED_COLOR_ID_RGB and sets num_colors = 4. Each of the four
+   intensities is then decoded in ally_rgb_set() as a packed 0xRRGGBB
+   value for one of the four MCU ring zones. This is wrong in three ways:
+
+   a. led-class-multicolor clamps every value written to multi_intensity
+      to the channel's max_intensity, which is max_brightness (255) when
+      max_intensity is 0 as here (multi_intensity_store() ->
+      min(intensity_value[i], max_intensity)). A packed 0xRRGGBB value is
+      therefore truncated to at most 0x0000FF: through the standard ABI
+      only the blue component of each zone can ever be set. Writing
+      "16711680 ..." (pure red) produces blue at full intensity.
+   b. multi_index reads "rgb rgb rgb rgb" and multi_intensity needs four
+      values. Steam, like every client of the Legion Go S node, writes
+      three values ("%d %d %d", one each for red, green and blue), which
+      fails the multi_intensity_store() parse with -EINVAL.
+   c. ally_rgb_restore_settings() writes the already brightness-scaled
+      zone colours back into the intensity fields, so every suspend and
+      resume cycle dims the stored colour by brightness/255 again.
+
+   The colour is now described the way the multicolor ABI expects and
+   the way hid-lenovo-go-s does it: three subleds (LED_COLOR_ID_RED,
+   _GREEN, _BLUE, channels 0..2, intensity 0..255). ally_rgb_set() uses
+   the subled brightness values computed by led_mc_calc_color_components()
+   and broadcasts the one colour to all four MCU zones in the existing
+   xpad_cmd_set_leds report. The written intensities are kept in
+   ally_rgb_data and restored verbatim on resume. Per-zone colour is no
+   longer exposed through multi_intensity; it never worked through it
+   anyway because of (a).
+
+The LED name is selected by a read-only module parameter,
+steam_led_name, defaulting to on (go_s:rgb:joystick_rings). With
+steam_led_name=0 the historical ally:rgb:joystick_rings name is used.
+Registering both names was considered and rejected: that needs two LED
+class devices for one physical LED, each with its own brightness,
+multi_intensity and trigger. They would overwrite each other's colour,
+and the LED core has no alias mechanism. Tools that hardcode the old
+path (HueSync and similar) keep working with steam_led_name=0. The
+go_s name is a deliberate impersonation and is not meant for upstream.
+
+While here, initialise the lock and work item before the class device
+is registered. brightness_set can be called as soon as registration
+completes, and the error path already called cancel_work_sync() on a
+work item that had not been initialised yet.
+
+Derived from:
+- kndclark/ally_module, hid-asus.c (go_s:rgb: prefix, three RGB
+  channels broadcast to all zones), https://github.com/kndclark/ally_module
+- ValveSoftware/SteamOS#2371 (same patch proposed against
+  6.18-valve hid-asus-ally) and #2260 (Steam's LED allowlist and
+  three-channel assumption)
+- drivers/hid/hid-lenovo-go-s.c in the same tree (reference
+  go_s:rgb:joystick_rings registration: num_colors = 3, RGB subleds)
+
+Base: linux-integration tag 7.2.7-valve2 (31504582a073), which matches
+SteamOS kernel 7.2.7-valve2-1-neptune-72-g31504582a073. The driver does
+not exist in mainline or linux-stable v7.2.7.
+
+TODO(hw): confirm on an RC74XA that /sys/class/leds/ then holds
+go_s:rgb:joystick_rings (and whether the Xbox button has a separate
+LED), and that Steam's Customization menu shows the ring controls.
+---
+ drivers/hid/hid-asus-ally.c | 103 +++++++++++++++++++++++-------------
+ 1 file changed, 67 insertions(+), 36 deletions(-)
+
+diff --git a/drivers/hid/hid-asus-ally.c b/drivers/hid/hid-asus-ally.c
+index 1cbc863..c649347 100644
+--- a/drivers/hid/hid-asus-ally.c
++++ b/drivers/hid/hid-asus-ally.c
+@@ -42,6 +42,25 @@
+ #define BTN_DATA_LEN 11;
+ #define BTN_CODE_BYTES_LEN 8
+ 
++/* The MCU drives four ring zones, set via xpad_cmd_set_leds (3 bytes each) */
++#define ALLY_RGB_NUM_ZONES 4
++
++#define ALLY_RGB_LED_NAME "ally:rgb:joystick_rings"
++/*
++ * The Steam client only enumerates a fixed list of LED class names
++ * (go:rgb:joystick_rings, go_s:rgb:joystick_rings, valve-leds). Registering
++ * under the Legion Go S name makes the joystick rings show up in Steam's
++ * Customization menu.
++ */
++#define ALLY_RGB_LED_NAME_STEAM "go_s:rgb:joystick_rings"
++
++static bool steam_led_name = true;
++module_param(steam_led_name, bool, 0444);
++MODULE_PARM_DESC(steam_led_name,
++		 "Register the joystick ring LED as " ALLY_RGB_LED_NAME_STEAM
++		 " so the Steam client lists it (default: true). Set to 0 for "
++		 ALLY_RGB_LED_NAME ".");
++
+ static const u8 EC_INIT_STRING[] = { 0x5A, 'A', 'S', 'U', 'S', ' ', 'T', 'e','c', 'h', '.', 'I', 'n', 'c', '.', '\0' };
+ static const u8 EC_MODE_LED_APPLY[] = { 0x5A, 0xB4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+ static const u8 EC_MODE_LED_SET[] = { 0x5A, 0xB5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+@@ -386,16 +405,18 @@ struct ally_rgb_dev {
+ 	bool removed;
+ 	bool attr_group_added;
+ 	bool update_rgb;
+-	uint8_t red[4];
+-	uint8_t green[4];
+-	uint8_t blue[4];
++	uint8_t red[ALLY_RGB_NUM_ZONES];
++	uint8_t green[ALLY_RGB_NUM_ZONES];
++	uint8_t blue[ALLY_RGB_NUM_ZONES];
+ };
+ 
+ struct ally_rgb_data {
+ 	uint8_t brightness;
+-	uint8_t red[4];
+-	uint8_t green[4];
+-	uint8_t blue[4];
++	/* multi_intensity as written by userspace, one per mc_subled */
++	unsigned int intensity[3];
++	uint8_t red[ALLY_RGB_NUM_ZONES];
++	uint8_t green[ALLY_RGB_NUM_ZONES];
++	uint8_t blue[ALLY_RGB_NUM_ZONES];
+ 	bool initialized;
+ };
+ 
+@@ -1831,10 +1852,10 @@ static void ally_rgb_do_work(struct work_struct *work)
+ 		return;
+ 	}
+ 
+-	for (int i = 0; i < 4; i++) {
+-		buf[5 + i * 3] = drvdata.led_rgb_dev->green[i];
+-		buf[6 + i * 3] = drvdata.led_rgb_dev->blue[i];
+-		buf[4 + i * 3] = drvdata.led_rgb_dev->red[i];
++	for (int i = 0; i < ALLY_RGB_NUM_ZONES; i++) {
++		buf[4 + i * 3] = led->red[i];
++		buf[5 + i * 3] = led->green[i];
++		buf[6 + i * 3] = led->blue[i];
+ 	}
+ 	led->update_rgb = false;
+ 
+@@ -1849,18 +1870,17 @@ static void ally_rgb_set(struct led_classdev *cdev, enum led_brightness brightne
+ {
+ 	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(cdev);
+ 	struct ally_rgb_dev *led = container_of(mc_cdev, struct ally_rgb_dev, led_rgb_dev);
+-	int intensity, bright;
+ 	unsigned long flags;
+ 
++	/* subled_info[n].brightness = intensity[n] * brightness / max_brightness */
+ 	led_mc_calc_color_components(mc_cdev, brightness);
+ 	spin_lock_irqsave(&led->lock, flags);
+ 	led->update_rgb = true;
+-	bright = mc_cdev->led_cdev.brightness;
+-	for (int i = 0; i < 4; i++) {
+-		intensity = mc_cdev->subled_info[i].intensity;
+-		drvdata.led_rgb_dev->red[i] = (((intensity >> 16) & 0xFF) * bright) / 255;
+-		drvdata.led_rgb_dev->green[i] = (((intensity >> 8) & 0xFF) * bright) / 255;
+-		drvdata.led_rgb_dev->blue[i] = ((intensity & 0xFF) * bright) / 255;
++	/* One colour for the whole ring, broadcast to every MCU zone */
++	for (int i = 0; i < ALLY_RGB_NUM_ZONES; i++) {
++		led->red[i] = mc_cdev->subled_info[0].brightness;
++		led->green[i] = mc_cdev->subled_info[1].brightness;
++		led->blue[i] = mc_cdev->subled_info[2].brightness;
+ 	}
+ 	spin_unlock_irqrestore(&led->lock, flags);
+ 	drvdata.led_rgb_data.initialized = true;
+@@ -1902,6 +1922,8 @@ static void ally_rgb_store_settings(void)
+ 	struct ally_rgb_dev *led_rgb = drvdata.led_rgb_dev;
+ 
+ 	drvdata.led_rgb_data.brightness = led_rgb->led_rgb_dev.led_cdev.brightness;
++	for (int i = 0; i < led_rgb->led_rgb_dev.num_colors; i++)
++		drvdata.led_rgb_data.intensity[i] = led_rgb->led_rgb_dev.subled_info[i].intensity;
+ 
+ 	memcpy(drvdata.led_rgb_data.red, led_rgb->red, arr_size);
+ 	memcpy(drvdata.led_rgb_data.green, led_rgb->green, arr_size);
+@@ -1918,11 +1940,8 @@ static void ally_rgb_restore_settings(struct ally_rgb_dev *led_rgb, struct led_c
+ 	memcpy(led_rgb->red, drvdata.led_rgb_data.red, arr_size);
+ 	memcpy(led_rgb->green, drvdata.led_rgb_data.green, arr_size);
+ 	memcpy(led_rgb->blue, drvdata.led_rgb_data.blue, arr_size);
+-	for (int i = 0; i < 4; i++) {
+-		mc_led_info[i].intensity = (drvdata.led_rgb_data.red[i] << 16) |
+-					   (drvdata.led_rgb_data.green[i] << 8) |
+-					   drvdata.led_rgb_data.blue[i];
+-	}
++	for (int i = 0; i < ARRAY_SIZE(drvdata.led_rgb_data.intensity); i++)
++		mc_led_info[i].intensity = drvdata.led_rgb_data.intensity[i];
+ 	led_cdev->brightness = drvdata.led_rgb_data.brightness;
+ }
+ 
+@@ -1947,27 +1966,34 @@ static void ally_rgb_resume(void)
+ 	}
+ }
+ 
++/*
++ * One red, one green and one blue channel, each 0..max_brightness. The
++ * multicolor core clamps every multi_intensity value to max_brightness, so a
++ * channel cannot carry a packed 0xRRGGBB value.
++ */
++static const struct mc_subled ally_rgb_subled_info[] = {
++	{ .color_index = LED_COLOR_ID_RED, .channel = 0 },
++	{ .color_index = LED_COLOR_ID_GREEN, .channel = 1 },
++	{ .color_index = LED_COLOR_ID_BLUE, .channel = 2 },
++};
++
+ static int ally_rgb_register(struct hid_device *hdev, struct ally_rgb_dev *led_rgb)
+ {
+ 	struct mc_subled *mc_led_info;
+ 	struct led_classdev *led_cdev;
+ 
+-	mc_led_info =
+-		devm_kmalloc_array(&hdev->dev, 12, sizeof(*mc_led_info), GFP_KERNEL | __GFP_ZERO);
++	mc_led_info = devm_kmemdup(&hdev->dev, ally_rgb_subled_info,
++				   sizeof(ally_rgb_subled_info), GFP_KERNEL);
+ 	if (!mc_led_info)
+ 		return -ENOMEM;
+ 
+-	mc_led_info[0].color_index = LED_COLOR_ID_RGB;
+-	mc_led_info[1].color_index = LED_COLOR_ID_RGB;
+-	mc_led_info[2].color_index = LED_COLOR_ID_RGB;
+-	mc_led_info[3].color_index = LED_COLOR_ID_RGB;
+-
+ 	led_rgb->led_rgb_dev.subled_info = mc_led_info;
+-	led_rgb->led_rgb_dev.num_colors = 4;
++	led_rgb->led_rgb_dev.num_colors = ARRAY_SIZE(ally_rgb_subled_info);
+ 
+ 	led_cdev = &led_rgb->led_rgb_dev.led_cdev;
+ 	led_cdev->brightness = 128;
+-	led_cdev->name = "ally:rgb:joystick_rings";
++	led_cdev->name = steam_led_name ? ALLY_RGB_LED_NAME_STEAM : ALLY_RGB_LED_NAME;
++	led_cdev->color = LED_COLOR_ID_RGB;
+ 	led_cdev->max_brightness = 255;
+ 	led_cdev->brightness_set = ally_rgb_set;
+ 
+@@ -1987,6 +2013,16 @@ static struct ally_rgb_dev *ally_rgb_create(struct hid_device *hdev)
+ 	if (!led_rgb)
+ 		return ERR_PTR(-ENOMEM);
+ 
++	/*
++	 * brightness_set may run as soon as the class device is registered
++	 * (e.g. udev writing multi_intensity), so the lock and work must be
++	 * ready before that.
++	 */
++	led_rgb->hdev = hdev;
++	led_rgb->removed = false;
++	INIT_WORK(&led_rgb->work, ally_rgb_do_work);
++	spin_lock_init(&led_rgb->lock);
++
+ 	ret = ally_rgb_register(hdev, led_rgb);
+ 	if (ret < 0) {
+ 		cancel_work_sync(&led_rgb->work);
+@@ -1994,12 +2030,7 @@ static struct ally_rgb_dev *ally_rgb_create(struct hid_device *hdev)
+ 		return ERR_PTR(ret);
+ 	}
+ 
+-	led_rgb->hdev = hdev;
+-	led_rgb->removed = false;
+-
+-	INIT_WORK(&led_rgb->work, ally_rgb_do_work);
+ 	led_rgb->output_worker_initialized = true;
+-	spin_lock_init(&led_rgb->lock);
+ 
+ 	ally_rgb_set_bright_base_max(hdev);
+ 

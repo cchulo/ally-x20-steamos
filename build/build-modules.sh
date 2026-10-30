@@ -64,7 +64,7 @@ bm_have() { command -v "$1" >/dev/null 2>&1; }
 
 bm_sha256() {
     if bm_have sha256sum; then
-        sha256sum "$1" | cut -d' ' -f1
+        sha256sum <"$1" | cut -d' ' -f1
     else
         shasum -a 256 "$1" | cut -d' ' -f1
     fi

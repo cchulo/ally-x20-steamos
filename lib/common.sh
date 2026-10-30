@@ -144,11 +144,13 @@ die() {
 ax20_have() { command -v "$1" >/dev/null 2>&1; }
 
 # ax20_sha256 <file> : hex digest only. Works with coreutils and macOS.
+# Reads via stdin: GNU sha256sum escapes file names containing a backslash
+# or newline and prefixes the digest line with "\".
 ax20_sha256() {
     if ax20_have sha256sum; then
-        sha256sum "$1" | cut -d' ' -f1
+        sha256sum <"$1" | cut -d' ' -f1
     elif ax20_have shasum; then
-        shasum -a 256 "$1" | cut -d' ' -f1
+        shasum -a 256 <"$1" | cut -d' ' -f1
     else
         die "no sha256 tool available"
     fi

@@ -67,10 +67,12 @@ rpath() {
 }
 
 sha256_of() {
+    # Read via stdin: GNU sha256sum escapes file names containing a
+    # backslash or newline and prefixes the digest line with "\".
     if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | cut -d' ' -f1
+        sha256sum <"$1" | cut -d' ' -f1
     elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | cut -d' ' -f1
+        shasum -a 256 <"$1" | cut -d' ' -f1
     else
         fatal "no sha256 tool available"
     fi

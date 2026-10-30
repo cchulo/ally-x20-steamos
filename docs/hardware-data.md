@@ -16,5 +16,6 @@ marked `TODO(hw)`.
 | `inputplumber --version`, stock `devices/` listing | devices.d profile key compatibility | pending |
 | N-KEY hidraw report for the Quick Access button (`0xa0` expected) | `hid-asus-ally` patch | pending |
 | EDID of the internal panel (`AMS740LS02`) | HDR verification in VM | pending |
+| Panel EDID vendor/product (gamescope's X20 profile matches `SDC` / `0x4501`), `gamescope --version`, `ls /usr/lib/libdisplay-info.so*`, `ldconfig -p \| grep libdisplay-info` after apply | `components/hdr.sh` (profile, probe, ld.so.conf.d precedence) | pending |
 | `pipewire --version`, `libmysofa` presence, LV2/LADSPA plugins shipped | audio DSP chain | pending |
 | Windows reference recording of the speakers | speaker chain tuning | pending |

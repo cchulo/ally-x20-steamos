@@ -1,1 +1,4 @@
 overlay/ucm2/sof-soundwire/tas2783.conf
+overlay/inputplumber/devices.d/50-rog_xbox_ally_x20.yaml
+overlay/inputplumber/devices.d/50-rog_xbox_ally_x20.stock.yaml
+overlay/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml

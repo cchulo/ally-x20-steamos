@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) the InputPlumber authors (https://github.com/ShadowBlip/InputPlumber)
+# ally-x20-steamos: ADAPTED copy of upstream
+#   rootfs/usr/share/inputplumber/devices/50-rog_xbox_ally_x20.yaml
+#   tag v0.83.0, commit 4ed1f50c7801e4f91fd17ce1a7b2b9d8d8b82e69 (PR #756)
+# for InputPlumber 0.78.0 .. 0.81.x (SteamOS 3.9 ships 0.78.0). Differences
+# from upstream, and why (details: docs/inputplumber.md):
+#  1. IMU mount matrix: daemons before 0.82.0 read it only from the
+#     deprecated `iio.mount_matrix` key and ignore `config.imu.mount_matrix`.
+#     0.82.0 also changed the target axis convention (upstream commit
+#     ace01953cb: new = L * old, L = [[1,0,0],[0,0,-1],[0,1,0]] for every
+#     re-verified handheld), so the upstream X20 matrix is converted with
+#     old = L^T * new.  TODO(hw): verify gyro/accel axes on a real X20.
+#  2. capability_map_id: the stock 0.78.0 `aly2` map predates upstream's
+#     corrected Xbox Ally mapping (b5df0525f1, in 0.79.0), so this profile
+#     points at a copy of the v0.83.0 map shipped by ally-x20-steamos under
+#     its own id (capability_maps.d/ally-x20-steamos-aly2.yaml).
+# Everything else is unchanged from upstream.
+
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+# Schema version number
+version: 1
+
+# The type of configuration schema
+kind: CompositeDevice
+
+# Name of the composite device mapping
+name: ASUS ROG Xbox Ally X20
+
+# Only allow a single source device per composite device of this type.
+single_source: false
+
+# Only use this profile if *any* of the given matches matches. If this list is
+# empty, then the source devices will *always* be checked.
+# /sys/class/dmi/id/product_name
+matches:
+  - dmi_data:
+      board_name: RC74XA
+      sys_vendor: ASUS
+
+# One or more source devices to combine into a single virtual device. The events
+# from these devices will be watched and translated according to the key map.
+source_devices:
+  - group: gamepad # Used for setting attributes on load
+    hidraw:
+      vendor_id: 0x0b05
+      product_id: 0x1b4c
+      interface_num: 2
+  - group: gamepad # Used for setting attributes on load
+    hidraw:
+      vendor_id: 0x0b05
+      product_id: 0x1b4c
+      interface_num: 5
+  - group: gamepad
+    unique: false
+    evdev:
+      vendor_id: 0b05
+      product_id: 1b4c
+      handler: event*
+    events:
+      exclude:
+        - "*"
+      include:
+        - Keyboard:KeyProg1
+        - Keyboard:KeyF14
+        - Keyboard:KeyF15
+        - Keyboard:KeyF16
+        - Keyboard:KeyF21
+        - Keyboard:KeyF22
+        - Gamepad:Button:South
+        - Gamepad:Button:East
+        - Gamepad:Button:North
+        - Gamepad:Button:West
+        - Gamepad:Button:LeftBumper
+        - Gamepad:Button:RightBumper
+        - Gamepad:Button:Select
+        - Gamepad:Button:Start
+        - Gamepad:Button:Guide
+        - Gamepad:Button:LeftStick
+        - Gamepad:Button:RightStick
+        - Gamepad:Button:DPadUp
+        - Gamepad:Button:DPadDown
+        - Gamepad:Button:DPadLeft
+        - Gamepad:Button:DPadRight
+        - Gamepad:Axis:LeftStick
+        - Gamepad:Axis:RightStick
+        - Gamepad:Trigger:LeftTrigger
+        - Gamepad:Trigger:RightTrigger
+
+  - group: imu
+    iio:
+      name: bmi323-imu
+      mount_matrix:
+        x: [-1, 0, 0]
+        y: [0, -1, 0]
+        z: [0, 0, -1]
+  - group: led
+    udev:
+      sys_name: ally:rgb:joystick_rings
+      subsystem: leds
+
+# Optional configuration for the composite device
+options:
+  # If true, InputPlumber will automatically try to manage the input device. If
+  # this is false, InputPlumber will not try to manage the device unless an
+  # external service enables management of the device. Defaults to 'false'
+  auto_manage: true
+
+# The target input device(s) to emulate by default
+target_devices:
+  - xbox-elite
+  - mouse
+  - keyboard
+
+# The ID of a device event mapping in the 'event_maps' folder
+capability_map_id: ally_x20_steamos_aly2

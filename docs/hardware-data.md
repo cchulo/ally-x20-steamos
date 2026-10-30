@@ -11,7 +11,7 @@ marked `TODO(hw)`.
 | `uname -r` and `/proc/config.gz` of the stock kernel | module build pins | pending |
 | DSDT dump (`acpidump`) | `acpi/fixtures/`, ACPI override validation | pending |
 | `/sys/class/leds/` entries | RGB patch (rings only vs rings + Xbox button) | pending |
-| `SPEAKER_ID` UEFI variable value and format | firmware pair selection (JGX vs LS) | pending |
+| `SPEAKER_ID` UEFI variable value and format | firmware pair selection (JGX vs LS), `firmware/speaker-id.map` | pending: GUID `aa61eaaf-6e83-7523-b0d0-7df74bb24a81` and 0 = JGX / 1 = LS taken from hungarianhc, unconfirmed by us |
 | `aplay -l`, `journalctl -k` for `acp|sof|soundwire|tas2783` | audio component probe baseline | pending |
 | `inputplumber --version`, stock `devices/` listing | devices.d profile key compatibility | pending |
 | N-KEY hidraw report for the Quick Access button (`0xa0` expected) | `hid-asus-ally` patch | pending |

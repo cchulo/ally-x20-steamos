@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# TAS2783 amplifier tuning files for the ROG Xbox Ally X20 (PCI SSID 1043:1954).
+# Parsed by firmware/fetch-tas2783.sh. Blank lines and '#' comments are ignored.
+#
+#   commit  <linux-firmware commit the files are pinned to>
+#   url     <primary URL template>   (%PATH% and %COMMIT% are substituted)
+#   mirror  <fallback URL template>  (may repeat; tried in order)
+#   file    <supplier> <path in linux-firmware> <name the driver requests> <sha256>
+#
+# The driver (sound/soc/codecs/tas2783-sdw.c, tas_generate_fw_name) requests
+# "%04X-%1X-0x%1X.bin" = <subsystem device>-<link id>-0x<unique id>, with a
+# fallback without the "0x". linux-firmware adds the speaker supplier digit
+# (from the SPEAKER_ID UEFI variable) in the middle, so both suppliers map to
+# the same requested names; see firmware/README.md.
+commit a2dcb924f0897368b0b4f305cbf9808cdda90ce0
+url https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/%PATH%?id=%COMMIT%
+mirror https://gitlab.com/kernel-firmware/linux-firmware/-/raw/%COMMIT%/%PATH%
+
+file JGX ti/audio/tas2783/1954-0-0-0x8.bin 1954-0-0x8.bin e37c3efa1e92e72614175682c01cdcd4ceb7079878e8bafd3177c5a45dede434
+file JGX ti/audio/tas2783/1954-0-0-0xB.bin 1954-0-0xB.bin 655eb8754afc7284850988f330b6466ad782b7ae905ab7246621375a4784a8be
+file LS  ti/audio/tas2783/1954-1-0-0x8.bin 1954-0-0x8.bin 677e3d033dcc8effc5247b771a5ecd08484c3740d0086b4cd333b07af06eb563
+file LS  ti/audio/tas2783/1954-1-0-0xB.bin 1954-0-0xB.bin 0d50eae7ae4f515304f4e8ce14832654ebf3447711c283bdbf7c175c9298de1d

@@ -1,1 +1,2 @@
 overlay/ucm2/sof-soundwire/tas2783.conf
+overlay/ucm2/codecs/tas2783/init.conf

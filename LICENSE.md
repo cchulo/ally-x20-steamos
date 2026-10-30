@@ -18,6 +18,7 @@ SPDX header check skips them.
 | Path | License | Origin |
 |---|---|---|
 | `overlay/ucm2/sof-soundwire/tas2783.conf` | BSD-3-Clause | [alsa-project/alsa-ucm-conf](https://github.com/alsa-project/alsa-ucm-conf) |
+| `overlay/ucm2/codecs/tas2783/init.conf` | BSD-3-Clause | [alsa-project/alsa-ucm-conf](https://github.com/alsa-project/alsa-ucm-conf) (pinned commit and license text in `overlay/ucm2/UPSTREAM.md` and `overlay/ucm2/LICENSE.alsa-ucm-conf`) |
 | `patches/inputplumber/*` (fallback path only) | GPL-3.0-or-later | [ShadowBlip/InputPlumber](https://github.com/ShadowBlip/InputPlumber) |
 | `patches/gamescope/*` | BSD-2-Clause | [ValveSoftware/gamescope](https://github.com/ValveSoftware/gamescope) |
 | `patches/libdisplay-info/*` | MIT | [emersion/libdisplay-info](https://gitlab.freedesktop.org/emersion/libdisplay-info) |

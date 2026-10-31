@@ -2,3 +2,4 @@
 0011-hid-asus-ally-add-effect-speed-mode-sysfs.patch	drivers/hid	hid-asus-ally.ko
 0012-hid-asus-ally-map-X20-quick-access-0xa0.patch	drivers/hid	hid-asus-ally.ko
 0013-hid-asus-ally-fix-use-after-free-on-interface-unbind.patch	drivers/hid	hid-asus-ally.ko
+0014-hid-asus-ally-scale-rumble-and-vibration-intensity-to-0-100.patch	drivers/hid	hid-asus-ally.ko

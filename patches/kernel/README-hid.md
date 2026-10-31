@@ -283,3 +283,14 @@ button light. Once the report is known, add a `go_s:white:xbox_button` (or
   menu exactly once.
 - `TODO(hw)` the X20's MCU firmware version against `ROG_ALLY_X_MIN_MCU`
   (313) in `hid-asus.c`, which this series does not change.
+
+## 0014: rumble magnitudes 0..100 (in the build since 2026-10-31)
+
+[`0014-hid-asus-ally-scale-rumble-and-vibration-intensity-to-0-100.patch`](0014-hid-asus-ally-scale-rumble-and-vibration-intensity-to-0-100.patch)
+scales `FF_RUMBLE` magnitudes to the report's 0..100 range (the driver sends
+0..127) and lets `gamepad_vibration_intensity` take 0..100. Measured on the
+X20: a weak-motor value of 127 makes the MCU push white noise through the
+speaker amps, 100 does not, so the out-of-range scaling was the cause of the
+"static during rumble" reports (docs/rumble-analysis.md §7). See
+[`docs/rumble-analysis.md`](../../docs/rumble-analysis.md) §6b for why and
+for the steps to promote it.

@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Carlos Chulo <cchulo.dev@gmail.com>
+Date: Sat, 31 Oct 2026 12:00:00 -0700
+Subject: [PATCH] HID: asus-ally: scale rumble and vibration intensity to
+ 0..100
+
+ally_x_play_effect() converts the 16-bit FF_RUMBLE magnitudes with
+"/ 512", which gives 0..127. The 0x0d rumble report is the Xbox
+wireless controller rumble block (enable, left trigger, right trigger,
+strong, weak, duration, delay, loop count), and its magnitudes are
+percentages, 0..100. Every other implementation that writes this
+report uses that range:
+
+- InputPlumber v0.83.1, src/drivers/rog_ally/hid_report.rs
+  ("Magnitudes range 0-100") and driver.rs (clamps each field to 100),
+- hhd, src/hhd/device/rog_ally/base.py, AllyXHidraw.consume()
+  (min(100, magnitude * 100)),
+- kndclark/ally_module, hid-asus.c, ALLY_FF_MAX_INTENSITY 100,
+- hid-microsoft.c, ms_play_effect() (magnitude * 100 / U16_MAX for the
+  same block on the Xbox One S controller).
+
+So any request above about 78 % produced an out-of-range value
+(101..127). What the MCU does with those values is not documented. On
+an RC74XA (ROG Xbox Ally X20) the owner reports that 100 % through the
+evdev FF path feels like about 25 %, which fits firmware that wraps or
+rejects values above 100.
+
+Scale with DIV_ROUND_CLOSEST(magnitude * 100, 0xffff), so 0xffff maps
+to 100 and 0x8000 to 50.
+
+gamepad_vibration_intensity_store() rejects values above 64, but the
+driver itself initialises both channels to 0x64 (100) and the MCU
+command takes 0..100 (hhd's COMMIT_RESET sends 0x64 by default,
+ally_module accepts 0..100). Allow 0..100 so userspace can restore the
+default.
+
+Derived from: the report layout in InputPlumber v0.83.1
+(src/drivers/rog_ally/hid_report.rs, commit dbcd6c06 "feat: Add trigger
+haptics for the ROG Ally / Xbox Ally X"), hhd commit eca609b0
+(src/hhd/device/rog_ally/base.py, const.py), kndclark/ally_module
+commit 3422a5db (hid-asus.c) and drivers/hid/hid-microsoft.c in the same
+tree.
+
+Base: linux-integration 7.2.7-valve2 plus the previous patches in this
+series.
+
+DRAFT, not built or tested. TODO(hw): on an RC74XA, run
+vm/guest/rumble-test.py at 25, 50, 75 and 100 % before and after; 100 %
+must now be the strongest level. Check that
+"echo 100 100 > gamepad_vibration_intensity" is accepted.
+---
+ drivers/hid/hid-asus-ally.c | 18 ++++++++++++++----
+ 1 file changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/hid/hid-asus-ally.c b/drivers/hid/hid-asus-ally.c
+index 8d46330..4a5638a 100644
+--- a/drivers/hid/hid-asus-ally.c
++++ b/drivers/hid/hid-asus-ally.c
+@@ -29,6 +29,14 @@
+ #define FEATURE_ROG_ALLY_REPORT_ID 0x5a
+ #define FEATURE_ROG_ALLY_CODE_PAGE 0xD1
+ #define FEATURE_ROG_ALLY_REPORT_SIZE 64
++
++/*
++ * Rumble motor magnitudes in the 0x0d report and the MCU vibration
++ * intensity (xpad_cmd_set_vibe_intensity) are percentages, 0..100.
++ */
++#define ALLY_FF_MAX_MAGNITUDE 100
++#define ALLY_VIBE_MAX_INTENSITY 100
++
+ #define ALLY_X_INPUT_REPORT_USB 0x0B
+ #define ALLY_X_INPUT_REPORT_USB_SIZE 16
+ 
+@@ -425,7 +433,7 @@ struct ally_gamepad_cfg {
+ 	struct btn_mapping key_mapping[xpad_mode_mouse];
+ 	/*
+ 	 * index: left, right
+-	 * max: 64
++	 * max: ALLY_VIBE_MAX_INTENSITY (100)
+ 	 */
+ 	u8 vibration_intensity[2];
+ 
+@@ -730,7 +738,7 @@ static ssize_t gamepad_vibration_intensity_store(struct device *dev,
+ 	if (sscanf(buf, "%d %d", &left, &right) != 2)
+ 		return -EINVAL;
+ 
+-	if (left > 64 || right > 64)
++	if (left > ALLY_VIBE_MAX_INTENSITY || right > ALLY_VIBE_MAX_INTENSITY)
+ 		return -EINVAL;
+ 
+ 	ally_cfg->vibration_intensity[0] = left;
+@@ -1659,8 +1667,10 @@ static int ally_x_play_effect(struct input_dev *idev, void *data, struct ff_effe
+ 		return 0;
+ 
+ 	spin_lock_irqsave(&ally_x->lock, flags);
+-	ally_x->ff_packet->ff.magnitude_strong = effect->u.rumble.strong_magnitude / 512;
+-	ally_x->ff_packet->ff.magnitude_weak = effect->u.rumble.weak_magnitude / 512;
++	ally_x->ff_packet->ff.magnitude_strong =
++		DIV_ROUND_CLOSEST(effect->u.rumble.strong_magnitude * ALLY_FF_MAX_MAGNITUDE, 0xffff);
++	ally_x->ff_packet->ff.magnitude_weak =
++		DIV_ROUND_CLOSEST(effect->u.rumble.weak_magnitude * ALLY_FF_MAX_MAGNITUDE, 0xffff);
+ 	ally_x->update_ff = true;
+ 	spin_unlock_irqrestore(&ally_x->lock, flags);
+ 

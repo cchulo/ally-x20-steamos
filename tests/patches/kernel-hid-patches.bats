@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # SPDX-License-Identifier: GPL-2.0-only
-# Static checks for the hid-asus-ally kernel patches (patches/kernel/0010-0013)
+# Static checks for the hid-asus-ally kernel patches (patches/kernel/0010-0014)
 # and patches/kernel/modules-hid.list. Nothing here needs a kernel tree.
 load '../test_helper'
 
@@ -11,10 +11,10 @@ hid_patches() {
     ls "$PATCH_DIR"/001[0-9]-hid-asus-ally-*.patch 2>/dev/null
 }
 
-@test "the four hid-asus-ally patches exist" {
+@test "the five hid-asus-ally patches exist" {
     run hid_patches
     assert_success
-    [ "$(printf '%s\n' "$output" | grep -c .)" -eq 4 ] || {
+    [ "$(printf '%s\n' "$output" | grep -c .)" -eq 5 ] || {
         echo "$output"
         false
     }
@@ -98,7 +98,7 @@ hid_patches() {
             false
         }
     done <"$LIST"
-    [ "$n" -eq 4 ]
+    [ "$n" -eq 5 ]
 }
 
 @test "every hid-asus-ally patch is listed in modules-hid.list" {
@@ -146,4 +146,12 @@ hid_patches() {
     grep -q '^+static DEFINE_SPINLOCK(ally_drvdata_lock);' "$p"
     grep -q '^+	if (ep == ROG_ALLY_CFG_INTF_IN) {' "$p"
     grep -q '^+		drvdata.ally_x = NULL;' "$p"
+}
+
+@test "0014 scales rumble magnitudes to the MCU range 0..100 and is listed for the build" {
+    p="$(ls "$PATCH_DIR"/0014-*.patch)"
+    [ -f "$p" ]
+    grep -q '^Subject: ' "$p"
+    grep -qE '100' "$p"
+    grep -q '^0014-' "$PATCH_DIR/modules-hid.list"
 }

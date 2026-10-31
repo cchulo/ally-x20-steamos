@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 name: test
+# Linux only: macOS runners cost 10x per minute and the target (SteamOS) runs
+# bash 5. bash 3.2 compatibility is checked by developers locally (make check).
 on:
   push:
     branches: [main]
@@ -19,13 +21,3 @@ jobs:
         run: make lint
       - name: Unit tests (bats + pytest)
         run: make test
-  bash32-compat:
-    # macOS dev hosts run bash 3.2; make sure the shell libraries still load there.
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run suites under /bin/bash 3.2
-        run: |
-          brew install bats-core jq >/dev/null
-          /bin/bash --version | head -n1
-          ./tests/run.sh

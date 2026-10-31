@@ -94,20 +94,36 @@ slot. Add new versions to `build/kernels.txt` so CI builds them.
 Steps 1 and 2 provide no `.c` files, so the `M=` directories come from a
 blobless sparse checkout of the exact Valve tag (the first two path
 components of each `M=` dir, so relative includes like `../../codecs`
-resolve), cached in `CACHE_DIR/valve-sparse/<kver>`.
+resolve, plus the directory of every `include/` header a patch changes),
+cached in `CACHE_DIR/valve-sparse/<kver>`. The cache records its paths
+(`sparse=` in `.ax20-source`) and is fetched again when a new list needs
+more.
 
 ## What the script then does
 
 1. Reads every `patches/kernel/modules*.list` (`<patch>\t<M= dir>\t<ko>`).
-   Every file a patch touches must be under its `M=` dir, otherwise a
-   headers-based build would silently ignore it.
+   Every file a patch touches must be under one of the `M=` dirs it is
+   listed with, otherwise a headers-based build would silently ignore it.
+   Two exceptions: `Documentation/` (not applied) and `include/` (see 3).
+   A patch that changes a shared header must be listed once for every
+   module that uses it.
 2. Hard-link copies the source into a work tree and applies the patches in
    file-name order with `git apply`. A patch that only applies in reverse
    is already in Valve's tree: it is skipped and recorded as
-   `patch.<file>.status=already-upstream`. A module whose patches are all
+   `patch.<file>.status=already-upstream`. So is a patch whose description
+   has a `Valve-Upstream: <x.y.z>-valveN` line when the target's tag is that
+   tag or newer: a backport that had to be adjusted for an older tree no
+   longer reverse-applies on the tree that carries the original. A module whose patches are all
    upstream is not built and is recorded as `module.<name>=superseded`.
    A patch that applies neither way fails the build.
-3. `make -C <headers> M=<work>/<dir> modules` for each distinct dir.
+3. `make -C <headers> M=<work>/<dir> <name>.ko…` for each distinct dir,
+   naming only the listed modules (kbuild single targets), so a dir such as
+   `sound/soc/codecs` does not build every configured codec. When an applied
+   patch changes an `include/` header, the patched copies are put in
+   `<work>/tree.include` and passed as
+   `NOSTDINC_FLAGS="-nostdinc -I<work>/tree.include"`, the only kbuild flags
+   that come before the kernel's own `include/` (the top Makefile sets
+   `NOSTDINC_FLAGS` to just `-nostdinc`).
 4. For each listed module: `strip --strip-debug`, `modinfo -F vermagic`
    must start with KVER, every `nm -u` symbol must be exported in
    `Module.symvers` (headers plus the M= dirs' own), and CRCs from
@@ -197,7 +213,7 @@ while no `patches/kernel/modules*.list` exists.
 |---|---|---|
 | step 2 headers package | 90 MB download, 320 MB unpacked | ~1 min |
 | sparse Valve checkout of the M= dirs | tens of MB | <1 min |
-| `make M=sound/soc/amd`, `M=drivers/hid` | | a few minutes |
+| `make` of the listed `.ko` files (single targets) | | a few minutes |
 | step 3 via the `.src.tar.gz` | 3.4 GB download, ~8 GB unpacked | long |
 | step 3 full kernel build for Module.symvers | ~15 GB | 20-60 min |
 

@@ -1,0 +1,300 @@
+From 021e9da34c58493a570c4cde15a3213afd1dcaa8 Mon Sep 17 00:00:00 2001
+From: Matthew Schwartz <matthew.schwartz@linux.dev>
+Date: Sat, 17 Oct 2026 21:30:43 -0700
+Subject: [PATCH] [FOR-UPSTREAM] ASoC: tas2783-sdw: keep the volume settings
+ across resets
+
+The register cache is dropped when the amp attaches uninitialized and
+again after the firmware download, so the Amp Volume and Speaker Volume
+registers are not cached while the amp is runtime suspended, and every
+read or write of those controls fails with -EBUSY. On a platform that
+powers the SoundWire link off when idle, such as the ASUS ROG Xbox Ally
+X20, the amp is also reset and initialized again on every wake, so a
+volume set while it was awake is lost the next time the link idles.
+
+Keep both settings in the driver, as the cache has to be dropped
+whenever the reset and the firmware download change registers behind
+it. Reads return the kept value, a write reaches the device only while
+it is runtime active and initialized, and the settings are programmed
+again after every init and resume. Until userspace sets a control, the
+value the firmware leaves after each init is adopted instead, so its
+tuning stays in effect. Waking the amp for a control access would
+instead cost a full init of both X20 amps, about 0.2 s each.
+
+Fixes: b627da430357 ("ASoC: tas2783-sdw: drop stale regcache on uninitialized re-attach")
+Signed-off-by: Matthew Schwartz <matthew.schwartz@linux.dev>
+
+ally-x20-steamos: backport of Valve linux-integration commit
+021e9da34c58493a570c4cde15a3213afd1dcaa8 (mirror
+github.com/evlaV/linux-integration, in tag 7.2.10-valve1) to
+7.2.7-valve2 (31504582a073). On v7.2.7 a change to Amp Volume or
+Speaker Volume is lost the next time the SoundWire link idles, and
+both controls fail with -EBUSY while the amps are runtime suspended.
+
+Adjusted: the tas_io_init() hunk. Valve's context has the
+"Re-active AMP after resume" write from 65eadd5b0e65 ("add firmware
+download status check"), which 7.2.7-valve2 does not have; the new
+volume sync block now follows the init writes directly. The probe hunk
+loses the "tas_dev->fw_version = 0;" context line for the same reason.
+The code added is otherwise identical.
+
+Valve carries 65eadd5b0e65, a15043a1338a (mono split, deliberately not
+used here, see 0001) and five other tas2783 changes before this
+commit, so it does not reverse-apply on 7.2.10-valve1 as written; the
+Valve-Upstream line below tells build/build-modules.sh to treat it as
+present from that tag on.
+
+Valve-Upstream: 7.2.10-valve1
+Derived from: evlaV/linux-integration 021e9da34c58 "[FOR-UPSTREAM]
+  ASoC: tas2783-sdw: keep the volume settings across resets" by
+  Matthew Schwartz
+---
+ sound/soc/codecs/tas2783-sdw.c | 159 +++++++++++++++++++++++++++++++--
+ 1 file changed, 151 insertions(+), 8 deletions(-)
+
+diff --git a/sound/soc/codecs/tas2783-sdw.c b/sound/soc/codecs/tas2783-sdw.c
+index 4fbbf2ca5bf9..bbd201700a09 100644
+--- a/sound/soc/codecs/tas2783-sdw.c
++++ b/sound/soc/codecs/tas2783-sdw.c
+@@ -12,6 +12,7 @@
+ // Author: Baojun Xu <baojun.xu@ti.com>
+ // Author: Kevin Lu <kevin-lu@ti.com>
+ 
++#include <linux/bitfield.h>
+ #include <linux/unaligned.h>
+ #include <linux/crc32.h>
+ #include <linux/efi.h>
+@@ -88,6 +89,15 @@ struct tas2783_prv {
+ 	struct mutex calib_lock;
+ 	/* pde and firmware download */
+ 	struct mutex pde_lock;
++	/* volume settings, kept across resets */
++	struct mutex vol_lock;
++	unsigned int amp_level;
++	unsigned int dvc_level;
++	/* set by userspace, so program it instead of adopting it */
++	bool amp_set;
++	bool dvc_set;
++	/* runtime active, so volume writes reach the device */
++	bool vol_live;
+ 	struct regmap *regmap;
+ 	struct device *dev;
+ 	struct class *class;
+@@ -528,36 +538,151 @@ static const struct regmap_sdw_mbq_cfg tas2783_mbq_cfg = {
+ 	.mbq_size = tas2783_sdca_mbq_size,
+ };
+ 
++#define TAS2783_AMP_LEVEL_MAX	20
++#define TAS2783_DVC_LVL_MAX	200
++
++/* forced, as a failed write leaves the new value in the cache */
++static s32 tas2783_write_amp_level(struct tas2783_prv *tas_dev,
++				   unsigned int level)
++{
++	return regmap_write_bits(tas_dev->regmap, TAS2783_AMP_LEVEL,
++				 TAS2783_AMP_LEVEL_MASK,
++				 FIELD_PREP(TAS2783_AMP_LEVEL_MASK, level));
++}
++
++static s32 tas2783_write_dvc_level(struct tas2783_prv *tas_dev,
++				   unsigned int level)
++{
++	return regmap_write(tas_dev->regmap, TAS2783_DVC_LVL,
++			    TAS2783_DVC_LVL_MAX - level);
++}
++
++/* program the volume settings userspace set, adopt the firmware ones */
++static s32 tas2783_sync_volume(struct tas2783_prv *tas_dev)
++{
++	unsigned int val;
++	s32 ret;
++
++	lockdep_assert_held(&tas_dev->vol_lock);
++
++	if (tas_dev->amp_set) {
++		ret = tas2783_write_amp_level(tas_dev, tas_dev->amp_level);
++	} else {
++		ret = regmap_read(tas_dev->regmap, TAS2783_AMP_LEVEL, &val);
++		if (!ret) {
++			val = FIELD_GET(TAS2783_AMP_LEVEL_MASK, val);
++			tas_dev->amp_level = umin(val, TAS2783_AMP_LEVEL_MAX);
++		}
++	}
++	if (ret)
++		return ret;
++
++	if (tas_dev->dvc_set)
++		return tas2783_write_dvc_level(tas_dev, tas_dev->dvc_level);
++
++	ret = regmap_read(tas_dev->regmap, TAS2783_DVC_LVL, &val);
++	if (!ret)
++		tas_dev->dvc_level = TAS2783_DVC_LVL_MAX -
++				     umin(val, TAS2783_DVC_LVL_MAX);
++
++	return ret;
++}
++
++static bool tas2783_vol_valid(struct snd_kcontrol *kcontrol, long val)
++{
++	struct soc_mixer_control *mc =
++		(struct soc_mixer_control *)kcontrol->private_value;
++
++	if (mc->platform_max && val > mc->platform_max)
++		return false;
++
++	return val >= 0 && val <= mc->max;
++}
++
+ static s32 tas2783_digital_getvol(struct snd_kcontrol *kcontrol,
+ 				  struct snd_ctl_elem_value *ucontrol)
+ {
+-	return snd_soc_get_volsw(kcontrol, ucontrol);
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct tas2783_prv *tas_dev = snd_soc_component_get_drvdata(component);
++
++	guard(mutex)(&tas_dev->vol_lock);
++	ucontrol->value.integer.value[0] = tas_dev->dvc_level;
++
++	return 0;
+ }
+ 
+ static s32 tas2783_digital_putvol(struct snd_kcontrol *kcontrol,
+ 				  struct snd_ctl_elem_value *ucontrol)
+ {
+-	return snd_soc_put_volsw(kcontrol, ucontrol);
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct tas2783_prv *tas_dev = snd_soc_component_get_drvdata(component);
++	long val = ucontrol->value.integer.value[0];
++	s32 ret;
++
++	if (!tas2783_vol_valid(kcontrol, val))
++		return -EINVAL;
++
++	guard(mutex)(&tas_dev->vol_lock);
++	if (tas_dev->vol_live && tas_dev->hw_init) {
++		ret = tas2783_write_dvc_level(tas_dev, val);
++		if (ret)
++			return ret;
++	}
++
++	tas_dev->dvc_set = true;
++	if (val == tas_dev->dvc_level)
++		return 0;
++
++	tas_dev->dvc_level = val;
++
++	return 1;
+ }
+ 
+ static s32 tas2783_amp_getvol(struct snd_kcontrol *kcontrol,
+ 			      struct snd_ctl_elem_value *ucontrol)
+ {
+-	return snd_soc_get_volsw(kcontrol, ucontrol);
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct tas2783_prv *tas_dev = snd_soc_component_get_drvdata(component);
++
++	guard(mutex)(&tas_dev->vol_lock);
++	ucontrol->value.integer.value[0] = tas_dev->amp_level;
++
++	return 0;
+ }
+ 
+ static s32 tas2783_amp_putvol(struct snd_kcontrol *kcontrol,
+ 			      struct snd_ctl_elem_value *ucontrol)
+ {
+-	return snd_soc_put_volsw(kcontrol, ucontrol);
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct tas2783_prv *tas_dev = snd_soc_component_get_drvdata(component);
++	long val = ucontrol->value.integer.value[0];
++	s32 ret;
++
++	if (!tas2783_vol_valid(kcontrol, val))
++		return -EINVAL;
++
++	guard(mutex)(&tas_dev->vol_lock);
++	if (tas_dev->vol_live && tas_dev->hw_init) {
++		ret = tas2783_write_amp_level(tas_dev, val);
++		if (ret)
++			return ret;
++	}
++
++	tas_dev->amp_set = true;
++	if (val == tas_dev->amp_level)
++		return 0;
++
++	tas_dev->amp_level = val;
++
++	return 1;
+ }
+ 
+ static const struct snd_kcontrol_new tas2783_snd_controls[] = {
+ 	SOC_SINGLE_RANGE_EXT_TLV("Amp Volume", TAS2783_AMP_LEVEL,
+-				 1, 0, 20, 0, tas2783_amp_getvol,
++				 1, 0, TAS2783_AMP_LEVEL_MAX, 0, tas2783_amp_getvol,
+ 				 tas2783_amp_putvol, tas2781_amp_tlv),
+ 	SOC_SINGLE_RANGE_EXT_TLV("Speaker Volume", TAS2783_DVC_LVL,
+-				 0, 0, 200, 1, tas2783_digital_getvol,
++				 0, 0, TAS2783_DVC_LVL_MAX, 1, tas2783_digital_getvol,
+ 				 tas2783_digital_putvol, tas2781_dvc_tlv),
+ };
+ 
+@@ -1073,6 +1198,9 @@ static s32 tas2783_sdca_dev_suspend(struct device *dev)
+ {
+ 	struct tas2783_prv *tas_dev = dev_get_drvdata(dev);
+ 
++	scoped_guard(mutex, &tas_dev->vol_lock)
++		tas_dev->vol_live = false;
++
+ 	if (!tas_dev->hw_init)
+ 		return 0;
+ 
+@@ -1105,6 +1233,14 @@ static s32 tas2783_sdca_dev_resume(struct device *dev)
+ 		return ret;
+ 	}
+ 
++	guard(mutex)(&tas_dev->vol_lock);
++	if (tas_dev->hw_init) {
++		ret = tas2783_sync_volume(tas_dev);
++		if (ret)
++			return ret;
++	}
++	tas_dev->vol_live = true;
++
+ 	return 0;
+ }
+ 
+@@ -1200,11 +1336,14 @@ static s32 tas_io_init(struct device *dev, struct sdw_slave *slave)
+ 			ret = regmap_multi_reg_write(tas_dev->regmap, tas2783_init_seq,
+ 						     ARRAY_SIZE(tas2783_init_seq));
+ 
++		if (!ret) {
++			guard(mutex)(&tas_dev->vol_lock);
++			ret = tas2783_sync_volume(tas_dev);
++			tas_dev->hw_init = !ret;
++		}
+ 		if (ret)
+ 			dev_err(tas_dev->dev,
+ 				"init writes failed, err=%d", ret);
+-		else
+-			tas_dev->hw_init = true;
+ 	}
+ 
+ 	return ret;
+@@ -1361,6 +1500,9 @@ static s32 tas_sdw_probe(struct sdw_slave *peripheral,
+ 	tas_dev->hw_init = false;
+ 	mutex_init(&tas_dev->calib_lock);
+ 	mutex_init(&tas_dev->pde_lock);
++	mutex_init(&tas_dev->vol_lock);
++	tas_dev->amp_level = TAS2783_AMP_LEVEL_MAX;
++	tas_dev->dvc_level = TAS2783_DVC_LVL_MAX;
+ 
+ 	init_waitqueue_head(&tas_dev->fw_wait);
+ 	dev_set_drvdata(dev, tas_dev);
+@@ -1386,6 +1528,7 @@ static void tas_sdw_remove(struct sdw_slave *peripheral)
+ 	tas_remove(tas_dev);
+ 	mutex_destroy(&tas_dev->calib_lock);
+ 	mutex_destroy(&tas_dev->pde_lock);
++	mutex_destroy(&tas_dev->vol_lock);
+ 	dev_set_drvdata(&peripheral->dev, NULL);
+ }
+ 

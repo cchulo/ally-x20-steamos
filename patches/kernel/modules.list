@@ -1,2 +1,8 @@
 0001-ASoC-amd-acpi-add-RC74XA-link0-tas2783-layout.patch	sound/soc/amd/acp	snd-soc-acpi-amd-match.ko
 0002-ACPI-x86-quirk-ignore-acp-audio-config-flag-RC74XA.patch	sound/soc/amd	snd-acp-config.ko
+0003-ASoC-sdw_utils-honor-empty-DisCo-port-lists.patch	sound/soc/sdw_utils	snd-soc-sdw-utils.ko
+0003-ASoC-sdw_utils-honor-empty-DisCo-port-lists.patch	sound/soc/amd/acp	snd-acp-sdw-legacy-mach.ko
+0003-ASoC-sdw_utils-honor-empty-DisCo-port-lists.patch	sound/soc/amd/acp	snd-acp-sdw-sof-mach.ko
+0004-ASoC-tas2783-sdw-keep-the-volume-settings-across-resets.patch	sound/soc/codecs	snd-soc-tas2783-sdw.ko
+0005-ASoC-tas2783-sdw-load-the-firmware-synchronously.patch	sound/soc/codecs	snd-soc-tas2783-sdw.ko
+0006-ASoC-tas2783-sdw-refuse-playback-when-init-writes-failed.patch	sound/soc/codecs	snd-soc-tas2783-sdw.ko

@@ -118,10 +118,29 @@ make_desc() {
     [ "$(bm_patch_touched_files "$PATCHES_DIR/0011-hid.patch")" = drivers/hid/hid-asus-ally-new.h ]
     run bash -c '. "$1"; bm_list_entries "$2" | bm_check_patch_scope "$2"' _ "$REPO_ROOT/build/build-modules.sh" "$PATCHES_DIR"
     assert_success
+    # include/ headers are allowed: they are searched first for every M= build
     printf -- '--- a/include/linux/hid.h\n+++ b/include/linux/hid.h\n@@ -1 +1 @@\n-a\n+b\n' >"$PATCHES_DIR/0011-hid.patch"
     run bash -c '. "$1"; bm_list_entries "$2" | bm_check_patch_scope "$2"' _ "$REPO_ROOT/build/build-modules.sh" "$PATCHES_DIR"
+    assert_success
+    printf -- '--- a/drivers/input/joydev.c\n+++ b/drivers/input/joydev.c\n@@ -1 +1 @@\n-a\n+b\n' >"$PATCHES_DIR/0011-hid.patch"
+    run bash -c '. "$1"; bm_list_entries "$2" | bm_check_patch_scope "$2"' _ "$REPO_ROOT/build/build-modules.sh" "$PATCHES_DIR"
     assert_failure
-    assert_output_contains "include/linux/hid.h, outside M=drivers/hid"
+    assert_output_contains "drivers/input/joydev.c, outside M=drivers/hid"
+}
+
+@test "bm_check_patch_scope: a patch listed for several M= dirs may touch all of them" {
+    printf '0003-x.patch\tsound/soc/sdw_utils\tsnd-soc-sdw-utils.ko\n0003-x.patch\tsound/soc/amd/acp\tsnd-acp-sdw-sof-mach.ko\n' >"$PATCHES_DIR/modules.list"
+    {
+        printf -- '--- a/include/sound/soc_sdw_utils.h\n+++ b/include/sound/soc_sdw_utils.h\n@@ -1 +1 @@\n-a\n+b\n'
+        printf -- '--- a/sound/soc/amd/acp/acp-sdw-sof-mach.c\n+++ b/sound/soc/amd/acp/acp-sdw-sof-mach.c\n@@ -1 +1 @@\n-a\n+b\n'
+        printf -- '--- a/sound/soc/sdw_utils/soc_sdw_utils.c\n+++ b/sound/soc/sdw_utils/soc_sdw_utils.c\n@@ -1 +1 @@\n-a\n+b\n'
+    } >"$PATCHES_DIR/0003-x.patch"
+    run bash -c '. "$1"; bm_list_entries "$2" | bm_check_patch_scope "$2"' _ "$REPO_ROOT/build/build-modules.sh" "$PATCHES_DIR"
+    assert_success
+    printf -- '--- a/sound/soc/intel/boards/sof_sdw.c\n+++ b/sound/soc/intel/boards/sof_sdw.c\n@@ -1 +1 @@\n-a\n+b\n' >>"$PATCHES_DIR/0003-x.patch"
+    run bash -c '. "$1"; bm_list_entries "$2" | bm_check_patch_scope "$2"' _ "$REPO_ROOT/build/build-modules.sh" "$PATCHES_DIR"
+    assert_failure
+    assert_output_contains "sound/soc/intel/boards/sof_sdw.c, outside M=sound/soc/amd/acp,sound/soc/sdw_utils"
 }
 
 @test "repo database lookup on a gzip db (exact name and version)" {
@@ -372,4 +391,77 @@ make_patch() {
     write_lists
     BM_ENTRIES=$(bm_list_entries "$PATCHES_DIR")
     [ "$(bm_sparse_dirs | tr '\n' ' ')" = "drivers/hid sound/soc " ]
+}
+
+@test "bm_sparse_dirs adds the directories of patched include/ headers; bm_sparse_has checks a cached tree" {
+    write_lists
+    printf -- '--- a/include/sound/soc_sdw_utils.h\n+++ b/include/sound/soc_sdw_utils.h\n@@ -1 +1 @@\n-a\n+b\n' >"$PATCHES_DIR/0001-asoc.patch"
+    BM_ENTRIES=$(bm_list_entries "$PATCHES_DIR")
+    [ "$(bm_sparse_dirs | tr '\n' ' ')" = "drivers/hid include/sound sound/soc " ]
+    mkdir -p "$BATS_TEST_TMPDIR/sp"
+    printf 'url=u\nref=r\nsha256=\nsparse=drivers/hid sound/soc \n' >"$BATS_TEST_TMPDIR/sp/.ax20-source"
+    ! bm_sparse_has "$BATS_TEST_TMPDIR/sp"
+    printf 'url=u\nref=r\nsha256=\nsparse=drivers/hid include/sound sound/soc \n' >"$BATS_TEST_TMPDIR/sp/.ax20-source"
+    bm_sparse_has "$BATS_TEST_TMPDIR/sp"
+}
+
+@test "bm_tag_ge orders Valve tags numerically" {
+    bm_tag_ge 7.2.10-valve1 7.2.10-valve1
+    bm_tag_ge 7.2.10-valve2 7.2.10-valve1
+    bm_tag_ge 7.3-valve1 7.2.10-valve1
+    ! bm_tag_ge 7.2.7-valve2 7.2.10-valve1
+    ! bm_tag_ge 7.2.9-valve9 7.2.10-valve1
+    ! bm_tag_ge junk 7.2.10-valve1
+}
+
+@test "a Valve-Upstream tag marks a backport upstream on that tag and later, never earlier" {
+    command -v git >/dev/null 2>&1 || skip "git not installed"
+    printf '0004-tas.patch\tsound/soc/codecs\tsnd-soc-tas2783-sdw.ko\n' >"$PATCHES_DIR/modules.list"
+    make_patch t sound/soc/codecs/tas2783-sdw.c 'old line' 'new line' "$BATS_TEST_TMPDIR/body.diff"
+    printf 'From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001\nSubject: [PATCH] x\n\nValve-Upstream: 7.2.10-valve1\n---\n' >"$PATCHES_DIR/0004-tas.patch"
+    cat "$BATS_TEST_TMPDIR/body.diff" >>"$PATCHES_DIR/0004-tas.patch"
+    [ "$(bm_patch_valve_upstream "$PATCHES_DIR/0004-tas.patch")" = 7.2.10-valve1 ]
+    BM_ENTRIES=$(bm_list_entries "$PATCHES_DIR")
+    tree="$BATS_TEST_TMPDIR/tree"
+    mkdir -p "$tree/sound/soc/codecs"
+    # Valve's newer file: the backport neither applies nor reverse-applies
+    printf 'rewritten upstream\n' >"$tree/sound/soc/codecs/tas2783-sdw.c"
+    BM_TAG=7.2.10-valve1
+    [ "$(bm_patch_state "$tree" "$PATCHES_DIR/0004-tas.patch")" = upstream ]
+    bm_apply_patches "$tree"
+    bm_is_superseded snd-soc-tas2783-sdw
+    BM_TAG=7.2.7-valve2
+    [ "$(bm_patch_state "$tree" "$PATCHES_DIR/0004-tas.patch")" = conflict ]
+    printf 'old line\n' >"$tree/sound/soc/codecs/tas2783-sdw.c"
+    [ "$(bm_patch_state "$tree" "$PATCHES_DIR/0004-tas.patch")" = applies ]
+}
+
+@test "patched include/ headers go ahead of the kernel's; only the listed .ko files are built" {
+    command -v git >/dev/null 2>&1 || skip "git not installed"
+    printf '0003-x.patch\tsound/soc/sdw_utils\tsnd-soc-sdw-utils.ko\n0003-x.patch\tsound/soc/amd/acp\tsnd-acp-sdw-sof-mach.ko\n0003-x.patch\tsound/soc/amd/acp\tsnd-acp-sdw-legacy-mach.ko\n' >"$PATCHES_DIR/modules.list"
+    make_patch t include/sound/soc_sdw_utils.h 'struct old' 'struct new' "$BATS_TEST_TMPDIR/h.diff"
+    make_patch t sound/soc/sdw_utils/soc_sdw_utils.c 'c old' 'c new' "$BATS_TEST_TMPDIR/c.diff"
+    cat "$BATS_TEST_TMPDIR/h.diff" "$BATS_TEST_TMPDIR/c.diff" >"$PATCHES_DIR/0003-x.patch"
+    BM_ENTRIES=$(bm_list_entries "$PATCHES_DIR")
+    tree="$BATS_TEST_TMPDIR/tree"
+    mkdir -p "$tree/include/sound" "$tree/sound/soc/sdw_utils" "$tree/sound/soc/amd/acp"
+    printf 'struct old\n' >"$tree/include/sound/soc_sdw_utils.h"
+    printf 'c old\n' >"$tree/sound/soc/sdw_utils/soc_sdw_utils.c"
+    BM_TAG=7.2.7-valve2 BM_HEADERS_DIR=/hdr JOBS=2
+    bm_apply_patches "$tree"
+    [ "$BM_INCLUDE_OVERLAY" = "$tree.include" ]
+    [ "$(cat "$tree.include/sound/soc_sdw_utils.h")" = "struct new" ]
+    [ "$(bm_make_args "$tree" sound/soc/amd/acp | tr '\n' '|')" = "-C|/hdr|M=$tree/sound/soc/amd/acp|-j2|NOSTDINC_FLAGS=-nostdinc -I$tree.include|snd-acp-sdw-legacy-mach.ko|snd-acp-sdw-sof-mach.ko|" ]
+    bm_make() { printf '%s\n' "$@" >>"$BATS_TEST_TMPDIR/make.log"; }
+    bm_build_mdirs "$tree"
+    grep -qx "M=$tree/sound/soc/sdw_utils" "$BATS_TEST_TMPDIR/make.log"
+    grep -qx 'snd-soc-sdw-utils.ko' "$BATS_TEST_TMPDIR/make.log"
+    [ "$(grep -c '^NOSTDINC_FLAGS=' "$BATS_TEST_TMPDIR/make.log")" -eq 2 ]
+}
+
+@test "without a patched header no NOSTDINC_FLAGS are passed" {
+    printf '0010-hid.patch\tdrivers/hid\thid-asus-ally.ko\n' >"$PATCHES_DIR/modules-hid.list"
+    BM_ENTRIES=$(bm_list_entries "$PATCHES_DIR")
+    BM_INCLUDE_OVERLAY="" BM_SUPERSEDED="" BM_HEADERS_DIR=/hdr JOBS=1
+    [ "$(bm_make_args /t drivers/hid | tr '\n' '|')" = "-C|/hdr|M=/t/drivers/hid|-j1|hid-asus-ally.ko|" ]
 }

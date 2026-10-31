@@ -6,7 +6,7 @@ Stock SteamOS registers the X20's joystick rings as
 `/sys/class/leds/ally:rgb:joystick_rings`. The Steam client does not know that
 name, and the LED's colour layout does not match what Steam writes, so
 **Settings → Customization** has no RGB controls. ally-x20-steamos rebuilds
-`hid-asus-ally` with five patches (`patches/kernel/0010`–`0014`, see
+`hid-asus-ally` with six patches (`patches/kernel/0010`–`0015`, see
 [`patches/kernel/README-hid.md`](../patches/kernel/README-hid.md)):
 
 1. The rings are registered as `go_s:rgb:joystick_rings` (a name Steam knows),

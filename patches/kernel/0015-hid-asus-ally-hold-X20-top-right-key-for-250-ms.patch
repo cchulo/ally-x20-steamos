@@ -1,0 +1,138 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Carlos Chulo <cchulo.dev@gmail.com>
+Date: Sat, 31 Oct 2026 12:30:00 -0700
+Subject: [PATCH] HID: asus-ally: hold the ROG Xbox Ally X20 top-right key
+ (KEY_PROG2) for 250 ms
+
+The X20's MCU reports the top-right (capture) button as "5a a0" followed
+by "5a 00" about 1 ms later, however long the button is physically held
+(measured on an RC74XA with vm/guest/watch-buttons.py: press at
+2.002 s, release at 2.003 s). Patch 0012 passed that straight through as
+a 1 ms KEY_PROG2 tap.
+
+InputPlumber (0.78.0, the SteamOS daemon) maps that key to its
+"Screenshot" capability, and its Steam Deck target has no screenshot
+button, so it synthesises a chord: Guide pressed at once, R1 pressed
+160 ms later; on release, R1 released after 160 ms and Guide after
+240 ms (src/input/target/steam_deck.rs). With a 1 ms tap the R1 release
+is queued 8 ms after the press, i.e. for t = 168 ms, before the R1
+press has fired at t = 160 ms. When that press fires, write_event()
+"clears any stale queued events for this capability" and deletes the
+pending R1 release. R1 stays held in the virtual Deck pad until the
+real bumper is pressed, so the next Xbox (Guide) press is Steam+R1 and
+takes a screenshot too. Reproduced on the X20: Xbox works from boot,
+breaks after one capture press, recovers after one R1 press. A held key
+never hits this because its release is queued after the chord started.
+
+Report KEY_PROG2 pressed when 0xa0 arrives, ignore the MCU's immediate
+release, and release the key from a delayed work item 250 ms later. The
+chord then runs Guide 0 ms, R1 160 ms, R1 up 410 ms, Guide up 490 ms,
+with nothing overlapping. A second press within the 250 ms extends the
+hold instead of producing a second tap, which is fine for a screenshot
+key. The work is cancelled in ally_x_remove(), before the devm-managed
+input device goes away (patch 0013 ordering).
+
+Only the Ally X input path changes; the "ASUS ROG Ally Config" path
+for older Allys still reports 0xa0 as a plain key with the MCU's own
+release.
+
+Derived from:
+- ShadowBlip/InputPlumber v0.78.0 src/input/target/steam_deck.rs
+  (GamepadButton::Screenshot chord: Guide at 0 ms, RightBumper at
+  160 ms, release RightBumper at 160 ms and Guide at 240 ms;
+  write_event(): MIN_FRAME_TIME 8 ms requeue of same-frame releases and
+  the "Clear any stale up events for this capability" retain that drops
+  the pending RightBumper release) and src/input/target/mod.rs (the
+  4 ms poll loop that replays scheduled events through write_event),
+  https://github.com/ShadowBlip/InputPlumber
+- vm/guest/watch-buttons.py capture on the owner's RC74XA, 2026-10-31
+  (x20-data/buttons-xbox.log: "5a a0" / KEY_PROG2 press at 2.002 s,
+  "5a 00" / release at 2.003 s)
+- Linux workqueue API (include/linux/workqueue.h: INIT_DELAYED_WORK,
+  mod_delayed_work, cancel_delayed_work_sync) in the same tree
+
+Base: linux-integration 7.2.7-valve2 plus 0010..0014.
+---
+ drivers/hid/hid-asus-ally.c | 34 ++++++++++++++++++++++++++++++++--
+ 1 file changed, 32 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/hid/hid-asus-ally.c b/drivers/hid/hid-asus-ally.c
+index 25cc5eb..94ed877 100644
+--- a/drivers/hid/hid-asus-ally.c
++++ b/drivers/hid/hid-asus-ally.c
+@@ -52,6 +52,15 @@
+  * to userspace.
+  */
+ #define ALLY_X20_KEY_RIGHT 0xa0
++/*
++ * The MCU reports 0xa0 and its 0x00 release about 1 ms apart, however long
++ * the button is held. The key is reported pressed for at least this long so
++ * userspace sees a press a human could have made. InputPlumber's Steam Deck
++ * target turns a "Screenshot" press into a Guide+R1 chord spread over 160 ms
++ * and loses the R1 release when the key goes up before the chord has
++ * started, leaving R1 held until the real bumper is pressed.
++ */
++#define ALLY_X20_KEY_HOLD_MS 250
+ 
+ #define FEATURE_KBD_LED_REPORT_ID1 0x5d
+ #define FEATURE_KBD_LED_REPORT_ID2 0x5e
+@@ -497,6 +506,8 @@ struct ally_x_device {
+ 	/* Set if the QAM and AC buttons emit Xbox and Xbox+A */
+ 	bool qam_btns_steam_mode;
+ 	bool update_ff;
++	/* Deferred release of KEY_PROG2 (X20 top-right key), see ALLY_X20_KEY_HOLD_MS */
++	struct delayed_work x20_key_release;
+ };
+ 
+ struct ally_rgb_dev {
+@@ -1620,8 +1631,16 @@ static int ally_x_raw_event(struct ally_x_device *ally_x, struct hid_report *rep
+ 			input_report_key(ally_x->input, KEY_F16, data[1] == 0xA6);
+ 			input_report_key(ally_x->input, KEY_PROG1, data[1] == 0x38 || data[1] == 0x93);
+ 		}
+-		/* X20 top-right key: one plain key in both qam modes, no chord */
+-		input_report_key(ally_x->input, KEY_PROG2, data[1] == ALLY_X20_KEY_RIGHT);
++		/*
++		 * X20 top-right key: one plain key in both qam modes, no chord.
++		 * The MCU's own release follows the press within 1 ms and is
++		 * ignored; ally_x_x20_key_release() releases the key instead.
++		 */
++		if (data[1] == ALLY_X20_KEY_RIGHT) {
++			input_report_key(ally_x->input, KEY_PROG2, 1);
++			mod_delayed_work(system_wq, &ally_x->x20_key_release,
++					 msecs_to_jiffies(ALLY_X20_KEY_HOLD_MS));
++		}
+ 		/* QAM long press */
+ 		input_report_key(ally_x->input, KEY_F17, data[1] == 0xA7);
+ 		/* QAM long press released */
+@@ -1633,6 +1652,15 @@ static int ally_x_raw_event(struct ally_x_device *ally_x, struct hid_report *rep
+ 	return 0;
+ }
+ 
++static void ally_x_x20_key_release(struct work_struct *work)
++{
++	struct ally_x_device *ally_x =
++		container_of(to_delayed_work(work), struct ally_x_device, x20_key_release);
++
++	input_report_key(ally_x->input, KEY_PROG2, 0);
++	input_sync(ally_x->input);
++}
++
+ static struct input_dev *ally_x_alloc_input_dev(struct hid_device *hdev,
+ 						const char *name_suffix)
+ {
+@@ -1807,6 +1835,7 @@ static struct ally_x_device *ally_x_create(struct hid_device *hdev)
+ 
+ 	ally_x->hdev = hdev;
+ 	INIT_WORK(&ally_x->output_worker, ally_x_work);
++	INIT_DELAYED_WORK(&ally_x->x20_key_release, ally_x_x20_key_release);
+ 	spin_lock_init(&ally_x->lock);
+ 	ally_x->output_worker_initialized = true;
+ 	ally_x->qam_btns_steam_mode =
+@@ -1864,6 +1893,7 @@ static void ally_x_remove(struct hid_device *hdev)
+ 	ally_x->output_worker_initialized = false;
+ 	spin_unlock_irqrestore(&ally_x->lock, flags);
+ 	cancel_work_sync(&ally_x->output_worker);
++	cancel_delayed_work_sync(&ally_x->x20_key_release);
+ 	sysfs_remove_file(&hdev->dev.kobj, &dev_attr_ally_x_qam_mode.attr);
+ }
+ 

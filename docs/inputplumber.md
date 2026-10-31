@@ -248,14 +248,15 @@ ovenham button table, and hhd's Ally driver. Not tested on hardware yet
 | Armoury Crate short press: Steam+X, sometimes only the Steam menu | `0xa6` → `KEY_F16` → upstream map `Keyboard` → default profile `Guide`+`North` sent together. Steam sometimes reads the pair as a Steam press. |
 | Armoury Crate long press: Quick Access ("Steam+A") | the hold code reaches `QuickAccess` (most likely `0x38`/`0x93` → `KEY_PROG1`, the Ally firmware's hold code). The Xbox targets send it as Guide+A. |
 | Capture: Steam+X | the first 0012 reported `0xa0` as `KEY_F16` too, so it got the Armoury mapping. |
+| Xbox button takes a screenshot after one capture press (fixed by patch 0015) | the MCU reports `0xa0` and its release 1 ms apart. The Deck target fakes `Screenshot` as Guide now, R1 at 160 ms, R1 up 160 ms after the release, Guide up at 240 ms. A 1 ms tap queues the R1 release (t = 168 ms) before the R1 press (t = 160 ms) fires; the press then clears the queued release (`write_event()` in `steam_deck.rs`) and the virtual pad holds R1 until the real bumper is pressed, so Xbox (Guide) becomes Steam+R1. Measured on the X20: Xbox fine from boot, broken after capture, fixed by one R1 press. 0015 holds `KEY_PROG2` for 250 ms so the release is queued after the chord has started. |
 
 ### Button table (after this change)
 
 | Button | N-KEY code | Kernel key (`qam_mode=0`) | InputPlumber capability | Steam (Deck target) |
 |---|---|---|---|---|
-| Armoury Crate (purple, top left), short | `0xa6` | `KEY_F16` | `QuickAccess` | Quick Access menu |
+| Armoury Crate (purple, top left), short | `0xa6` (confirmed 2026-10-31) | `KEY_F16` | `QuickAccess` | Quick Access menu |
 | Armoury Crate, long (`TODO(hw)`: which code) | `0x38`/`0x93`, or `KEY_F21` from the keyboard interface | `KEY_PROG1` / `KEY_F21` | `QuickAccess` | Quick Access menu (same as short, no chord) |
-| Capture (red, top right), short | `0xa0` | `KEY_PROG2` (patch 0012) | `Screenshot` | Steam+R1: screenshot |
+| Capture (red, top right), short | `0xa0` (confirmed 2026-10-31) | `KEY_PROG2`, held 250 ms (patches 0012, 0015) | `Screenshot` | Steam+R1: screenshot |
 | Capture, long (`TODO(hw)`) | `KEY_F22` if the X20 does what the Xbox Ally does | `KEY_F22` | `Screenshot` | screenshot |
 | Xbox button | report `0x0b` byte 1 bit 2 | `BTN_MODE` | `Guide` | Steam menu |
 | View / Menu | report `0x0b` | `BTN_SELECT` / `BTN_START` | `Select` / `Start` | View / Menu |

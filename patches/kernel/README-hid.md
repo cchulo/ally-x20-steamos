@@ -307,3 +307,16 @@ speaker amps, 100 does not, so the out-of-range scaling was the cause of the
 "static during rumble" reports (docs/rumble-analysis.md §7). See
 [`docs/rumble-analysis.md`](../../docs/rumble-analysis.md) §6b for why and
 for the steps to promote it.
+
+## 0015: hold the X20 top-right key for 250 ms (in the build since 2026-10-31)
+
+[`0015-hid-asus-ally-hold-X20-top-right-key-for-250-ms.patch`](0015-hid-asus-ally-hold-X20-top-right-key-for-250-ms.patch)
+keeps `KEY_PROG2` (the capture button, patch 0012) pressed for 250 ms via a
+delayed work item and ignores the MCU's own release, which arrives 1 ms after
+the press however long the button is held. InputPlumber's Steam Deck target
+fakes `Screenshot` as a Guide+R1 chord spread over 160 ms and drops the R1
+release when the key goes up before the chord has started; the virtual pad
+then holds R1 until the real bumper is pressed, so the Xbox button became
+Steam+R1 (a screenshot) after every capture press. Confirmed on the X20 and
+in InputPlumber 0.78.0 `steam_deck.rs` (`write_event()` clears queued events
+for a button when a press for it fires). See [docs/inputplumber.md](../../docs/inputplumber.md) §6.

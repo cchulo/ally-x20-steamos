@@ -76,8 +76,12 @@ The ABI is documented in `Documentation/ABI/testing/sysfs-driver-hid-asus-ally`,
 inside the patch.
 
 **How it is wired**
-- `monocolor` keeps the driver's existing per-zone path
-  (`xpad_cmd_set_leds`), so behaviour is unchanged until an effect is chosen.
+- `monocolor` (Steam's "Solid") is sent as the Aura static effect
+  `0x5a 0xb3 00 00 R G B 00 00`, latched with `EC_MODE_LED_SET` (`0x5a 0xb5`).
+  `EC_MODE_LED_APPLY` (`0x5a 0xb4`) follows only when the effect changed. The
+  colour is scaled by brightness in software, and the hardware level stays at
+  Valve's base value. The per-zone `xpad_cmd_set_leds` report is no longer
+  sent by default. See [Solid dropout](#solid-dropout) and `rgb_static_mode`.
 - Animated effects send `0x5a 0xb3 00 <effect> R G B <speed> <dir>`, then the
   existing `EC_MODE_LED_SET` (`0x5a 0xb5`), then `EC_MODE_LED_APPLY`
   (`0x5a 0xb4`), all through `asus_dev_set_report()`. Brightness maps to the
@@ -87,9 +91,69 @@ inside the patch.
   running the selected effect.
 
 **Derived from:** kndclark/ally_module `hid-asus.c` (effect report layout,
-B3→B5→B4 ordering, speed bytes, brightness mapping); SteamOS #2371; z13ctl
+B3→B5→B4 ordering, speed bytes, brightness mapping); hhd-dev/hhd
+`device/rog_ally/hid.py` (solid colour, zone numbering); seerge/g-helper
+`app/USB/Aura.cs` (Windows-side solid colour on the Ally); asusctl
+`asusd/src/aura_laptop/mod.rs` (meaning of apply); SteamOS #2371; z13ctl
 protocol notes (g-helper-derived Aura bytes); hid-lenovo-go-s ABI (attribute
 names).
+
+### Solid dropout
+
+**Symptom (X20, Steam → Settings → Customization → Joystick Lights).** With
+Effect = Solid, both rings light up, then the right ring goes dark a moment
+later. With Breathe or any other animated effect, both rings stay lit and
+animate.
+
+**Cause.** The first version of 0011 drove monocolor through two mechanisms.
+On an effect change the work item sent the Aura static report (`0xb3` zone
+`0x00`), `0xb5` and `0xb4`. On every update it then sent the per-zone
+`xpad_cmd_set_leds` report (`0x5a 0xd1 0x08 0x0c` + 4 × RGB). So the last
+thing the MCU received for Solid was always `0xd1 0x08`. The animated effects
+send only the Aura reports, and they light both rings. The only difference
+between the two paths is the trailing `0xd1 0x08` report. On the X20 it leaves
+only the left ring lit (TODO(hw): confirm with the test script below).
+
+**Protocol facts and sources**
+
+| Fact | Source |
+|---|---|
+| Solid colour is `0x5a 0xb3 <zone> 0x00 R G B <speed> <dir>`, with `0x00` for both speed and direction on static | hhd `rgb_command()` (`hid.py`); g-helper `AuraMessage()` |
+| Zone `0x00` means "all". hhd's default zone (`main`) is `0x00`, and it addresses ring halves as `0x01` left_left, `0x02` left_right, `0x03` right_left, `0x04` right_right | hhd `rgb_command()`; asusctl `AuraZone` (None=0, Key1–4 = 1–4) |
+| asusctl lists the Ally (RC71L/RC72L) with `basic_zones: []`, so one zone-0 report covers the rings | asusctl `rog-aura/data/aura_support.ron` |
+| g-helper (Windows) sends `0xb3` zone 0, then `0xb5` set, then `0xb4` apply | g-helper `Aura.ApplyAura()` |
+| hhd sends `0xb5` + `0xb4` only on a mode change. Colour updates in the same mode are `0xb3` alone | hhd `process_events()` |
+| ally_module sends `0xb3` + `0xb5` on every update. `0xb4` is sent only when its `apply` attribute is written | ally_module `asus_usb_rgb_send_zone_effect()`, `asus_usb_rgb_commit()` |
+| asusctl: "Changes won't persist unless apply is set". Its per-key/direct path sends only effect + set | asusctl `aura_laptop/mod.rs` |
+| None of hhd, g-helper, ally_module or asusctl sends `0xd1 0x08` for the rings. Only Valve's `hid-asus-ally` does, as its "software mode" | the four sources above; Valve `ally_rgb_do_work()` |
+
+The proposed hypothesis, that zone `0x00` reaches only the first ring, does
+not hold. Breathe through zone `0x00` lights both rings on the X20, and every
+working client uses zone `0x00` for solid.
+
+**Fix.** Monocolor now goes only through the Aura report:
+`0xb3` zone 0, effect 0, with the colour already scaled by brightness, then
+`0xb5`. `0xb4` is added only when the effect changed, which avoids an
+apply (possibly a flash write) on every brightness-slider step. No
+`0xd1 0x08` is sent by default.
+
+**`rgb_static_mode`** (int, `0644`, writable at runtime through
+`/sys/module/hid_asus_ally/parameters/rgb_static_mode`, or set with
+`options hid-asus-ally rgb_static_mode=N`). It takes effect on the next write
+to the LED (`effect`, `multi_intensity` or `brightness`).
+
+| Value | Monocolor sends | Notes |
+|---|---|---|
+| `0` (default) | `0xb3` zone `0x00`, `0xb5` (+`0xb4` on effect change) | what g-helper, hhd and ally_module do |
+| `1` | `0xb3` for zones `0x01`–`0x04`, then `0xb5` (+`0xb4`) | hhd's quad-zone addressing |
+| `2` | `0xd1 0x08` per-zone report only | Valve's original software mode. No Aura report, so an animated effect may keep running |
+| `3` | Aura on effect change, then `0xd1 0x08` on every update | first-version behaviour, reproduces the bug |
+
+**Device test.** `sudo vm/guest/test-rgb-solid.sh` replays Steam's writes
+(breathe → monocolor + colour + brightness, a colour-only change, and the
+reverse write order) for modes 0–3, with 3 s between steps. It asks after
+each step whether both rings are lit, prints a summary and restores the
+previous state. Report the mode(s) with "y" on every step.
 
 ## 0012 — `hid-asus-ally-map-X20-quick-access-0xa0.patch`
 
@@ -108,6 +172,31 @@ interface, and the driver only knew `0xa6`.
 **Derived from:** ovenham/rog-ally-x20-steamos-speaker-qam-fix (button table,
 `tools/x20-buttons.sh`, N-KEY ID `0b05:1b4c`); `hid-asus.c` in the same tree.
 
+## Xbox button light
+
+The X20's Xbox button glows green on Windows and is dark on Linux. The stock
+driver registers no LED for it, and these patches do not add one: no public
+source documents the command. hhd (which supports the X20 and the RC73
+Xbox Allys), kndclark/ally_module, g-helper, asusctl and InputPlumber
+control only the joystick rings. A comment in hhd's X20 path says the X20 has no
+dynamic-lighting interface. On the Ally X, hhd disables that interface
+(HID application `0x00590001`, the LampArray usage page) after wake. g-helper's Ally power mask
+(`0x5a 0xd1 0x09 0x01 <mask>`) has only the ring ("keyboard") bits.
+`xpad`'s LED class device covers only Xbox 360 pads.
+
+`vm/guest/xbox-led.sh on|off|brightness <0-100>|color R G B` writes to a
+`/sys/class/leds/*xbox_button*` device if a later driver provides one.
+Otherwise it sends an experimental probe to the N-KEY hidraw node: the Aura
+static report for one zone, `5a b3 <zone> 00 R G B 00 00`, then `5a b5`
+(set only, no apply, so nothing is written to MCU flash). The default is
+zone 5, the Aura "logo" zone in asusctl and ally_module. Try
+`--zone 5`…`8`. Zones 0–4 are the rings.
+
+`TODO(hw)`: run the probe for zones 5–8. If none lights the button, capture
+USB traffic on Windows (USBPcap) while Armoury Crate or Game Bar changes the
+button light. Once the report is known, add a `go_s:white:xbox_button` (or
+`:rgb:`) LED class device behind a module parameter.
+
 ## Validation status
 
 | Check | Result |
@@ -116,8 +205,8 @@ interface, and the driver only knew `0xa6`.
 | `git apply --check` 0012 alone on `7.2.7-valve2` | pass |
 | `git apply --check` 0011 without 0010 | fails (expected, depends on 0010) |
 | `git apply --check` on linux-stable `v7.2.7` | fails: the file does not exist there (see above) |
-| Compiled | **no**, apply-check only. No x86 kernel build was available |
-| Run on hardware | **no** |
+| Compiled | by CI (`build-modules.yml`) against `7.2.7-valve2`. The Solid fix was only apply-checked locally |
+| Run on hardware | 0010/0011 v1: yes, on an X20. Steam drives the rings, and Solid showed the dropout above. The Solid fix (`rgb_static_mode`) has not been run on hardware yet |
 
 ## Hardware TODOs
 

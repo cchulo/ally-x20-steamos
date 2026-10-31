@@ -24,10 +24,13 @@ holds sleep_animation):
 
 All of them are wired to the HID report helpers the driver already has.
 
-- monocolor keeps the existing per-zone software path
-  (xpad_cmd_set_leds on report 0x5a/0xd1) and the fixed hardware
-  level from ally_rgb_set_bright_base_max(). Behaviour is unchanged
-  unless an effect is selected.
+- monocolor ("Solid" in Steam) is sent as the Aura static effect,
+  0x5a 0xb3 00 00 <r> <g> <b> 00 00, latched with EC_MODE_LED_SET
+  (0x5a 0xb5), plus EC_MODE_LED_APPLY (0x5a 0xb4) when the effect
+  changed. The colour is scaled by brightness in software and the
+  hardware level stays at ally_rgb_set_bright_base_max(). The
+  per-zone xpad_cmd_set_leds report (0x5a 0xd1 0x08) is no longer
+  sent by default, see "Solid dropout" below.
 - Animated effects use the Aura effect report on 0x5a:
     0x5a 0xb3 <zone=0> <effect> <r> <g> <b> <speed> <direction>
   followed by EC_MODE_LED_SET (0x5a 0xb5) and then EC_MODE_LED_APPLY
@@ -48,12 +51,49 @@ All of them are wired to the HID report helpers the driver already has.
 
 The ABI is documented in Documentation/ABI/testing/sysfs-driver-hid-asus-ally.
 
+Solid dropout. A first version of this patch kept monocolor on the
+per-zone 0x5a 0xd1 0x08 report and sent the Aura static report only
+when the effect changed, so every Solid update sent 0xb3/0xb5/0xb4
+first and 0xd1 0x08 last. On a ROG Xbox Ally X20 driven from Steam's
+Customization page, Solid lit both rings and then the right ring went
+dark a moment later, while breathe and the other Aura-only effects
+kept both rings lit. The only difference between the two paths is the
+trailing 0xd1 0x08 report. Every Ally client that is known to work
+(g-helper on Windows, hhd and kndclark/ally_module on Linux) sets a
+solid colour with one 0xb3 report for zone 0x00, effect 0x00, and
+latches it with 0xb5 (and 0xb4). None of them sends 0xd1 0x08. hhd's
+default "main" zone is 0x00, and it addresses single ring halves as
+zones 0x01-0x04. So the hypothesis that zone 0x00 reaches only one
+ring does not hold: breathe on zone 0x00 lights both rings on the X20.
+
+Monocolor now uses only the Aura report. Colour and brightness updates
+send 0xb3 then 0xb5. 0xb4 follows only when the effect changed:
+asusctl notes that changes persist only with apply, which suggests
+flash, and hhd sends apply only on a mode change. Because this has not
+been checked on hardware yet, the read-write module parameter
+rgb_static_mode selects the strategy at runtime. A change takes effect
+on the next write to the LED.
+
+  0  Aura static, zone 0x00 (default)
+  1  Aura static, once per ring zone 0x01-0x04, then latch
+  2  0xd1 0x08 per-zone report only, no Aura report for monocolor
+  3  first-version behaviour: Aura on effect change, then 0xd1 0x08
+
 Derived from:
 - kndclark/ally_module, hid-asus.c (asus_usb_rgb_send_zone_effect(),
   effect table, speed/direction values, B3 -> B5 -> B4 ordering,
   0-3 brightness mapping), https://github.com/kndclark/ally_module
 - ValveSoftware/SteamOS#2371 (effect/speed sysfs proposal for
   6.18-valve hid-asus-ally)
+- hhd-dev/hhd, src/hhd/device/rog_ally/hid.py and const.py
+  (rgb_command(): solid = 0xb3 zone 0x00 mode 0x00 speed 0x00,
+  zones 0x01-0x04 = ring halves; RGB_SET 0xb5 then RGB_APPLY 0xb4 only
+  on a mode change), https://github.com/hhd-dev/hhd
+- seerge/g-helper, app/USB/Aura.cs (AuraMessage(): 0x5a 0xb3 zone 0x00
+  for the Ally, followed by MESSAGE_SET 0xb5 and MESSAGE_APPLY 0xb4),
+  https://github.com/seerge/g-helper
+- asusctl, asusd/src/aura_laptop/mod.rs ("Changes won't persist unless
+  apply is set"), https://gitlab.com/asus-linux/asusctl
 - z13ctl protocol notes, derived from g-helper (Aura mode bytes
   00/01/03/0a and speed bytes e1/eb/f5 on a related ASUS MCU),
   https://dahui.github.io/z13ctl/protocol
@@ -64,15 +104,16 @@ Derived from:
 Base: linux-integration 7.2.7-valve2 plus the previous patch in this
 series.
 
-TODO(hw): verify on an RC74XA that report 0x5a 0xb3 drives the rings
+TODO(hw): confirm with vm/guest/test-rgb-solid.sh that
+rgb_static_mode=0 keeps both rings lit on Solid. Verify on an RC74XA
+that report 0x5a 0xb3 drives the rings
 (the old suspend helper sends 0xb3 on 0x5d), that the five effects
 match their names, the speed and direction encodings, and whether
 the 0-3 level is persisted in MCU flash.
 ---
- .../ABI/testing/sysfs-driver-hid-asus-ally    | 127 ++++++
- drivers/hid/hid-asus-ally.c                   | 423 +++++++++++++++++-
- 2 files changed, 545 insertions(+), 5 deletions(-)
- create mode 100644 Documentation/ABI/testing/sysfs-driver-hid-asus-ally
+ .../ABI/testing/sysfs-driver-hid-asus-ally    | 127 +++++
+ drivers/hid/hid-asus-ally.c                   | 538 +++++++++++++++++-
+ 2 files changed, 660 insertions(+), 5 deletions(-)
 
 diff --git a/Documentation/ABI/testing/sysfs-driver-hid-asus-ally b/Documentation/ABI/testing/sysfs-driver-hid-asus-ally
 new file mode 100644
@@ -208,10 +249,10 @@ index 0000000..8370bde
 +		Applies to handhelds bound by hid-asus-ally (ROG Ally, Ally X
 +		and devices sharing their N-KEY USB IDs).
 diff --git a/drivers/hid/hid-asus-ally.c b/drivers/hid/hid-asus-ally.c
-index c649347..8c1cd00 100644
+index c649347..224aa9c 100644
 --- a/drivers/hid/hid-asus-ally.c
 +++ b/drivers/hid/hid-asus-ally.c
-@@ -54,6 +54,44 @@
+@@ -54,6 +54,46 @@
   */
  #define ALLY_RGB_LED_NAME_STEAM "go_s:rgb:joystick_rings"
  
@@ -227,6 +268,8 @@ index c649347..8c1cd00 100644
 +/* Hardware brightness levels of report 0x5d 0xba 0xc5 0xc4 <level> */
 +#define ALLY_RGB_HW_LEVEL_MAX 3
 +#define ALLY_RGB_HW_LEVEL_UNKNOWN 0xff
++/* Level sent by ally_rgb_set_bright_base_max(); monocolor dims in software */
++#define ALLY_RGB_HW_LEVEL_BASE 0x02
 +
 +/* Aura effect numbers on the wire, as used by g-helper and kndclark/ally_module */
 +enum ally_rgb_effect {
@@ -256,7 +299,61 @@ index c649347..8c1cd00 100644
  static bool steam_led_name = true;
  module_param(steam_led_name, bool, 0444);
  MODULE_PARM_DESC(steam_led_name,
-@@ -405,6 +443,10 @@ struct ally_rgb_dev {
+@@ -61,6 +101,53 @@ MODULE_PARM_DESC(steam_led_name,
+ 		 " so the Steam client lists it (default: true). Set to 0 for "
+ 		 ALLY_RGB_LED_NAME ".");
+ 
++/*
++ * How the monocolor effect (Steam's "Solid") reaches the MCU. Every Ally
++ * client that is known to work (g-helper on Windows, hhd, kndclark's
++ * ally_module) sends one Aura static report for zone 0 and latches it; none
++ * of them uses the 0xd1 0x08 per-zone report. Mixing the two made the right
++ * ring go dark on the ROG Xbox Ally X20, so the Aura report is the default
++ * and the other strategies stay selectable for hardware testing.
++ */
++enum ally_rgb_static_mode {
++	/* 0x5a 0xb3 zone 0x00 effect 0x00, then 0xb5 (and 0xb4 on effect change) */
++	ALLY_RGB_STATIC_AURA = 0,
++	/* the same report once for each ring zone 0x01..0x04, then the latch */
++	ALLY_RGB_STATIC_AURA_ZONES = 1,
++	/* only the 0x5a 0xd1 0x08 per-zone report (Valve's software mode) */
++	ALLY_RGB_STATIC_SET_LEDS = 2,
++	/* Aura static on effect change, then 0xd1 0x08 on every update */
++	ALLY_RGB_STATIC_LEGACY = 3,
++};
++
++static int rgb_static_mode = ALLY_RGB_STATIC_AURA;
++
++static int rgb_static_mode_set(const char *val, const struct kernel_param *kp)
++{
++	int mode, ret;
++
++	ret = kstrtoint(val, 0, &mode);
++	if (ret)
++		return ret;
++	if (mode < ALLY_RGB_STATIC_AURA || mode > ALLY_RGB_STATIC_LEGACY)
++		return -EINVAL;
++
++	WRITE_ONCE(rgb_static_mode, mode);
++	return 0;
++}
++
++static const struct kernel_param_ops rgb_static_mode_ops = {
++	.set = rgb_static_mode_set,
++	.get = param_get_int,
++};
++module_param_cb(rgb_static_mode, &rgb_static_mode_ops, &rgb_static_mode, 0644);
++MODULE_PARM_DESC(rgb_static_mode,
++		 "How the monocolor (Solid) effect is sent: 0 = Aura static report for "
++		 "all zones (default), 1 = Aura static report per ring zone 1-4, "
++		 "2 = per-zone 0xd1 0x08 report only, 3 = both Aura and 0xd1 0x08 "
++		 "(the original behaviour, right ring goes dark on the X20). "
++		 "Takes effect on the next write to the LED.");
++
+ static const u8 EC_INIT_STRING[] = { 0x5A, 'A', 'S', 'U', 'S', ' ', 'T', 'e','c', 'h', '.', 'I', 'n', 'c', '.', '\0' };
+ static const u8 EC_MODE_LED_APPLY[] = { 0x5A, 0xB4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+ static const u8 EC_MODE_LED_SET[] = { 0x5A, 0xB5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+@@ -405,6 +492,10 @@ struct ally_rgb_dev {
  	bool removed;
  	bool attr_group_added;
  	bool update_rgb;
@@ -267,7 +364,7 @@ index c649347..8c1cd00 100644
  	uint8_t red[ALLY_RGB_NUM_ZONES];
  	uint8_t green[ALLY_RGB_NUM_ZONES];
  	uint8_t blue[ALLY_RGB_NUM_ZONES];
-@@ -418,6 +460,12 @@ struct ally_rgb_data {
+@@ -418,6 +509,12 @@ struct ally_rgb_data {
  	uint8_t green[ALLY_RGB_NUM_ZONES];
  	uint8_t blue[ALLY_RGB_NUM_ZONES];
  	bool initialized;
@@ -280,7 +377,7 @@ index c649347..8c1cd00 100644
  };
  
  static struct ally_drvdata {
-@@ -1759,6 +1807,82 @@ static int ally_rgb_set_bright_base_max(struct hid_device *hdev)
+@@ -1759,6 +1856,126 @@ static int ally_rgb_set_bright_base_max(struct hid_device *hdev)
  	return asus_dev_set_report(hdev, buf, sizeof(buf));
  }
  
@@ -315,35 +412,79 @@ index c649347..8c1cd00 100644
 +	return ALLY_RGB_SPEED_FAST;
 +}
 +
-+/*
-+ * Program a hardware Aura effect for the whole ring: effect report (0xb3),
-+ * then set (0xb5), then apply (0xb4). Sending apply before set makes the
-+ * MCU briefly show its previous/default effect (a red pulse on Ally X).
-+ */
-+static int ally_rgb_send_aura(struct hid_device *hdev, u8 effect, u8 red, u8 green,
-+			      u8 blue, u8 speed, u8 direction)
++/* One Aura effect report: 0x5a 0xb3 <zone> <effect> <r> <g> <b> <speed> <dir> */
++static int ally_rgb_send_effect(struct hid_device *hdev, u8 zone, u8 effect, u8 red,
++				u8 green, u8 blue, u8 speed_hw, u8 direction)
 +{
 +	u8 buf[FEATURE_ROG_ALLY_REPORT_SIZE] = { [0] = FEATURE_ROG_ALLY_REPORT_ID,
-+						 [1] = ALLY_RGB_CMD_CONFIG,
-+						 [2] = ALLY_RGB_ZONE_ALL };
-+	int ret;
++						 [1] = ALLY_RGB_CMD_CONFIG };
 +
++	buf[2] = zone;
 +	buf[3] = effect;
 +	buf[4] = red;
 +	buf[5] = green;
 +	buf[6] = blue;
-+	buf[7] = ally_rgb_speed_to_hw(speed);
++	buf[7] = speed_hw;
 +	buf[8] = direction;
 +
-+	ret = asus_dev_set_report(hdev, buf, sizeof(buf));
-+	if (ret < 0)
-+		return ret;
++	return asus_dev_set_report(hdev, buf, sizeof(buf));
++}
++
++/*
++ * Latch the effect reports sent so far: set (0xb5) makes the MCU show them,
++ * apply (0xb4) is what asusctl says makes them persist. Sending apply before
++ * set makes the MCU briefly show its previous/default effect (a red pulse on
++ * Ally X).
++ */
++static int ally_rgb_latch(struct hid_device *hdev, bool apply)
++{
++	int ret;
 +
 +	ret = asus_dev_set_report(hdev, EC_MODE_LED_SET, sizeof(EC_MODE_LED_SET));
-+	if (ret < 0)
++	if (ret < 0 || !apply)
 +		return ret;
 +
 +	return asus_dev_set_report(hdev, EC_MODE_LED_APPLY, sizeof(EC_MODE_LED_APPLY));
++}
++
++/* Program a hardware Aura effect for the whole ring: 0xb3, then 0xb5, then 0xb4 */
++static int ally_rgb_send_aura(struct hid_device *hdev, u8 effect, u8 red, u8 green,
++			      u8 blue, u8 speed, u8 direction)
++{
++	int ret;
++
++	ret = ally_rgb_send_effect(hdev, ALLY_RGB_ZONE_ALL, effect, red, green, blue,
++				   ally_rgb_speed_to_hw(speed), direction);
++	if (ret < 0)
++		return ret;
++
++	return ally_rgb_latch(hdev, true);
++}
++
++/*
++ * Monocolor through the Aura static effect, for rgb_static_mode 0 and 1. The
++ * colour is already scaled by brightness. Speed and direction are 0 for
++ * static, as hhd sends them. Apply (0xb4) is only sent when the effect
++ * changed; colour and brightness updates only need set (0xb5), as in
++ * ally_module.
++ */
++static int ally_rgb_send_static(struct hid_device *hdev, int mode, u8 red, u8 green,
++				u8 blue, bool apply)
++{
++	int ret = 0;
++
++	if (mode == ALLY_RGB_STATIC_AURA_ZONES) {
++		for (u8 zone = 1; zone <= ALLY_RGB_NUM_ZONES && ret >= 0; zone++)
++			ret = ally_rgb_send_effect(hdev, zone, ALLY_RGB_EFFECT_MONOCOLOR,
++						   red, green, blue, 0, 0);
++	} else {
++		ret = ally_rgb_send_effect(hdev, ALLY_RGB_ZONE_ALL, ALLY_RGB_EFFECT_MONOCOLOR,
++					   red, green, blue, 0, 0);
++	}
++	if (ret < 0)
++		return ret;
++
++	return ally_rgb_latch(hdev, apply);
 +}
 +
 +static void ally_rgb_aura_defaults(void)
@@ -363,7 +504,7 @@ index c649347..8c1cd00 100644
  /*
   * Persistent mask of power states in which the MCU animates the joystick
   * rings (factory default: all). With the sleep bit set the MCU breathes the
-@@ -1825,9 +1949,231 @@ static ssize_t sleep_animation_index_show(struct device *dev,
+@@ -1825,9 +2042,231 @@ static ssize_t sleep_animation_index_show(struct device *dev,
  }
  DEVICE_ATTR_RO(sleep_animation_index);
  
@@ -595,7 +736,7 @@ index c649347..8c1cd00 100644
  	NULL
  };
  
-@@ -1838,8 +2184,11 @@ static const struct attribute_group ally_rgb_attr_group = {
+@@ -1838,8 +2277,12 @@ static const struct attribute_group ally_rgb_attr_group = {
  static void ally_rgb_do_work(struct work_struct *work)
  {
  	struct ally_rgb_dev *led = container_of(work, struct ally_rgb_dev, work);
@@ -604,11 +745,12 @@ index c649347..8c1cd00 100644
 +	u8 effect, speed, direction, level, red, green, blue;
 +	bool update_aura, enabled;
  	unsigned long flags;
++	int static_mode;
 +	int ret;
  
  	u8 buf[16] = { [0] = FEATURE_ROG_ALLY_REPORT_ID,
  		       [1] = FEATURE_ROG_ALLY_CODE_PAGE,
-@@ -1847,20 +2196,65 @@ static void ally_rgb_do_work(struct work_struct *work)
+@@ -1847,20 +2290,87 @@ static void ally_rgb_do_work(struct work_struct *work)
  		       [3] = xpad_cmd_len_leds };
  
  	spin_lock_irqsave(&led->lock, flags);
@@ -648,35 +790,57 @@ index c649347..8c1cd00 100644
  
 +	/*
 +	 * Animated effects run on the MCU; resend the effect so colour and
-+	 * speed changes take. Monocolor keeps the per-zone software path below
-+	 * and only needs the Aura report when leaving an animated effect.
++	 * speed changes take.
 +	 */
-+	if (update_aura || effect != ALLY_RGB_EFFECT_MONOCOLOR) {
++	if (effect != ALLY_RGB_EFFECT_MONOCOLOR) {
 +		ret = ally_rgb_send_aura(led->hdev, effect, red, green, blue, speed, direction);
 +		if (ret < 0)
 +			hid_err(led->hdev, "Ally failed to set RGB effect: %d\n", ret);
 +
-+		if (effect == ALLY_RGB_EFFECT_MONOCOLOR) {
-+			/* Dimming is done in software, keep the hardware level fixed */
-+			ret = ally_rgb_set_bright_base_max(led->hdev);
-+			led->hw_level = ALLY_RGB_HW_LEVEL_UNKNOWN;
-+		} else if (level != led->hw_level) {
-+			/* The level may be stored in MCU flash, send it only on change */
++		/* The level may be stored in MCU flash, send it only on change */
++		if (level != led->hw_level) {
 +			ret = ally_rgb_set_bright_level(led->hdev, level);
-+			if (ret >= 0)
++			if (ret < 0)
++				hid_err(led->hdev, "Ally failed to set RGB brightness: %d\n", ret);
++			else
 +				led->hw_level = level;
 +		}
-+		if (ret < 0)
-+			hid_err(led->hdev, "Ally failed to set RGB brightness: %d\n", ret);
++		return;
 +	}
 +
-+	if (effect != ALLY_RGB_EFFECT_MONOCOLOR)
++	/*
++	 * Monocolor. Do not mix the Aura static report with the 0xd1 0x08
++	 * per-zone report: on the X20 the per-zone report landing after the
++	 * Aura one leaves only the left ring lit. See rgb_static_mode.
++	 */
++	static_mode = READ_ONCE(rgb_static_mode);
++	if (static_mode == ALLY_RGB_STATIC_LEGACY) {
++		ret = update_aura ? ally_rgb_send_aura(led->hdev, effect, red, green, blue,
++						       speed, direction) : 0;
++	} else if (static_mode != ALLY_RGB_STATIC_SET_LEDS) {
++		ret = ally_rgb_send_static(led->hdev, static_mode, red, green, blue, update_aura);
++	} else {
++		ret = 0;
++	}
++	if (ret < 0)
++		hid_err(led->hdev, "Ally failed to set RGB effect: %d\n", ret);
++
++	/* Dimming is done in software, keep the hardware level fixed */
++	if (led->hw_level != ALLY_RGB_HW_LEVEL_BASE) {
++		ret = ally_rgb_set_bright_base_max(led->hdev);
++		if (ret < 0)
++			hid_err(led->hdev, "Ally failed to set RGB brightness: %d\n", ret);
++		else
++			led->hw_level = ALLY_RGB_HW_LEVEL_BASE;
++	}
++
++	if (static_mode != ALLY_RGB_STATIC_SET_LEDS && static_mode != ALLY_RGB_STATIC_LEGACY)
 +		return;
 +
  	ret = asus_dev_set_report(led->hdev, buf, sizeof(buf));
  	if (ret < 0)
  		hid_err(led->hdev, "Ally failed to set gamepad backlight: %d\n", ret);
-@@ -1929,7 +2323,18 @@ static void ally_rgb_store_settings(void)
+@@ -1929,7 +2439,18 @@ static void ally_rgb_store_settings(void)
  	memcpy(drvdata.led_rgb_data.green, led_rgb->green, arr_size);
  	memcpy(drvdata.led_rgb_data.blue, led_rgb->blue, arr_size);
  
@@ -696,7 +860,7 @@ index c649347..8c1cd00 100644
  }
  
  static void ally_rgb_restore_settings(struct ally_rgb_dev *led_rgb, struct led_classdev *led_cdev,
-@@ -1960,9 +2365,13 @@ static void ally_rgb_resume(void)
+@@ -1960,9 +2481,12 @@ static void ally_rgb_resume(void)
  
  	if (drvdata.led_rgb_data.initialized) {
  		ally_rgb_restore_settings(led_rgb, led_cdev, mc_led_info);
@@ -704,14 +868,13 @@ index c649347..8c1cd00 100644
 +		led_rgb->hw_level = ALLY_RGB_HW_LEVEL_UNKNOWN;
  		led_rgb->update_rgb = true;
 +		led_rgb->update_aura = true;
-+		if (drvdata.led_rgb_data.effect == ALLY_RGB_EFFECT_MONOCOLOR)
-+			ally_rgb_set_bright_base_max(led_rgb->hdev);
++		/* The work resends the hardware level, it is UNKNOWN now */
  		ally_rgb_schedule_work(led_rgb);
 -		ally_rgb_set_bright_base_max(led_rgb->hdev);
  	}
  }
  
-@@ -2020,6 +2429,8 @@ static struct ally_rgb_dev *ally_rgb_create(struct hid_device *hdev)
+@@ -2020,6 +2544,8 @@ static struct ally_rgb_dev *ally_rgb_create(struct hid_device *hdev)
  	 */
  	led_rgb->hdev = hdev;
  	led_rgb->removed = false;
@@ -720,7 +883,7 @@ index c649347..8c1cd00 100644
  	INIT_WORK(&led_rgb->work, ally_rgb_do_work);
  	spin_lock_init(&led_rgb->lock);
  
-@@ -2051,6 +2462,8 @@ skip_led_power:
+@@ -2051,6 +2577,8 @@ static struct ally_rgb_dev *ally_rgb_create(struct hid_device *hdev)
  	if (drvdata.led_rgb_data.initialized) {
  		msleep(1500);
  		led_rgb->update_rgb = true;

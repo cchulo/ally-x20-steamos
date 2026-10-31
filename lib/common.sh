@@ -250,10 +250,22 @@ ax20_atomic_write() {
         die "write to $dest failed"
     fi
     chmod "$mode" "$tmp"
+    # Flush before the rename: a crash right after mv must not leave a
+    # zero-filled file (measured on the X20: a hard reboot during a write
+    # padded the manifest with NUL bytes).
+    ax20_fsync "$tmp"
     mv -f "$tmp" "$dest" || {
         rm -f "$tmp"
         die "rename into $dest failed"
     }
+    ax20_fsync "$(dirname "$dest")"
+}
+
+# ax20_fsync <path> : best-effort fsync of a file or directory. coreutils
+# sync(1) accepts paths on Linux; macOS sync ignores arguments (then this is a
+# whole-system sync, which is fine for a dev host).
+ax20_fsync() {
+    sync "$1" 2>/dev/null || sync 2>/dev/null || true
 }
 
 # ax20_copy_atomic <src> <dest> [mode]

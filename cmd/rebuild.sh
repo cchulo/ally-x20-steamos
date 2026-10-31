@@ -5,7 +5,7 @@
 
 _rebuild_usage() {
     cat <<USAGE
-usage: $AX20_NAME rebuild [--kver <uname -r>] [--channel <repo>] [--source cache|release|container] [--no-self-update]
+usage: $AX20_NAME rebuild [--kver <uname -r>] [--channel <repo>] [--source cache|release|container] [--no-self-update] [--force]
 
 Makes patched modules available for a kernel, trying the local cache, then
 the release artifact for that kernel, then a container build (podman).
@@ -45,6 +45,14 @@ cmd_rebuild() {
                 ;;
             --no-self-update)
                 self_update=0
+                shift
+                ;;
+            --force)
+                # Restage even when modules for this kernel are already staged
+                # (e.g. a newer artifact in the cache). Staging itself is
+                # atomic, so never delete the staged directory by hand.
+                AX20_MODULES_FORCE=1
+                export AX20_MODULES_FORCE
                 shift
                 ;;
             -h | --help)

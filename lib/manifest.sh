@@ -89,6 +89,7 @@ manifest_record() {
         manifest_forget "$path"
     fi
     printf '%s\n' "$line" >>"$file"
+    ax20_fsync "$file"
 }
 
 # manifest_entries : all entries in insertion order (empty if no manifest).
@@ -96,7 +97,9 @@ manifest_entries() {
     local file
     file=$(ax20_manifest_file)
     [ -f "$file" ] || return 0
-    grep -v '^[[:space:]]*$' "$file" || true
+    # tr strips NUL padding left by a crash mid-write (seen on the X20); grep
+    # then only keeps lines that look like JSON objects.
+    tr -d '\000' <"$file" | grep '^{' || true
 }
 
 # manifest_entries_reverse : newest first (uninstall order).
@@ -195,7 +198,14 @@ manifest_install_file() {
     if [ -f "$real" ] && ! manifest_has "$dest"; then
         # Something is already there that we did not write. Never clobber a
         # stock file: the drop-in rule means every path we own is ours alone.
-        die "refusing to overwrite $dest: it exists and is not in the manifest (not created by $AX20_NAME)"
+        # Exception: byte-identical content is ours from an earlier run whose
+        # manifest entry was lost (interrupted install, repaired manifest);
+        # adopt it instead of failing the whole apply.
+        if [ "$(ax20_sha256 "$real")" = "$(ax20_sha256 "$src")" ]; then
+            log_warn "adopting $dest: identical to what we would install but missing from the manifest"
+        else
+            die "refusing to overwrite $dest: it exists and is not in the manifest (not created by $AX20_NAME)"
+        fi
     fi
     made=$(ax20_mkdir_p_list "$(dirname "$real")")
     created=false

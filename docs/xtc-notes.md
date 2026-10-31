@@ -189,9 +189,11 @@ highs pass straight through.
 
 ### LFE
 
-LFE carries no direction. It skips both the HRTF and the canceller and is
-added to both outputs at -6 dB, as in the headphone sinks. The speaker chain's
-150 Hz high-pass then removes most of it from the micro speakers.
+LFE carries no direction. It skips both the HRTF and the canceller. It is
+low-passed at 120 Hz (two cascaded biquads) and added to both outputs at
+-6 dB, as in the headphone sinks. The speaker chain's 150 Hz high-pass then
+removes most of it from the micro speakers. The XTC side boost is one reason
+the chain ends in a master gain (`audio-dsp.md`, "Headroom").
 
 ### Signal chain
 

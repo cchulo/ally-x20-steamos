@@ -51,7 +51,7 @@ Everything is recorded in the manifest and removed by `uninstall`.
 
 | Path | What |
 |---|---|
-| `/etc/modprobe.d/ally-x20-steamos-audio.conf` | `install snd_soc_tas2783_sdw` hook: sets `firmware_class.path` to our firmware dir right before the amp driver loads (never overrides an existing value) |
+| `/etc/modprobe.d/ally-x20-steamos-audio.conf` | comments only: documents that `firmware_class.path` comes from the boot entry (and sysfs at apply time). It must never carry an `install` line: a second hook for `snd_soc_tas2783_sdw` competes with `ally-x20-steamos-modules.conf` and made the stock codec load on the X20 |
 | `/etc/ally-x20-steamos/firmware/` | pinned, SHA-256-verified TAS2783 tunings plus links under the names the driver requests |
 | `/var/lib/ally-x20-steamos/ucm2/` | UCM overlay (see below) |
 | `/etc/environment.d/90-ally-x20-steamos-ucm.conf` | `ALSA_CONFIG_UCM2=/var/lib/ally-x20-steamos/ucm2`; written only after the overlay is complete |

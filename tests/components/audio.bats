@@ -600,3 +600,14 @@ acpi_device() {
     assert_success
     assert_output_contains "ACPI step pending"
 }
+
+@test "ACPI: when the BIOS already cleared the flag, the firmware path kernel arg is still requested" {
+    stock_lacks_everything
+    acpi_device
+    fake_acpi_tool 3
+    slot_set_cmdline_args() { printf '%s %s\n' "$1" "$2" >"$BATS_TEST_TMPDIR/args-call"; }
+    run component_apply audio
+    assert_success
+    assert_output_contains "no override needed"
+    [ "$(cat "$BATS_TEST_TMPDIR/args-call")" = "active firmware_class.path=/etc/ally-x20-steamos/firmware" ]
+}

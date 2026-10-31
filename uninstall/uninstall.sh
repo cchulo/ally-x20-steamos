@@ -312,11 +312,36 @@ restore_backups() {
     [ -d "$bdir" ] || return 0
     for d in "$bdir"/*/; do
         [ -d "$d" ] || continue
-        [ -f "$d/meta" ] || continue
-        bpath=$(sed -n 's/^path=//p' "$d/meta" | head -n 1)
-        bsha=$(sed -n 's/^sha256=//p' "$d/meta" | head -n 1)
-        btype=$(sed -n 's/^type=//p' "$d/meta" | head -n 1)
-        bcomp=$(sed -n 's/^component=//p' "$d/meta" | head -n 1)
+        d=${d%/}
+        borig="$d/original"
+        bpath=""
+        bsha=""
+        btype=""
+        bcomp=""
+        if [ -f "$d/meta" ]; then
+            # Generic layout: original + meta (path=, sha256=, type=, component=).
+            bpath=$(sed -n 's/^path=//p' "$d/meta" | head -n 1)
+            bsha=$(sed -n 's/^sha256=//p' "$d/meta" | head -n 1)
+            btype=$(sed -n 's/^type=//p' "$d/meta" | head -n 1)
+            bcomp=$(sed -n 's/^component=//p' "$d/meta" | head -n 1)
+        elif [ -f "$d/entry-path" ]; then
+            # lib/slots.sh layout: backup/<slot>/<entry file>, <file>.sha256, entry-path.
+            bpath=$(head -n 1 "$d/entry-path")
+            borig="$d/$(basename "$bpath")"
+            [ -f "$borig.sha256" ] && bsha=$(head -n 1 "$borig.sha256")
+            btype="file"
+            bcomp="update"
+        elif [ "$(basename "$d")" = rauc ] && [ -f "$d/system.conf" ]; then
+            # lib/rauc.sh layout: backup/rauc/system.conf (+ .sha256); our
+            # change is the delimited block.
+            bpath=/etc/rauc/system.conf
+            borig="$d/system.conf"
+            [ -f "$borig.sha256" ] && bsha=$(head -n 1 "$borig.sha256")
+            btype="block"
+            bcomp="update"
+        else
+            continue
+        fi
         [ -n "$bpath" ] || {
             warn "backup $d has no path=; skipped"
             SKIPPED=$((SKIPPED + 1))
@@ -361,7 +386,7 @@ restore_backups() {
                     printf '[dry-run] strip %s block from %s\n' "$NAME" "$bpath"
                     continue
                 fi
-                if [ -f "$d/original" ] && [ "$(sha256_of "$tmp")" = "$bsha" ]; then
+                if [ -f "$borig" ] && [ "$(sha256_of "$tmp")" = "$(sha256_of "$borig")" ]; then
                     log "restore $bpath: stripped block, identical to saved original"
                 else
                     warn "restore $bpath: stripped our block, but the result differs from the saved original (file changed upstream?); keeping the stripped version"
@@ -371,18 +396,24 @@ restore_backups() {
                 REMOVED=$((REMOVED + 1))
                 ;;
             file | '')
-                if [ ! -f "$d/original" ]; then
+                if [ ! -f "$borig" ]; then
                     warn "backup $bpath: saved original missing; cannot restore (regenerate it from the stock template with the CLI if available)"
                     SKIPPED=$((SKIPPED + 1))
                     continue
                 fi
-                if [ -n "$bsha" ] && [ "$(sha256_of "$d/original")" != "$bsha" ]; then
+                if [ -n "$bsha" ] && [ "$(sha256_of "$borig")" != "$bsha" ]; then
                     warn "backup $bpath: saved original is corrupt (hash mismatch); not restoring"
                     SKIPPED=$((SKIPPED + 1))
                     continue
                 fi
-                if [ -f "$real" ] && [ "$(sha256_of "$real")" = "$bsha" ]; then
+                if [ -f "$real" ] && [ "$(sha256_of "$real")" = "$(sha256_of "$borig")" ]; then
                     log "restore $bpath: already identical to saved original"
+                    continue
+                fi
+                if [ -f "$real" ] && ! grep -q "ally-x20-steamos" "$real"; then
+                    # Not ours any more (SteamOS regenerated it, e.g. after an
+                    # update): never overwrite a stock file we did not modify.
+                    log "restore $bpath: current file carries no $NAME change; leaving it alone"
                     continue
                 fi
                 if [ "$DRY" = 1 ]; then
@@ -391,7 +422,7 @@ restore_backups() {
                 fi
                 mkdir -p "$(dirname "$real")"
                 tmp=$(mktemp "$real.XXXXXX") || fatal "mktemp failed next to $bpath"
-                cp "$d/original" "$tmp"
+                cp "$borig" "$tmp"
                 [ -f "$real" ] && chmod --reference="$real" "$tmp" 2>/dev/null
                 mv -f "$tmp" "$real"
                 log "restore $bpath: restored byte-for-byte from backup"

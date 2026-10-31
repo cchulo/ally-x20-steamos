@@ -556,6 +556,23 @@ slot_set_early_initrd() {
     slots_entry_reconcile "$slot"
 }
 
+# slot_set_cmdline_args <slot|active> <args> : request kernel args without
+# touching the desired early initrd (used when no ACPI override is needed
+# but firmware_class.path still is). Non-fatal like slot_set_early_initrd.
+slot_set_cmdline_args() {
+    local slot=$1 args=$2 initrd
+    if [ "$slot" = active ] || [ -z "$slot" ]; then
+        slot=$(slots_active 2>/dev/null) || {
+            log_warn "boot entry: cannot determine the booted slot; run '$AX20_NAME boot-entry set --arg $args' later"
+            return 1
+        }
+    fi
+    slots_valid_name "$slot" || return 1
+    initrd=$(slots_desired_get initrd 2>/dev/null || true)
+    slots_desired_set "$args" "$initrd"
+    slots_entry_reconcile "$slot"
+}
+
 # ---------------------------------------------------- composite slot root --
 # Used by the RAUC post-install handler: build a view of the *other* slot
 # at <dir> that looks like its booted root, so `apply --slot <dir>` writes

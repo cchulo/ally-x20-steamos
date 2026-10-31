@@ -448,7 +448,12 @@ _audio_acpi_apply() {
     case "$rc" in
         0) ;;
         3)
-            log_info "ACPI: acp-audio-config-flag already cleared; no override needed"
+            log_info "ACPI: acp-audio-config-flag already cleared by the BIOS; no override needed"
+            # The kernel still has to find the amp firmware under our path.
+            if declare -F slot_set_cmdline_args >/dev/null 2>&1; then
+                slot_set_cmdline_args "${AX20_SLOT:-active}" "$(audio_kernel_cmdline)" \
+                    || log_warn "ACPI: kernel args not updated (see message above)"
+            fi
             rm -rf "$staging"
             return 0
             ;;

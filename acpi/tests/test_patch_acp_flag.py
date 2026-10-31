@@ -218,7 +218,7 @@ def test_patch_each_width_changes_only_expected_bytes(tmp_path: Path, capsys, wi
     assert len(new) == len(src_data)
     site = tool.find_flag_sites(src_data)[0]
     lo, hi = site.patch_range
-    allowed = {tool.CHECKSUM_OFFSET, 24, 25, 26, 27} | set(range(lo, hi))
+    allowed = {tool.CHECKSUM_OFFSET, 24, 25, 26, 27, 28, 29, 30, 31} | set(range(lo, hi))
     changed = set(diff_offsets(src_data, new))
     assert changed <= allowed
     assert tool.CHECKSUM_OFFSET in changed or tool.table_sum(new) == 0
@@ -238,10 +238,13 @@ def test_patch_exact_offsets_on_committed_fixture(tmp_path: Path, capsys) -> Non
     src = COMMITTED_FIXTURE.read_bytes()
     site = tool.find_flag_sites(src)[0]
     res = tool.patch_table(src)
-    assert diff_offsets(src, res.data) == sorted([tool.CHECKSUM_OFFSET, 24, site.payload_offset])
+    assert diff_offsets(src, res.data) == sorted([tool.CHECKSUM_OFFSET, 24, 28, 29, 30, 31, site.payload_offset])
     assert res.data[site.payload_offset] == 0
     # checksum moves by exactly the bytes we changed: -1 (rev) +0x10 (flag)
-    assert res.data[9] == (src[9] - 1 + 0x10) & 0xFF
+    # and the creator-id marker ("INTL" -> "AX20").
+    marker_delta = sum(src[28:32]) - sum(b"AX20")
+    assert res.data[9] == (src[9] - 1 + 0x10 + marker_delta) & 0xFF
+    assert sum(res.data) & 0xFF == 0
 
 
 def test_patch_custom_value_and_bump(tmp_path: Path, capsys) -> None:
@@ -313,7 +316,7 @@ def test_patch_multiple_needs_all(tmp_path: Path, capsys) -> None:
     rc, _, _ = run(["patch", "--all", str(src), "-o", str(dst)], capsys)
     assert rc == 0
     assert [s.value for s in tool.find_flag_sites(dst.read_bytes())] == [0, 0]
-    assert len(diff_offsets(src_data, dst.read_bytes())) == 4  # 2 flags + rev + checksum
+    assert len(diff_offsets(src_data, dst.read_bytes())) == 8  # 2 flags + rev + checksum + 4 marker bytes
 
 
 def test_patch_is_idempotent(tmp_path: Path, capsys) -> None:
@@ -328,7 +331,7 @@ def test_patch_is_idempotent(tmp_path: Path, capsys) -> None:
     rc, _, err = run(["patch", str(p1), "-o", str(p2)], capsys)
     assert rc == 0 and "only the OEM revision" in err
     a, b = p1.read_bytes(), p2.read_bytes()
-    assert set(diff_offsets(a, b)) <= {9, 24, 25, 26, 27}
+    assert set(diff_offsets(a, b)) <= {9, 24, 25, 26, 27, 28, 29, 30, 31}
     assert tool.TableHeader.parse(b).oem_revision == 3
     # --oem-rev-bump 0 on an already-patched table is a byte-identical copy
     p3 = tmp_path / "p3.aml"
@@ -375,7 +378,7 @@ def test_diff_reports_only_expected(tmp_path: Path, capsys) -> None:
     rc, out, _ = run(["diff", str(src), str(p)], capsys)
     assert rc == tool.EXIT_MISMATCH  # they differ
     assert "header checksum" in out and "OEM revision" in out and "value" in out
-    assert "3 differing byte(s), 0 outside" in out
+    assert "7 differing byte(s), 0 outside" in out  # checksum, OEM rev, 4 marker bytes, flag
     assert run(["diff", "--check-expected", str(src), str(p)], capsys)[0] == 0
     assert run(["diff", str(src), str(src)], capsys)[0] == 0
 
@@ -662,3 +665,38 @@ def test_build_override_no_table_carries_flag(tmp_path: Path) -> None:
     root = _fake_root(tmp_path, synth.build_dsdt().replace(b"acp-audio-config-flag\x00", b"acp-audio-config-flaZ\x00"))
     r = _bo(["--out", str(tmp_path / "out")], root=root)
     assert r.returncode == 3 and "not found in any table" in r.stderr
+
+
+def test_patch_sets_creator_marker_and_inspect_reports_it(capsys) -> None:
+    src = synth.build_dsdt()
+    assert not tool.is_our_override(src)
+    out = tool.patch_table(src).data
+    assert tool.is_our_override(out)
+    assert out[tool.CREATOR_ID_OFFSET:tool.CREATOR_ID_OFFSET + 4] == b"AX20"
+    # Patching an already-patched table keeps the marker and changes nothing else but the OEM rev.
+    again = tool.patch_table(out).data
+    assert tool.is_our_override(again)
+    assert set(diff_offsets(out, again)) <= {9, 24, 25, 26, 27}
+
+
+@needs_bash
+def test_build_override_reuses_live_override_without_saved_original(tmp_path: Path) -> None:
+    """Fresh install after an uninstall: sysfs shows our patched table and no
+    original is saved. The wrapper must package the live table instead of
+    reporting 'no override needed'."""
+    patched = tool.patch_table(synth.build_dsdt(signature=b"SSDT")).data
+    root = _fake_root(tmp_path, synth.build_dsdt().replace(b"acp-audio-config-flag\x00", b"acp-audio-config-flaZ\x00"))
+    (root / "sys" / "firmware" / "acpi" / "tables" / "SSDT8").write_bytes(patched)
+    out = tmp_path / "out"
+    r = _bo(["--out", str(out)], root=root)
+    assert r.returncode == 0, r.stderr
+    assert "reusing the live table" in r.stderr
+    info = _info(out)
+    assert info["prepatched"] == "1" and info["table_source"] == "SSDT8"
+    assert (out / "TABLE.patched.aml").read_bytes() == patched
+    entries = tool.read_newc((out / "ally-x20-steamos-acpi.img").read_bytes())
+    assert entries[-1].data == patched
+    # A table whose flag is 0 WITHOUT the marker is a real BIOS fix: exit 3.
+    (root / "sys" / "firmware" / "acpi" / "tables" / "SSDT8").write_bytes(synth.build_dsdt(signature=b"SSDT", value=0, width="zero"))
+    r = _bo(["--out", str(tmp_path / "out2")], root=root)
+    assert r.returncode == 3

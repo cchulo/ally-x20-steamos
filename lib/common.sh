@@ -48,11 +48,18 @@ export AX20_DRY_RUN AX20_VERBOSE AX20_I_KNOW AX20_ASSUME_YES
 
 # Canonical locations (all relative to AX20_ROOT; use ax20_path to resolve).
 AX20_STATE_REL="/var/lib/${AX20_NAME}"
+# Files the kernel/udev need BEFORE /var and /home are mounted (the modprobe
+# install helper, the staged .ko.zst, the amp tuning firmware). /etc is an
+# overlay set up by the initramfs, so it exists when udev loads modules; its
+# upper dir lives in the slot's var and is rsynced to the other slot on
+# update. Measured on the X20: a helper under /var/lib (-> /home) gave
+# "No such file or directory" at udev time and no module loaded at all.
+AX20_EARLY_REL="/etc/${AX20_NAME}"
 AX20_OPT_REL="/opt/${AX20_NAME}"
 AX20_MANIFEST_REL="${AX20_STATE_REL}/manifest"
 AX20_STATUS_JSON_REL="${AX20_STATE_REL}/state/status.json"
 AX20_LOG_REL="${AX20_STATE_REL}/log/${AX20_NAME}.log"
-export AX20_STATE_REL AX20_OPT_REL AX20_MANIFEST_REL AX20_STATUS_JSON_REL AX20_LOG_REL
+export AX20_STATE_REL AX20_EARLY_REL AX20_OPT_REL AX20_MANIFEST_REL AX20_STATUS_JSON_REL AX20_LOG_REL
 
 # ax20_path <absolute-path> : prefix with AX20_ROOT.
 ax20_path() {

@@ -79,6 +79,11 @@ freshly staged slot, and the standalone uninstaller removes both the target
 and the link (`ax20_state_dir_ensure` in `lib/common.sh`). Fixture roots in
 tests keep a plain directory.
 
+Files that the kernel needs before `/var` and `/home` are mounted (the
+modprobe helper, staged modules, amp firmware) live under
+`/etc/ally-x20-steamos/` (`AX20_EARLY_REL`) instead; see
+[kernel-modules.md](kernel-modules.md).
+
 `/var/lib/ally-x20-steamos/manifest` is JSON lines, one object per path we
 created: `path`, `component`, `kind` (`file|symlink|dir`), `sha256`, `slot`,
 `created_dir`, `ts`. `lib/manifest.sh` is the only writer. Rules enforced

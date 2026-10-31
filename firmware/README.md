@@ -41,7 +41,7 @@ were computed from the pinned commit and match hungarianhc's installer.
 
 ## What gets installed
 
-Everything goes under `/var/lib/ally-x20-steamos/firmware/` (shared by both
+Everything goes under `/etc/ally-x20-steamos/firmware/` (shared by both
 A/B slots) and is recorded in the manifest:
 
 ```
@@ -71,7 +71,7 @@ The firmware loader searches `firmware_class.path` first, then
 `/lib/firmware/updates/<kver>`, `/lib/firmware/updates`,
 `/lib/firmware/<kver>`, `/lib/firmware` (`drivers/base/firmware_loader/main.c`,
 `fw_path[]`). Only one extra directory can be configured. We set it to
-`/var/lib/ally-x20-steamos/firmware` in three ways:
+`/etc/ally-x20-steamos/firmware` in three ways:
 
 1. **modprobe hook** (`/etc/modprobe.d/ally-x20-steamos-audio.conf`): an
    `install snd_soc_tas2783_sdw` line writes
@@ -81,7 +81,7 @@ The firmware loader searches `firmware_class.path` first, then
 2. **sysfs at apply time** (`audio_apply`, live root only): same write, so the
    current boot can pick the files up if the driver probes again.
 3. **Kernel command line** for the boot-entry step: `audio_kernel_cmdline`
-   prints `firmware_class.path=/var/lib/ally-x20-steamos/firmware`. The
+   prints `firmware_class.path=/etc/ally-x20-steamos/firmware`. The
    slots/boot-entry code may append it to the active slot's entry; it then
    wins over the hook (which never overrides a set path).
 

@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # load-or-fallback — modprobe.d `install` helper of ally-x20-steamos.
 #
-# Installed to /var/lib/ally-x20-steamos/bin/load-or-fallback and referenced
+# Installed to /etc/ally-x20-steamos/load-or-fallback (a path that exists at
+# udev time, unlike /var/lib -> /home) and referenced
 # from /etc/modprobe.d/ally-x20-steamos-modules.conf:
-#   install <module> /var/lib/ally-x20-steamos/bin/load-or-fallback <module> $CMDLINE_OPTS
+#   install <module> /bin/sh -c '/etc/ally-x20-steamos/load-or-fallback <module> "$@" || exec modprobe --ignore-install <module> "$@"' -- $CMDLINE_OPTS
 #
-# Loads /var/lib/ally-x20-steamos/modules/$(uname -r)/<module>.ko.zst when it
+# Loads /etc/ally-x20-steamos/modules/$(uname -r)/<module>.ko.zst when it
 # exists and its vermagic matches the running kernel; otherwise, or when any
 # step fails, loads the stock module with `modprobe --ignore-install`.
 # It must never break boot: every failure falls back to stock behaviour and
@@ -18,7 +19,7 @@ set -eu
 
 AX20_NAME=ally-x20-steamos
 ROOT=${AX20_ROOT:-}
-STATE_DIR="$ROOT/var/lib/$AX20_NAME"
+EARLY_DIR="$ROOT/etc/$AX20_NAME"
 TMP_KO=""
 
 log() {
@@ -73,7 +74,7 @@ try_patched() {
     mod=$1
     shift
     kver=$(uname -r 2>/dev/null) || return 1
-    ko="$STATE_DIR/modules/$kver/$mod.ko.zst"
+    ko="$EARLY_DIR/modules/$kver/$mod.ko.zst"
     if [ ! -f "$ko" ]; then
         # Common after a SteamOS update until the rebuild lands: not an error.
         log "no patched $mod for $kver; using stock"

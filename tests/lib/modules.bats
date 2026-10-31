@@ -42,38 +42,38 @@ make_artifact() {
 }
 
 @test "modules_dir_for is under the state dir and unprefixed" {
-    [ "$(modules_dir_for "$KV")" = "/var/lib/ally-x20-steamos/modules/$KV" ]
+    [ "$(modules_dir_for "$KV")" = "/etc/ally-x20-steamos/modules/$KV" ]
 }
 
 @test "modules_stage copies atomically and records everything in the manifest" {
     make_build "$BATS_TEST_TMPDIR/b" "$KV"
     run modules_stage "$KV" "$BATS_TEST_TMPDIR/b"
     assert_success
-    d="$AX20_ROOT/var/lib/ally-x20-steamos/modules/$KV"
+    d="$AX20_ROOT/etc/ally-x20-steamos/modules/$KV"
     [ -f "$d/hid-asus-ally.ko.zst" ]
     [ -f "$d/snd-soc-acpi-amd-match.ko.zst" ]
     [ -f "$d/BUILD-INFO" ]
     modules_available "$KV"
-    manifest_has "/var/lib/ally-x20-steamos/modules/$KV/hid-asus-ally.ko.zst"
-    manifest_has "/var/lib/ally-x20-steamos/modules/$KV/BUILD-INFO"
-    manifest_has "/var/lib/ally-x20-steamos/modules/$KV"
-    [ "$(manifest_entry_get "$(manifest_entry "/var/lib/ally-x20-steamos/modules/$KV/BUILD-INFO")" component)" = modules ]
-    manifest_verify "/var/lib/ally-x20-steamos/modules/$KV/hid-asus-ally.ko.zst"
+    manifest_has "/etc/ally-x20-steamos/modules/$KV/hid-asus-ally.ko.zst"
+    manifest_has "/etc/ally-x20-steamos/modules/$KV/BUILD-INFO"
+    manifest_has "/etc/ally-x20-steamos/modules/$KV"
+    [ "$(manifest_entry_get "$(manifest_entry "/etc/ally-x20-steamos/modules/$KV/BUILD-INFO")" component)" = modules ]
+    manifest_verify "/etc/ally-x20-steamos/modules/$KV/hid-asus-ally.ko.zst"
     # no leftovers from the staging dance
-    [ -z "$(find "$AX20_ROOT/var/lib/ally-x20-steamos/modules" -maxdepth 1 -name '.*' ! -name . )" ]
+    [ -z "$(find "$AX20_ROOT/etc/ally-x20-steamos/modules" -maxdepth 1 -name '.*' ! -name . )" ]
 }
 
 @test "modules_stage replaces an older build and drops stale manifest entries" {
     make_build "$BATS_TEST_TMPDIR/b1" "$KV" hid-asus-ally snd-soc-acpi-amd-match old-module
     modules_stage "$KV" "$BATS_TEST_TMPDIR/b1"
-    manifest_has "/var/lib/ally-x20-steamos/modules/$KV/old-module.ko.zst"
+    manifest_has "/etc/ally-x20-steamos/modules/$KV/old-module.ko.zst"
     make_build "$BATS_TEST_TMPDIR/b2" "$KV"
     printf 'new' >"$BATS_TEST_TMPDIR/b2/hid-asus-ally.ko.zst"
     modules_stage "$KV" "$BATS_TEST_TMPDIR/b2"
-    [ "$(cat "$AX20_ROOT/var/lib/ally-x20-steamos/modules/$KV/hid-asus-ally.ko.zst")" = new ]
-    [ ! -e "$AX20_ROOT/var/lib/ally-x20-steamos/modules/$KV/old-module.ko.zst" ]
-    ! manifest_has "/var/lib/ally-x20-steamos/modules/$KV/old-module.ko.zst"
-    manifest_verify "/var/lib/ally-x20-steamos/modules/$KV/hid-asus-ally.ko.zst"
+    [ "$(cat "$AX20_ROOT/etc/ally-x20-steamos/modules/$KV/hid-asus-ally.ko.zst")" = new ]
+    [ ! -e "$AX20_ROOT/etc/ally-x20-steamos/modules/$KV/old-module.ko.zst" ]
+    ! manifest_has "/etc/ally-x20-steamos/modules/$KV/old-module.ko.zst"
+    manifest_verify "/etc/ally-x20-steamos/modules/$KV/hid-asus-ally.ko.zst"
 }
 
 @test "modules_stage refuses incomplete or mismatched builds" {
@@ -84,7 +84,7 @@ make_artifact() {
     make_build "$BATS_TEST_TMPDIR/c" 7.2.7-valve2-1-neptune-72
     run modules_stage "$KV" "$BATS_TEST_TMPDIR/c"
     assert_failure
-    [ ! -d "$AX20_ROOT/var/lib/ally-x20-steamos/modules/$KV" ]
+    [ ! -d "$AX20_ROOT/etc/ally-x20-steamos/modules/$KV" ]
 }
 
 @test "a module recorded as superseded in BUILD-INFO counts as available" {
@@ -100,7 +100,7 @@ make_artifact() {
     make_build "$BATS_TEST_TMPDIR/b" "$KV"
     AX20_DRY_RUN=1 run modules_stage "$KV" "$BATS_TEST_TMPDIR/b"
     assert_success
-    [ ! -d "$AX20_ROOT/var/lib/ally-x20-steamos/modules/$KV" ]
+    [ ! -d "$AX20_ROOT/etc/ally-x20-steamos/modules/$KV" ]
 }
 
 @test "resolve: cache hit when already staged, nothing else is tried" {
@@ -221,4 +221,23 @@ make_artifact() {
     fixture_file /var/lib/steamos-branch "rel"
     run modules_detect_channel
     [ "$output" = jupiter-rel ]
+}
+
+@test "generated install line still loads the stock module when the helper is missing (early boot)" {
+    # Simulate udev running the modprobe.d install command before /etc/ally-x20-steamos
+    # exists: the helper path is absent, so the inner shell must exec the stock load.
+    export AX20_COMPONENTS_DIR="$REPO_ROOT/components"
+    conf=$(modules_render_modprobe_conf)
+    line=$(printf '%s\n' "$conf" | grep '^install hid-asus-ally ')
+    cmd=${line#install hid-asus-ally }
+    cmd=${cmd//\$CMDLINE_OPTS/opt=1}
+    cmd=${cmd//\/etc\/ally-x20-steamos\/load-or-fallback/$BATS_TEST_TMPDIR/missing-helper}
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    cat >"$BATS_TEST_TMPDIR/bin/modprobe" <<'M'
+#!/bin/sh
+printf '%s\n' "$*" >"$MODPROBE_LOG"
+M
+    chmod +x "$BATS_TEST_TMPDIR/bin/modprobe"
+    MODPROBE_LOG="$BATS_TEST_TMPDIR/modprobe.log" PATH="$BATS_TEST_TMPDIR/bin:$PATH" sh -c "$cmd"
+    [ "$(cat "$BATS_TEST_TMPDIR/modprobe.log")" = "--ignore-install hid-asus-ally opt=1" ]
 }

@@ -47,7 +47,7 @@ echo "logger $*" >>"$CALLS"
 S
     chmod +x "$STUBS"/*
     export PATH="$STUBS:$PATH"
-    MODDIR="$AX20_ROOT/var/lib/ally-x20-steamos/modules/$KV"
+    MODDIR="$AX20_ROOT/etc/ally-x20-steamos/modules/$KV"
 }
 
 stage_module() {

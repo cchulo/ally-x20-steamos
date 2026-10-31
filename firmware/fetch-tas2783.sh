@@ -15,9 +15,9 @@
 #   3. Downloads every file of that supplier (all suppliers when unknown) from
 #      git.kernel.org, falling back to the mirrors in the lock file, verifies
 #      the sha256 and installs it, manifest-tracked, as
-#      /var/lib/ally-x20-steamos/firmware/<path in linux-firmware>.
+#      /etc/ally-x20-steamos/firmware/<path in linux-firmware>.
 #   4. Links the four-field names newer kernels request
-#      (/var/lib/ally-x20-steamos/firmware/1954-<spkid>-0-0x8.bin, ...) for
+#      (/etc/ally-x20-steamos/firmware/1954-<spkid>-0-0x8.bin, ...) for
 #      every installed file, and, when the supplier is known, the bare names
 #      v7.2.7 requests (1954-0-0x8.bin, ...). Both suppliers share the bare
 #      names, so with an unknown supplier those are not created: guessing
@@ -44,7 +44,7 @@ fi
 . "$AX20_SRC/lib/manifest.sh"
 
 FW_COMPONENT="${FW_COMPONENT:-audio}"
-FW_STATE_REL="${AX20_STATE_REL}/firmware"
+FW_STATE_REL="${AX20_EARLY_REL}/firmware"
 FW_EFIVARS_REL=/sys/firmware/efi/efivars
 FW_LOCK="${AX20_FIRMWARE_LOCK:-$AX20_SRC/firmware/tas2783.lock}"
 FW_MAP="${AX20_SPEAKER_ID_MAP:-$AX20_SRC/firmware/speaker-id.map}"

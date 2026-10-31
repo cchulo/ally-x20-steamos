@@ -103,7 +103,7 @@ make_desc() {
     hooks=$(printf '%s\n' "$output" | grep '^install ')
     [ "$(printf '%s\n' "$hooks" | wc -l | tr -d ' ')" = 3 ]
     for m in hid-asus-ally snd-acp-config snd-soc-acpi-amd-match; do
-        printf '%s\n' "$hooks" | grep -Fxq "install $m /var/lib/ally-x20-steamos/bin/load-or-fallback $m \$CMDLINE_OPTS"
+        printf '%s\n' "$hooks" | grep -Fxq "install $m /bin/sh -c '/etc/ally-x20-steamos/load-or-fallback $m \"\$@\" || exec modprobe --ignore-install $m \"\$@\"' -- \$CMDLINE_OPTS"
     done
     # nothing points into /usr
     ! printf '%s\n' "$output" | grep -q ' /usr/'

@@ -33,20 +33,20 @@ stage_build() {
     component_load modules
     run component_files modules
     assert_success
-    [ "$output" = "$(printf 'bin/load-or-fallback\t/var/lib/ally-x20-steamos/bin/load-or-fallback\t0755\tshared')" ]
+    [ "$output" = "$(printf 'bin/load-or-fallback\t/etc/ally-x20-steamos/load-or-fallback\t0755\tshared')" ]
 }
 
 @test "apply installs the helper and a modprobe.d drop-in generated from the lists" {
     run component_apply modules
     assert_success
-    [ -x "$AX20_ROOT/var/lib/ally-x20-steamos/bin/load-or-fallback" ]
+    [ -x "$AX20_ROOT/etc/ally-x20-steamos/load-or-fallback" ]
     conf="$AX20_ROOT/etc/modprobe.d/ally-x20-steamos-modules.conf"
     [ -f "$conf" ]
-    grep -Fxq 'install hid-asus-ally /var/lib/ally-x20-steamos/bin/load-or-fallback hid-asus-ally $CMDLINE_OPTS' "$conf"
-    grep -Fxq 'install snd-soc-acpi-amd-match /var/lib/ally-x20-steamos/bin/load-or-fallback snd-soc-acpi-amd-match $CMDLINE_OPTS' "$conf"
-    [ -d "$AX20_ROOT/var/lib/ally-x20-steamos/modules" ]
+    grep -Fxq 'install hid-asus-ally /bin/sh -c '"'"'/etc/ally-x20-steamos/load-or-fallback hid-asus-ally "$@" || exec modprobe --ignore-install hid-asus-ally "$@"'"'"' -- $CMDLINE_OPTS' "$conf"
+    grep -Fxq 'install snd-soc-acpi-amd-match /bin/sh -c '"'"'/etc/ally-x20-steamos/load-or-fallback snd-soc-acpi-amd-match "$@" || exec modprobe --ignore-install snd-soc-acpi-amd-match "$@"'"'"' -- $CMDLINE_OPTS' "$conf"
+    [ -d "$AX20_ROOT/etc/ally-x20-steamos/modules" ]
     manifest_has /etc/modprobe.d/ally-x20-steamos-modules.conf
-    manifest_has /var/lib/ally-x20-steamos/bin/load-or-fallback
+    manifest_has /etc/ally-x20-steamos/load-or-fallback
     [ -z "$(find "$AX20_ROOT/usr" -newer "$AX20_ROOT/etc" 2>/dev/null)" ]
 }
 

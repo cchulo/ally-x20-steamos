@@ -18,6 +18,8 @@
 . "$AX20_SRC/lib/rauc.sh"
 # shellcheck source=lib/slots.sh
 . "$AX20_SRC/lib/slots.sh"
+# shellcheck source=lib/modules.sh
+. "$AX20_SRC/lib/modules.sh"
 # shellcheck source=cmd/update-policy.sh
 . "$AX20_SRC/cmd/update-policy.sh"
 
@@ -39,7 +41,7 @@ _handler_note() {
 }
 
 handler_modules_present() {
-    [ -d "$(ax20_state_dir)/modules/$1" ]
+    [ -d "$(ax20_path "$AX20_MODULES_REL/$1")" ]
 }
 
 # handler_try_build <kver> : 0 if modules for kver exist afterwards.
@@ -105,8 +107,8 @@ rauc_handler_pre_install() {
 # new slot's state dir if the stock rsync did not carry them.
 handler_stage_modules() {
     local kver=$1 dir=$2 src dst
-    src="$(ax20_state_dir)/modules/$kver"
-    dst="$dir$AX20_STATE_REL/modules/$kver"
+    src=$(ax20_path "$AX20_MODULES_REL/$kver")
+    dst="$dir$AX20_MODULES_REL/$kver"
     [ -d "$src" ] || return 0
     [ -d "$dst" ] && return 0
     ax20_run mkdir -p "$(dirname "$dst")"

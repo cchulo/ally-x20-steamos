@@ -126,3 +126,25 @@ setup() {
     [ ! -e "$AX20_ROOT/etc/x.conf" ]
     [ ! -s "$(ax20_manifest_file)" ]
 }
+
+@test "manifest reader survives NUL padding left by a crash" {
+    manifest_record /etc/a.conf audio file 1 shared false
+    manifest_record /etc/b.conf audio file 2 shared false
+    printf '\000\000\000\000' >>"$(ax20_manifest_file)"
+    [ "$(manifest_paths | wc -l | tr -d ' ')" = 2 ]
+    manifest_has /etc/b.conf
+    manifest_record /etc/c.conf audio file 3 shared false
+    [ "$(manifest_paths | wc -l | tr -d ' ')" = 3 ]
+}
+
+@test "manifest_install_file adopts a byte-identical unrecorded file instead of dying" {
+    mkdir -p "$AX20_ROOT/etc"
+    cp "$SRC" "$AX20_ROOT/etc/x.conf"
+    run manifest_install_file "$SRC" /etc/x.conf audio
+    assert_success
+    assert_output_contains "adopting /etc/x.conf"
+    manifest_has /etc/x.conf
+    printf 'different\n' >"$AX20_ROOT/etc/y.conf"
+    run manifest_install_file "$SRC" /etc/y.conf audio
+    assert_failure
+}

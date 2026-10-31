@@ -360,7 +360,9 @@ _modules_artifact_dir() {
 # _modules_try_cache <kver>
 _modules_try_cache() {
     local kver=$1 a
-    modules_available "$kver" && return 0
+    if [ "${AX20_MODULES_FORCE:-0}" != 1 ]; then
+        modules_available "$kver" && return 0
+    fi
     a="$(_modules_artifact_dir)/modules-$kver.tar.zst"
     [ -f "$a" ] && [ -f "$a.sha256" ] || return 1
     if ! _modules_sha256_file_ok "$a" "$a.sha256"; then

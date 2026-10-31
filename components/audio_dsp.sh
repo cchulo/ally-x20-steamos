@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# components/audio_dsp.sh — headphone virtual surround + speaker chain
+# components/audio_dsp.sh — headphone virtual surround + speaker chain +
+# speaker virtual surround (binaural render + crosstalk cancellation)
 # (X20-STEAMOS-PLAN.md section 1.5). Required component, on by default.
 #
 # Everything lives in the user's home (manifest slot "home"), so it survives
 # SteamOS updates untouched and never needs the read-only root:
 #   ~/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf  (rendered)
 #   ~/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf
+#   ~/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf  (rendered)
 #   ~/.config/pipewire/pipewire-pulse.conf.d/50-x20-no-upmix.conf
 #   ~/.config/pipewire/client.conf.d/50-x20-no-upmix.conf
 #   ~/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf
@@ -24,6 +26,12 @@
 #   enabled=1|0       0 = `audio-dsp off`: config files removed, HRTF data kept
 #   hrtf=<set>        set name from overlay/home/hrtf/hrtf.lock
 #   stereo_hrtf=0|1   stereo streams through the HRTF on headphones
+#   speaker_surround=1|0  surround streams on the speakers through
+#                     x20-speakers-surround (default 1)
+#   stereo_surround=0|1   stereo streams on the speakers through it too
+#   xtc_delay_us=<int>    crosstalk cancellation delay per tap (10..1000)
+#   xtc_attenuation_db=<num>  attenuation per tap in dB (0.5..30)
+#   xtc_taps=1..4         number of RACE taps
 # When enabled=0, audio_dsp_files lists nothing and audio_dsp_apply only
 # keeps the settings file, so the boot-time re-apply never undoes `off`.
 #
@@ -38,9 +46,22 @@
 # AX20_* globals come from lib/common.sh; COMPONENT_DESCRIPTION is read by
 # lib/component.sh.
 # shellcheck disable=SC2034,SC2153
-COMPONENT_DESCRIPTION="headphone virtual surround (HRTF) + speaker chain, per-user PipeWire/WirePlumber config"
+COMPONENT_DESCRIPTION="headphone virtual surround (HRTF) + speaker chain + speaker virtual surround (XTC), per-user PipeWire/WirePlumber config"
 
 AUDIO_DSP_COMPONENT=audio_dsp
+
+# Settings keys, in the order they are written to audio-dsp.conf.
+AUDIO_DSP_KEYS="enabled hrtf stereo_hrtf speaker_surround stereo_surround xtc_delay_us xtc_attenuation_db xtc_taps"
+
+# Crosstalk cancellation defaults, derived in docs/xtc-notes.md for the X20:
+# speakers ~22 cm apart, listener at ~40 cm, 15 cm head -> 117 us
+# interaural path difference, ~4 dB crosstalk attenuation around 2 kHz.
+AUDIO_DSP_XTC_DELAY_US_DEFAULT=117
+AUDIO_DSP_XTC_ATTEN_DB_DEFAULT=4
+AUDIO_DSP_XTC_TAPS_DEFAULT=4
+# The builtin delay node counts whole samples at the graph rate. SteamOS
+# runs PipeWire at 48 kHz; the delay is rendered for that rate.
+AUDIO_DSP_XTC_RATE=48000
 
 # ------------------------------------------------------------ user / paths --
 
@@ -84,6 +105,7 @@ audio_dsp_lock() { printf '%s\n' "${AX20_HRTF_LOCK:-$AX20_SRC/overlay/home/hrtf/
 
 # Destinations of the rendered (not copied) files.
 audio_dsp_surround_rel() { printf '%s/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf\n' "$(audio_dsp_home)"; }
+audio_dsp_speaker_surround_rel() { printf '%s/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf\n' "$(audio_dsp_home)"; }
 audio_dsp_wpsettings_rel() { printf '%s/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf\n' "$(audio_dsp_home)"; }
 
 # ---------------------------------------------------------------- settings --
@@ -101,6 +123,53 @@ audio_dsp_setting() {
 }
 
 audio_dsp_enabled() { [ "$(audio_dsp_setting enabled 1)" = 1 ]; }
+
+# Validators for the XTC parameters (also used by `audio-dsp xtc set`).
+audio_dsp_xtc_valid_delay() {
+    case "$1" in '' | *[!0-9]*) return 1 ;; esac
+    [ "$1" -ge 10 ] && [ "$1" -le 1000 ]
+}
+audio_dsp_xtc_valid_atten() {
+    printf '%s\n' "$1" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || return 1
+    LC_ALL=C awk -v a="$1" 'BEGIN { exit !(a >= 0.5 && a <= 30) }'
+}
+audio_dsp_xtc_valid_taps() {
+    case "$1" in 1 | 2 | 3 | 4) return 0 ;; esac
+    return 1
+}
+
+# audio_dsp_setting_value <key> : the stored value, validated, or the default.
+audio_dsp_setting_value() {
+    local v
+    case "$1" in
+        hrtf)
+            audio_dsp_hrtf_current
+            return 0
+            ;;
+        enabled | speaker_surround)
+            v=$(audio_dsp_setting "$1" 1)
+            case "$v" in 0 | 1) ;; *) v=1 ;; esac
+            ;;
+        stereo_hrtf | stereo_surround)
+            v=$(audio_dsp_setting "$1" 0)
+            case "$v" in 0 | 1) ;; *) v=0 ;; esac
+            ;;
+        xtc_delay_us)
+            v=$(audio_dsp_setting "$1" "")
+            audio_dsp_xtc_valid_delay "$v" || v=$AUDIO_DSP_XTC_DELAY_US_DEFAULT
+            ;;
+        xtc_attenuation_db)
+            v=$(audio_dsp_setting "$1" "")
+            audio_dsp_xtc_valid_atten "$v" || v=$AUDIO_DSP_XTC_ATTEN_DB_DEFAULT
+            ;;
+        xtc_taps)
+            v=$(audio_dsp_setting "$1" "")
+            audio_dsp_xtc_valid_taps "$v" || v=$AUDIO_DSP_XTC_TAPS_DEFAULT
+            ;;
+        *) return 1 ;;
+    esac
+    printf '%s\n' "$v"
+}
 
 # ------------------------------------------------------------- HRTF sets --
 
@@ -258,29 +327,88 @@ _audio_dsp_install_rendered() {
     rm -f "$tmp"
 }
 
-# audio_dsp_write_settings <enabled> <hrtf> <stereo_hrtf>
+# audio_dsp_write_settings [key=value...] : rewrite the settings file. Keys
+# not given keep their current (validated) value or get their default.
 audio_dsp_write_settings() {
-    printf '%s\n' \
-        "# $AX20_NAME audio-dsp settings. Managed by '$AX20_NAME audio-dsp';" \
-        "# edit with that command (hand edits are kept but flagged as drift)." \
-        "enabled=$1" \
-        "hrtf=$2" \
-        "stereo_hrtf=$3" \
-        | _audio_dsp_install_rendered "$(audio_dsp_settings_rel)"
+    local k v a body=""
+    for k in $AUDIO_DSP_KEYS; do
+        v=$(audio_dsp_setting_value "$k")
+        for a in "$@"; do
+            case "$a" in "$k="*) v=${a#*=} ;; esac
+        done
+        body="$body$k=$v
+"
+    done
+    {
+        printf '%s\n' \
+            "# $AX20_NAME audio-dsp settings. Managed by '$AX20_NAME audio-dsp';" \
+            "# edit with that command (hand edits are kept but flagged as drift)."
+        printf '%s' "$body"
+    } | _audio_dsp_install_rendered "$(audio_dsp_settings_rel)"
 }
 
-# audio_dsp_render_wpsettings <0|1> : WirePlumber settings fragment.
+_audio_dsp_bool() { if [ "$1" = 1 ]; then echo true; else echo false; fi; }
+
+# audio_dsp_render_wpsettings : WirePlumber settings fragment from the
+# current settings file (stereo_hrtf, speaker_surround, stereo_surround).
 audio_dsp_render_wpsettings() {
-    local v=false
-    [ "$1" = 1 ] && v=true
     printf '%s\n' \
         "# SPDX-License-Identifier: GPL-2.0-only" \
-        "# Generated by $AX20_NAME (audio-dsp stereo-hrtf on|off); do not edit." \
-        "# true: stereo streams on headphones go through the HRTF renderer." \
+        "# Generated by $AX20_NAME (audio-dsp stereo-hrtf, speaker-surround," \
+        "# stereo-surround); do not edit. See 50-x20-route-by-channels.conf." \
         "wireplumber.settings = {" \
-        "  x20.stereo_hrtf = $v" \
+        "  x20.stereo_hrtf = $(_audio_dsp_bool "$(audio_dsp_setting_value stereo_hrtf)")" \
+        "  x20.speaker_surround = $(_audio_dsp_bool "$(audio_dsp_setting_value speaker_surround)")" \
+        "  x20.stereo_surround = $(_audio_dsp_bool "$(audio_dsp_setting_value stereo_surround)")" \
         "}" \
         | _audio_dsp_install_rendered "$(audio_dsp_wpsettings_rel)"
+}
+
+# audio_dsp_xtc_params <delay_us> <atten_db> <taps> : prints
+# "<delay_s> <g1> <g2> <g3> <g4> <samples> <g>". The builtin delay truncates
+# delay * rate to whole samples, so the delay is rounded to the nearest
+# sample at 48 kHz and rendered as (n + 0.5) samples (a truncation-proof
+# value). Tap k gets g^k, g = 10^(-atten/20); taps beyond <taps> get 0.
+audio_dsp_xtc_params() {
+    LC_ALL=C awk -v us="$1" -v db="$2" -v taps="$3" -v rate="$AUDIO_DSP_XTC_RATE" 'BEGIN {
+        n = int(us * rate / 1000000 + 0.5); if (n < 1) n = 1
+        g = exp(-db / 20 * log(10))
+        printf "%.8f", (n + 0.5) / rate
+        for (k = 1; k <= 4; k++) printf " %.6f", (k <= taps) ? g ^ k : 0
+        printf " %d %.4f\n", n, g
+    }'
+}
+
+# audio_dsp_xtc_describe : one line for humans (status, rendered conf).
+audio_dsp_xtc_describe() {
+    local d a t p
+    d=$(audio_dsp_setting_value xtc_delay_us)
+    a=$(audio_dsp_setting_value xtc_attenuation_db)
+    t=$(audio_dsp_setting_value xtc_taps)
+    p=$(audio_dsp_xtc_params "$d" "$a" "$t")
+    # shellcheck disable=SC2086  # numbers only
+    set -- $p
+    printf 'xtc_delay_us=%s (%s samples at 48 kHz = %s us) xtc_attenuation_db=%s (g=%s) xtc_taps=%s\n' \
+        "$d" "$6" "$(LC_ALL=C awk -v n="$6" -v r="$AUDIO_DSP_XTC_RATE" 'BEGIN { printf "%.0f", n * 1000000 / r }')" \
+        "$a" "$7" "$t"
+}
+
+# audio_dsp_render_speaker_surround : the speaker virtual surround conf with
+# the HRTF path and the current XTC parameters.
+audio_dsp_render_speaker_surround() {
+    local hrtf_file p
+    hrtf_file="$(audio_dsp_hrtf_rel)/current.sofa"
+    p=$(audio_dsp_xtc_params "$(audio_dsp_setting_value xtc_delay_us)" \
+        "$(audio_dsp_setting_value xtc_attenuation_db)" "$(audio_dsp_setting_value xtc_taps)")
+    # shellcheck disable=SC2086  # numbers only
+    set -- $p
+    sed -e "s#@X20_HRTF_FILE@#$hrtf_file#g" \
+        -e "s#@X20_XTC_DELAY_S@#$1#g" \
+        -e "s#@X20_XTC_G1@#$2#g" -e "s#@X20_XTC_G2@#$3#g" \
+        -e "s#@X20_XTC_G3@#$4#g" -e "s#@X20_XTC_G4@#$5#g" \
+        -e "s#@X20_XTC_SUMMARY@#$(audio_dsp_xtc_describe)#g" \
+        "$AX20_SRC/overlay/home/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf" \
+        | _audio_dsp_install_rendered "$(audio_dsp_speaker_surround_rel)"
 }
 
 # audio_dsp_render_surround : the virtual surround conf with the absolute
@@ -346,15 +474,12 @@ audio_dsp_restart_services() {
 }
 
 audio_dsp_apply() {
-    local name stereo enabled
-    enabled=$(audio_dsp_setting enabled 1)
+    local name enabled
+    enabled=$(audio_dsp_setting_value enabled)
     name=$(audio_dsp_hrtf_current)
-    stereo=$(audio_dsp_setting stereo_hrtf 0)
-    case "$enabled" in 1 | 0) ;; *) enabled=1 ;; esac
-    case "$stereo" in 1 | 0) ;; *) stereo=0 ;; esac
     if [ "$enabled" != 1 ]; then
         log_info "audio_dsp: disabled in $(audio_dsp_settings_rel); keeping it off"
-        audio_dsp_write_settings 0 "$name" "$stereo"
+        audio_dsp_write_settings enabled=0
         _audio_dsp_fix_owner
         return 0
     fi
@@ -367,11 +492,13 @@ audio_dsp_apply() {
 
     if audio_dsp_hrtf_installed "$name" || [ "$AX20_DRY_RUN" = 1 ]; then
         audio_dsp_render_surround
+        audio_dsp_render_speaker_surround
     else
-        log_warn "audio_dsp: HRTF set '$name' unavailable; headphone virtual surround not installed (stereo passthrough and speaker chain still active)"
+        log_warn "audio_dsp: HRTF set '$name' unavailable; headphone and speaker virtual surround not installed (stereo passthrough and speaker chain still active)"
     fi
-    audio_dsp_render_wpsettings "$stereo"
-    audio_dsp_write_settings 1 "$name" "$stereo"
+    # Settings first: the WirePlumber fragment is rendered from them.
+    audio_dsp_write_settings enabled=1
+    audio_dsp_render_wpsettings
 
     if ! audio_dsp_probe_sofa_support >/dev/null 2>&1; then
         log_warn "audio_dsp: PipeWire sofa support (libmysofa) not detected; virtual surround sinks may not load (see docs/audio-dsp.md)"
@@ -404,16 +531,15 @@ _audio_dsp_unlink() {
 # picker, no routing script), keeps the downloaded HRTF data and records
 # enabled=0 so neither `apply` nor the boot service turns it back on.
 audio_dsp_disable() {
-    local name stereo dest rc=0
-    name=$(audio_dsp_hrtf_current)
-    stereo=$(audio_dsp_setting stereo_hrtf 0)
-    audio_dsp_write_settings 0 "$name" "$stereo"
+    local dest rc=0
+    audio_dsp_write_settings enabled=0
     while IFS=$'\t' read -r _ dest _; do
         [ -n "$dest" ] || continue
         _audio_dsp_unlink "$dest" || rc=1
     done <<EOF
 $(_audio_dsp_static_files)
 $(printf 'x\t%s\n' "$(audio_dsp_surround_rel)")
+$(printf 'x\t%s\n' "$(audio_dsp_speaker_surround_rel)")
 $(printf 'x\t%s\n' "$(audio_dsp_wpsettings_rel)")
 EOF
     _audio_dsp_fix_owner
@@ -441,7 +567,8 @@ audio_dsp_status() {
         fi
     done
     if ! [ -f "$(ax20_path "$(audio_dsp_hrtf_rel)/current.sofa")" ] \
-        || ! [ -f "$(ax20_path "$(audio_dsp_surround_rel)")" ]; then
+        || ! [ -f "$(ax20_path "$(audio_dsp_surround_rel)")" ] \
+        || ! [ -f "$(ax20_path "$(audio_dsp_speaker_surround_rel)")" ]; then
         printf 'stock\n'
         return 0
     fi

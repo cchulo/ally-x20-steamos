@@ -75,6 +75,12 @@ local function has_explicit_target (si_props)
   return false
 end
 
+-- Sink media classes we route to. x20-speakers-surround uses
+-- "Audio/Sink/Internal" so that pipewire-pulse (which only lists nodes whose
+-- class is exactly "Audio/Sink") keeps it out of every device picker;
+-- WirePlumber still creates a linkable item for any "Audio/*" node.
+local SINK_CLASSES = "Audio/Sink*"
+
 -- All audio sinks known to the session, plus the default sink's name.
 local function sinks_and_default (om, si_props)
   local sinks = {}
@@ -82,7 +88,7 @@ local function sinks_and_default (om, si_props)
   local available = {}
   for item in om:iterate {
     type = "SiLinkable",
-    Constraint { "media.class", "=", "Audio/Sink" },
+    Constraint { "media.class", "#", SINK_CLASSES },
   } do
     local p = item.properties
     local name = p ["node.name"]
@@ -146,7 +152,7 @@ local function lookup_sink (om, name)
   return om:lookup {
     type = "SiLinkable",
     Constraint { "node.name", "=", name },
-    Constraint { "media.class", "=", "Audio/Sink" },
+    Constraint { "media.class", "#", SINK_CLASSES },
   }
 end
 
@@ -202,6 +208,8 @@ SimpleEventHook {
     local name, reason = core.decide (stream, {
       enabled = true,
       stereo_hrtf = setting_bool ("x20.stereo_hrtf", false),
+      speaker_surround = setting_bool ("x20.speaker_surround", true),
+      stereo_surround = setting_bool ("x20.stereo_surround", false),
       output = output,
       hardware_sink = hardware_name,
       default_is_x20 = core.is_x20_name (default_name),
@@ -232,11 +240,16 @@ SimpleEventHook {
   end
 }:register ()
 
--- Re-evaluate every stream when the stereo HRTF toggle changes at runtime
--- (`wpctl settings x20.stereo_hrtf true`).
-pcall (Settings.subscribe, "x20.stereo_hrtf", function ()
+-- Re-evaluate every stream when a routing toggle changes at runtime
+-- (`wpctl settings x20.speaker_surround false`, which is what
+-- `ally-x20-steamos audio-dsp speaker-surround off` does on a live system):
+-- playing streams move to the new sink without restarting anything.
+local function rescan ()
   local source = Plugin.find ("standard-event-source")
   if source then
     source:call ("schedule-rescan", "linking")
   end
-end)
+end
+for _, key in ipairs ({ "x20.stereo_hrtf", "x20.speaker_surround", "x20.stereo_surround" }) do
+  pcall (Settings.subscribe, key, rescan)
+end

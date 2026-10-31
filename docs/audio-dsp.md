@@ -1,4 +1,4 @@
-# Audio DSP: headphone virtual surround and speaker chain
+# Audio DSP: headphone and speaker virtual surround, speaker chain
 
 Component `audio_dsp` ([`components/audio_dsp.sh`](../components/audio_dsp.sh)),
 command `ally-x20-steamos audio-dsp`, plan section 1.5. It is required and
@@ -13,7 +13,10 @@ What it does, per playback stream:
 | Headphones | 1-2 channels, `stereo-hrtf on` | `x20-virtual-surround-71` | FL/FR rendered at +-30 deg |
 | Headphones | 3-6 channels (3.0, quad, 5.0, 5.1) | `x20-virtual-surround-51` | each channel through an HRTF at its 5.1 angle, summed to 2 ears |
 | Headphones | 7-8 channels (6.1, 7.1) | `x20-virtual-surround-71` | same, 7.1 angles |
-| Internal speakers | anything | `x20-speakers` | downmix to stereo, stereo width, EQ |
+| Internal speakers | 3-8 channels (default, `speaker-surround on`) | `x20-speakers-surround` | each channel through an HRTF at its 7.1 angle, crosstalk cancellation, then the `x20-speakers` width + EQ |
+| Internal speakers | 3-8 channels, `speaker-surround off` | `x20-speakers` | downmix to stereo, stereo width, EQ |
+| Internal speakers | 1-2 channels | `x20-speakers` | stereo width, EQ |
+| Internal speakers | 1-2 channels, `stereo-surround on` | `x20-speakers-surround` | FL/FR rendered at +-30 deg and crosstalk-cancelled (wider than the chassis) |
 | Anything else (HDMI/DP, line out, USB DAC) | anything | hardware sink | none (an AV receiver decodes surround itself) |
 
 Streams that already have a target are never touched: an application that
@@ -148,10 +151,11 @@ All entries are in the manifest with slot `home` and owned by `audio_dsp`.
 |---|---|
 | `.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf` | rendered from [`overlay/home/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf`](../overlay/home/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf) with the absolute HRTF path |
 | `.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf` | [`51-x20-speaker-chain.conf`](../overlay/home/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf), or the `-lsp` variant |
+| `.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf` | rendered from [`52-x20-speaker-surround.conf`](../overlay/home/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf) with the HRTF path and the XTC parameters |
 | `.config/pipewire/pipewire-pulse.conf.d/50-x20-no-upmix.conf` | copied |
 | `.config/pipewire/client.conf.d/50-x20-no-upmix.conf` | copied |
 | `.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf` | copied (loader, settings schema) |
-| `.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf` | rendered (`x20.stereo_hrtf`) |
+| `.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf` | rendered (`x20.stereo_hrtf`, `x20.speaker_surround`, `x20.stereo_surround`) |
 | `.local/share/wireplumber/scripts/x20-route-by-channels.lua` | copied |
 | `.local/share/wireplumber/scripts/lib/x20-route-core.lua` | copied |
 | `.config/ally-x20-steamos/hrtf/<set>.sofa`, `current.sofa` | downloaded and verified, symlink |
@@ -173,12 +177,17 @@ absolute path of `current.sofa`.
 | Turn everything off / on | `sudo ally-x20-steamos audio-dsp off` / `on` |
 | Pick an HRTF set | `ally-x20-steamos audio-dsp hrtf list`, `sudo ally-x20-steamos audio-dsp hrtf <name>` |
 | Stereo through the HRTF too | `sudo ally-x20-steamos audio-dsp stereo-hrtf on` (persistent), or `wpctl settings x20.stereo_hrtf true` (until WirePlumber restarts) |
+| Speaker virtual surround on / off | `sudo ally-x20-steamos audio-dsp speaker-surround on` / `off` (persistent, moves playing streams at once) |
+| Stereo through the speaker virtual surround | `sudo ally-x20-steamos audio-dsp stereo-surround on` / `off` |
+| Tune the crosstalk cancellation | `ally-x20-steamos audio-dsp xtc` (show), `sudo ally-x20-steamos audio-dsp xtc set <delay_us> <atten_db> [taps]`, `xtc reset` |
 | Force one stream somewhere | move it in pavucontrol, Steam or `wpctl`/`pw-metadata`. Explicit targets always win |
 | Speaker EQ / width | edit a copy of the speaker chain under a new name (e.g. `52-my-speakers.conf`) and turn ours off. Hand edits to our files are reported as drift and replaced on the next apply |
 | Target user | `AX20_AUDIO_USER`, `AX20_HOME` (default: `$SUDO_USER`, else `deck`) |
 
-`~/.config/ally-x20-steamos/audio-dsp.conf` holds `enabled`, `hrtf` and
-`stereo_hrtf`. The commands rewrite it. `apply` and the boot service read it,
+`~/.config/ally-x20-steamos/audio-dsp.conf` holds `enabled`, `hrtf`,
+`stereo_hrtf`, `speaker_surround` (default 1), `stereo_surround` (default 0),
+`xtc_delay_us` (117), `xtc_attenuation_db` (4) and `xtc_taps` (4). The
+commands rewrite it. Out-of-range values fall back to the defaults. `apply` and the boot service read it,
 so `off` stays off across reboots and updates.
 
 ## HRTF sets
@@ -233,10 +242,116 @@ sink `x20-speakers`, uses only builtin nodes that exist since PipeWire 1.0:
 
 The plan lists a multiband compressor and a bass enhancer. Neither exists as a
 builtin node, so they depend on the same optional-plugin mechanism and are
-not in v0.1. HRTF rendering is never used on speakers: each ear hears both
-speakers, and that crosstalk destroys the binaural cues. Transaural
-crosstalk cancellation is the stretch goal discussed in
-[`xtc-notes.md`](xtc-notes.md).
+not in v0.1. Plain HRTF output is never sent to the speakers: each ear hears
+both speakers, and that crosstalk destroys the binaural cues. The speaker
+virtual surround below cancels the crosstalk first.
+
+## Speaker virtual surround
+
+[`52-x20-speaker-surround.conf`](../overlay/home/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf),
+sink `x20-speakers-surround`. This is the open counterpart of the "Dolby
+Atmos for built-in speakers" mode the X20 ships with on Windows. When no
+headphones are connected, the router sends every stream with 3 or more
+channels here. Stereo goes here too with `stereo-surround on`.
+
+1. **Binaural render**: the same sofa spatializers, HRTF set
+   (`current.sofa`) and 7.1 angles as `x20-virtual-surround-71`. A 5.1 stream
+   fills RL/RR, so its surrounds are rendered at +-150 deg (not the +-110 deg of
+   the 5.1 headphone sink). One speaker sink is enough, since accuracy at
+   that level is beyond what a stereo dipole can show.
+2. **Crosstalk cancellation (XTC)**: a 4-tap RACE network built from builtin
+   `delay`, `invert` and `mixer` nodes. It sends an inverted, delayed,
+   attenuated copy of each side to the other side, and its own crosstalk
+   back. It only works between 300 Hz and 5 kHz. Bass and highs pass
+   straight through. The math and the X20 numbers (speakers about 22 cm
+   apart, listener at about 40 cm, 117 us, 4 dB) are in
+   [`xtc-notes.md`](xtc-notes.md).
+3. **LFE**: added to both channels at -6 dB, after the canceller.
+4. **Speaker chain**: the stereo result goes to `x20-speakers`
+   (`target.object`), so the width and EQ stage exists once and is shared
+   with the plain path.
+
+Without the sofa plugin or the HRTF data the sink is absent, and the router
+falls back to `x20-speakers`.
+
+### Listening test (A/B)
+
+Sit as you play: device centred, about 35-45 cm from your face, ears level
+with the speakers. The effect has a sweet spot of a few centimetres.
+
+```sh
+ally-x20-steamos audio-dsp test                       # channel sequence through the speaker surround
+# play a 5.1/7.1 test (film trailer, game, or speaker-test below), then:
+sudo ally-x20-steamos audio-dsp speaker-surround off  # plain downmix (A)
+sudo ally-x20-steamos audio-dsp speaker-surround on   # virtual surround (B)
+speaker-test -D pipewire -c 6 -t wav                  # spoken channel names, 5.1
+```
+
+Each toggle is one command. It updates the setting in the running
+WirePlumber (`wpctl settings`), so the playing stream moves to the other sink
+within a second, without a restart.
+
+What to expect with surround on:
+
+- FL/FR sound outside the chassis edges, not from the grilles.
+- FC stays centred and slightly in front.
+- SL/SR are pulled towards the sides, well outside the device. Rears are the
+  weakest: expect "wide and a bit behind the sides", not true behind. The
+  binaural front/back cue does not survive speakers this small at
+  this distance.
+- LFE sounds the same in both modes (the 150 Hz high-pass removes most of
+  it).
+- Dialogue may sound slightly thinner and the image is a few dB quieter.
+  That is the XTC mid dip and HRTF headroom. Match the volume before judging,
+  because louder always sounds "better".
+- Move your head 5 cm sideways and the effect collapses. That is the sweet
+  spot, not a bug.
+
+With surround off, everything stays between the speakers, wider than the
+chassis only by the widener.
+
+### Tuning
+
+```sh
+ally-x20-steamos audio-dsp xtc                # current values
+sudo ally-x20-steamos audio-dsp xtc set 125 4 # delay (us), attenuation (dB), [taps]
+sudo ally-x20-steamos audio-dsp xtc reset     # 117 us, 4 dB, 4 taps
+```
+
+`xtc set` re-renders the conf and restarts PipeWire, which interrupts audio
+for a second. The delay moves in whole samples at 48 kHz (104, 125, 146 us).
+
+- Image stuck at the speakers: lower the attenuation (3, 2.5).
+- Phasey, hollow, pressure on the ears, thin dialogue: raise it (5-6), or
+  use fewer taps (`xtc set 117 4 2`).
+- Holding the device closer: use a longer delay (146 us at about 31 cm).
+  Further away: use a shorter one (104 us at 45 cm).
+
+Note the values that work for you. Feedback from the device decides the
+defaults.
+
+### Device pickers
+
+PipeWire and WirePlumber 0.5 have no "hidden" node property. pipewire-pulse,
+which feeds KDE, Steam and pavucontrol, lists exactly the nodes whose
+`media.class` is `Audio/Sink`. WirePlumber's software-DSP `hide-parent`
+instead revokes the node's permissions for every client.
+
+- `x20-speakers-surround` uses `media.class = Audio/Sink/Internal`. No pulse
+  client lists it, but WirePlumber still creates a linkable item for every
+  `Audio/*` node, and the router and `pw-play --target` reach it by name.
+  Side effect: pavucontrol shows a stream playing on it with an unknown
+  device. Moving the stream to a listed device works as usual.
+- The headphone sinks stay listed and are described as
+  "X20 headphone surround 7.1/5.1 (headphones only)". All our sinks are
+  `node.virtual`, so KDE Plasma hides them unless "Show virtual devices" is
+  enabled. Hiding them only while no headphones are connected would need the
+  router to change pulse permissions on every jack event. That is riskier
+  than the benefit (a wrong permission hides a sink for good until
+  WirePlumber restarts), so it is left out. Picking one by hand on the
+  speakers plays a headphone render through the speakers: rear and centre
+  sound odd and LFE is not filtered. Use `audio-dsp test` to hear the
+  speaker version instead.
 
 ## Requirements: sofa plugin and libmysofa
 
@@ -272,8 +387,10 @@ Fallbacks:
 
 ```sh
 ally-x20-steamos audio-dsp status        # settings, probes, live x20 sinks
-ally-x20-steamos audio-dsp test          # 7.1 + stereo tones, prints stream -> sink
-wpctl status                             # sinks: X20 Virtual Surround 5.1/7.1, X20 Speakers
+ally-x20-steamos audio-dsp test          # 7.1 + stereo tones, prints stream -> sink,
+                                         # then 7.1 through x20-speakers-surround
+wpctl status                             # sinks: X20 headphone surround 5.1/7.1, X20 Speakers
+                                         # (x20-speakers-surround is Audio/Sink/Internal)
 pw-top                                   # which nodes run, rate, xruns, DSP load
 pw-dump | jq -r '.[] | select(.type == "PipeWire:Interface:Link")
   | "\(.info["output-node-id"]) -> \(.info["input-node-id"])"'
@@ -328,5 +445,7 @@ core would carry over unchanged.
 - TODO(hw) WirePlumber runs the `main` profile on SteamOS.
 - TODO(hw) speaker EQ/width preset against the Windows reference recording.
 - TODO(hw) HRTF gain (`gain = 0.5` per source) for comfortable loudness without clipping.
+- TODO(hw) speaker virtual surround by ear: XTC defaults, clipping on loud
+  surround scenes (the side boost), speaker separation measured with a ruler.
 - TODO(vm) bit-identical stereo check, 5.1/7.1 routing and route-change rescans.
 - TODO(vm) the ALSA plugin (`pipewire-alsa`) picks up `client.conf.d`.

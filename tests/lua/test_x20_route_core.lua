@@ -30,9 +30,9 @@ local fh = assert (io.open (fixture, "r"))
 for line in fh:lines () do
   if line:match ("%S") and not line:match ("^%s*#") then
     local f = split (line)
-    assert (#f == 11, "bad fixture line: " .. line)
+    assert (#f == 13, "bad fixture line: " .. line)
     local available = {}
-    for n in f[10]:gmatch ("[^,]+") do
+    for n in f[12]:gmatch ("[^,]+") do
       available[n] = true
     end
     local stream = {
@@ -46,12 +46,14 @@ for line in fh:lines () do
       enabled = true,
       output = f[7],
       stereo_hrtf = f[8] == "yes",
-      default_is_x20 = f[9] == "yes",
+      speaker_surround = f[9] == "yes",
+      stereo_surround = f[10] == "yes",
+      default_is_x20 = f[11] == "yes",
       hardware_sink = "alsa_output.hw",
       available = available,
     }
     local got = core.decide (stream, env)
-    check ("decide/" .. f[1], tostring (got), f[11])
+    check ("decide/" .. f[1], tostring (got), f[13])
   end
 end
 fh:close ()
@@ -61,6 +63,10 @@ check ("decide/disabled", core.decide ({ media_class = "Stream/Output/Audio", ch
   { enabled = false, output = "headphones", available = { [core.SINK_71] = true } }), nil)
 check ("decide/encoded", core.decide ({ media_class = "Stream/Output/Audio", channels = 2, encoded = true },
   { enabled = true, output = "speakers", available = { [core.SINK_SPEAKERS] = true } }), nil)
+-- speaker_surround defaults to on when the setting is absent (nil).
+check ("decide/speaker-surround-default-on", core.decide ({ media_class = "Stream/Output/Audio", channels = 6 },
+  { enabled = true, output = "speakers", hardware_sink = "alsa_output.hw",
+    available = { [core.SINK_SPEAKERS] = true, [core.SINK_SPEAKERS_SURROUND] = true } }), core.SINK_SPEAKERS_SURROUND)
 check ("decide/no-hardware-known", core.decide ({ media_class = "Stream/Output/Audio", channels = 2 },
   { enabled = true, output = "headphones", available = {} }), nil)
 

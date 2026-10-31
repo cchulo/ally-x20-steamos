@@ -1,9 +1,9 @@
-# hid-asus-ally patches (0010–0012)
+# hid-asus-ally patches (0010–0013)
 
-Three patches to Valve's `hid-asus-ally` driver. Together they make the ROG
+Four patches to Valve's `hid-asus-ally` driver. Together they make the ROG
 Xbox Ally X20 joystick-ring RGB show up in Steam's Customization menu, expose
-the MCU's Aura effects through sysfs, and make the X20 Quick Access button
-work. They all produce one rebuilt module, `hid-asus-ally.ko`
+the MCU's Aura effects through sysfs, make the X20 Quick Access button work,
+and fix use-after-free bugs when the driver's two interfaces unbind. They all produce one rebuilt module, `hid-asus-ally.ko`
 (see [`modules-hid.list`](modules-hid.list)).
 
 ## Source tree: Valve's, not linux-stable
@@ -172,6 +172,59 @@ interface, and the driver only knew `0xa6`.
 **Derived from:** ovenham/rog-ally-x20-steamos-speaker-qam-fix (button table,
 `tools/x20-buttons.sh`, N-KEY ID `0b05:1b4c`); `hid-asus.c` in the same tree.
 
+## 0013 — `hid-asus-ally-fix-use-after-free-on-interface-unbind.patch`
+
+**Field report.** With the PR #20 build loaded, a live
+`modprobe -r hid_asus_ally && modprobe hid-asus-ally` while InputPlumber
+held the gamepad evdev hard-rebooted the X20. The journal had nothing after
+InputPlumber's `event11: No such device`, and pstore was empty. The same
+reload had worked twice with the previous build.
+
+**Audit of the 0010/0011 LED paths: nothing conclusive.**
+- `ally_rgb_set()` is the LED core's `brightness_set` and may run in atomic
+  context. It only takes `led->lock` and schedules work. It never calls
+  `asus_dev_set_report()`.
+- `ally_rgb_remove()` sets `removed` under the lock, calls
+  `cancel_work_sync()`, then unregisters the class device. The `LED_OFF` that
+  `led_classdev_unregister()` sends cannot queue work any more. The effect,
+  speed, direction and enabled attributes are removed first and queue work
+  only through the same guarded helper.
+- The `0xb4`-only-on-effect-change logic runs only in the work item.
+- The `rgb_static_mode` setter only stores an int.
+- PR #20 changed no teardown or probe code; its diff is limited to the work
+  function, the send helpers and resume.
+- The pattern matches hid-playstation: a flag cleared under the lock,
+  `cancel_work_sync()`, and devm LEDs left to devres.
+
+**What was found instead: a Valve bug, present before this series.** These
+paths had no defect in 0010/0011, but `ally_hid_remove()` tears down
+*every* part (`led_rgb_dev`, `ally_x`, `gamepad_cfg`) on *each* of the two
+interfaces. Each part is devm memory of the interface that created it, and
+the shared static `drvdata` pointers are never cleared. On rmmod the device
+bound last unbinds first. If that is the Ally X interface, `ally_x` is freed
+while the configuration interface is still bound. Two things then use freed
+memory:
+- `ally_raw_event()` dispatches every `0x5a` vendor report to
+  `ally_x_raw_event()` in interrupt context.
+- The configuration interface's remove calls `ally_x_remove()`
+  (`spin_lock`, `cancel_work_sync`) on the freed object.
+
+Whether that crashes depends on reuse of the freed memory, so the result
+varies from run to run. A crash in interrupt context leaves no trace in the
+journal. This fits the report, but it is not proven to be its cause.
+
+**Fix.**
+- `remove()` tears down only its own interface's parts and clears their
+  pointers.
+- A spinlock serialises `raw_event`'s use of `ally_x`, `gamepad_cfg` and
+  `gamepad_cfg->input` against probe and remove.
+- probe never publishes an `ERR_PTR`.
+- The Ally X probe clears `gamepad_cfg->input` before unregistering it.
+- The rumble callback ignores a cleared `ally_x`.
+
+`TODO(hw)`: repeat the live reload ten or more times with InputPlumber
+running.
+
 ## Xbox button light
 
 The X20's Xbox button glows green on Windows and is dark on Linux. The stock
@@ -201,7 +254,7 @@ button light. Once the report is known, add a `go_s:white:xbox_button` (or
 
 | Check | Result |
 |---|---|
-| `git apply --check` 0010 → 0011 → 0012 in sequence on `7.2.7-valve2` | pass |
+| `git apply --check` 0010 → 0011 → 0012 → 0013 in sequence on `7.2.7-valve2` | pass |
 | `git apply --check` 0012 alone on `7.2.7-valve2` | pass |
 | `git apply --check` 0011 without 0010 | fails (expected, depends on 0010) |
 | `git apply --check` on linux-stable `v7.2.7` | fails: the file does not exist there (see above) |

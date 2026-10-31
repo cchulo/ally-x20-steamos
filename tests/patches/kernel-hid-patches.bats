@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # SPDX-License-Identifier: GPL-2.0-only
-# Static checks for the hid-asus-ally kernel patches (patches/kernel/0010-0012)
+# Static checks for the hid-asus-ally kernel patches (patches/kernel/0010-0013)
 # and patches/kernel/modules-hid.list. Nothing here needs a kernel tree.
 load '../test_helper'
 
@@ -11,10 +11,10 @@ hid_patches() {
     ls "$PATCH_DIR"/001[0-9]-hid-asus-ally-*.patch 2>/dev/null
 }
 
-@test "the three hid-asus-ally patches exist" {
+@test "the four hid-asus-ally patches exist" {
     run hid_patches
     assert_success
-    [ "$(printf '%s\n' "$output" | grep -c .)" -eq 3 ] || {
+    [ "$(printf '%s\n' "$output" | grep -c .)" -eq 4 ] || {
         echo "$output"
         false
     }
@@ -98,7 +98,7 @@ hid_patches() {
             false
         }
     done <"$LIST"
-    [ "$n" -eq 3 ]
+    [ "$n" -eq 4 ]
 }
 
 @test "every hid-asus-ally patch is listed in modules-hid.list" {
@@ -139,4 +139,11 @@ hid_patches() {
     grep -q '^+module_param_cb(rgb_static_mode, &rgb_static_mode_ops, &rgb_static_mode, 0644);' "$p"
     grep -q '^Solid dropout\.' "$p"
     grep -q '^### Solid dropout' "$PATCH_DIR/README-hid.md"
+}
+
+@test "0013 tears down per interface and serialises drvdata against raw_event" {
+    p="$(ls "$PATCH_DIR"/0013-*.patch)"
+    grep -q '^+static DEFINE_SPINLOCK(ally_drvdata_lock);' "$p"
+    grep -q '^+	if (ep == ROG_ALLY_CFG_INTF_IN) {' "$p"
+    grep -q '^+		drvdata.ally_x = NULL;' "$p"
 }

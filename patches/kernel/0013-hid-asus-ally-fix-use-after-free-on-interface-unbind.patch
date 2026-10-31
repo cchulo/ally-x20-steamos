@@ -1,0 +1,311 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Carlos Chulo <cchulo.dev@gmail.com>
+Date: Sat, 31 Oct 2026 10:00:00 -0700
+Subject: [PATCH] HID: asus-ally: do not touch the other interface's state on
+ remove
+
+The driver binds two USB interfaces of the N-KEY device: the
+configuration interface (endpoint ROG_ALLY_CFG_INTF_IN, which creates
+drvdata.gamepad_cfg and drvdata.led_rgb_dev) and the Ally X gamepad
+interface (ROG_ALLY_X_INTF_IN, which creates drvdata.ally_x). All three
+objects are devm allocations on their own interface's hid_device, so
+each is freed right after that interface's remove() returns. drvdata is
+a single static shared by both interfaces, and nothing clears its
+pointers.
+
+ally_hid_remove() tears down every part on every interface:
+
+	if (drvdata.led_rgb_dev) ally_rgb_remove(hdev);
+	if (drvdata.ally_x)      ally_x_remove(hdev);
+	if (drvdata.gamepad_cfg) ally_cfg_remove(hdev);
+
+On rmmod, driver_detach() unbinds the device bound last first. When the
+Ally X interface goes first, its devres frees ally_x (and its input
+device, which is when userspace sees "No such device"). The
+configuration interface is still bound, and two things then use freed
+memory:
+
+- ally_raw_event() on the configuration interface still reads
+  drvdata.ally_x. Every 0x5a vendor report goes to ally_x_raw_event()
+  on the freed object: input_report_key() on a freed input_dev, its
+  spinlock, schedule_work() on a freed work item. This runs in URB
+  completion (interrupt) context.
+- The configuration interface's remove() then calls ally_x_remove() on
+  the freed object: spin_lock_irqsave() and cancel_work_sync() on freed
+  memory.
+
+When the configuration interface goes first, ally_x_remove() runs
+against the still-bound gamepad interface and cancels its rumble
+worker. ally_cfg_remove() later removes the gamepad attribute groups
+from the wrong kobject. The probe path has related problems:
+
+- drvdata.ally_x briefly holds an ERR_PTR that raw_event can read.
+- drvdata.led_rgb_dev and drvdata.gamepad_cfg stay ERR_PTRs on failure,
+  but suspend, resume and remove only test them for NULL.
+- The Ally X probe unregisters gamepad_cfg->input without clearing it,
+  so the configuration path of raw_event reports into a freed input
+  device once ally_x is gone.
+
+Whether a stale access crashes depends on whether the freed memory has
+been reused, so a live "modprobe -r hid_asus_ally" can succeed several
+times and then take the machine down. The interrupt-context accesses
+leave no oops in the journal. This was seen on a ROG Xbox Ally X20 while
+InputPlumber held the gamepad evdev: an immediate hard reboot, nothing
+logged after InputPlumber's "event11: No such device", and nothing in
+pstore. The crash is not proven to be this bug, but the code above is
+wrong either way.
+
+Fix:
+
+- remove() tears down only the parts its own interface created
+  (selected by endpoint, as probe does) and clears the drvdata pointer
+  before devres frees the object.
+- A spinlock, ally_drvdata_lock, serialises raw_event's reads of
+  drvdata.ally_x, drvdata.gamepad_cfg and gamepad_cfg->input against
+  probe and remove changing them. raw_event dispatches under the lock,
+  so a pointer cannot be freed while a report is being handled.
+- probe never publishes an ERR_PTR: a failed part is NULL.
+- The Ally X probe clears gamepad_cfg->input before unregistering it.
+- ally_x_play_effect() returns early when drvdata.ally_x is already
+  cleared. The ff device goes away with the input device, after
+  remove() returns.
+
+Audit of the LED paths added by the earlier patches in this series
+(no defect found):
+
+- ally_rgb_set() (the LED core's brightness_set, possibly atomic) only
+  takes led->lock and schedules work. It never calls
+  asus_dev_set_report().
+- ally_rgb_remove() sets led->removed under the lock, then calls
+  cancel_work_sync(), then unregisters the class device. The LED_OFF
+  that led_classdev_unregister() sends goes to ally_rgb_set(), and
+  ally_rgb_schedule_work() refuses to queue once removed is set. No HID
+  I/O happens after cancel_work_sync(). The effect/speed/direction/
+  enabled stores are kernfs attributes removed before unregistering,
+  and they queue work only through the same guarded helper.
+- The "0xb4 only on effect change" logic and all Aura I/O run in the
+  work item (process context).
+- The rgb_static_mode parameter's set callback only validates and
+  stores an int. The work reads it with READ_ONCE(). Nothing touches a
+  device.
+- This matches hid-playstation, which clears output_worker_initialized
+  under the lock, cancels the worker and leaves the devm LEDs to devres.
+  Their brightness_set callbacks only schedule work, which is refused
+  after teardown.
+
+Derived from: drivers/hid/hid-playstation.c (ps_remove(),
+dualsense_schedule_work(): flag under lock, cancel_work_sync(), devm
+LEDs) and drivers/hid/hid-nintendo.c (nintendo_hid_remove(): output
+worker stopped before teardown) in the same tree; the driver-core
+detach order in drivers/base/dd.c (driver_detach() takes the last bound
+device first).
+
+Base: linux-integration 7.2.7-valve2 plus the previous patches in this
+series.
+
+TODO(hw): on an RC74XA with InputPlumber running, repeat
+"modprobe -r hid_asus_ally && modprobe hid-asus-ally" (at least ten
+times) and check that it neither reboots nor logs a KASAN or oops
+report.
+---
+ drivers/hid/hid-asus-ally.c | 112 +++++++++++++++++++++++++++---------
+ 1 file changed, 86 insertions(+), 26 deletions(-)
+
+diff --git a/drivers/hid/hid-asus-ally.c b/drivers/hid/hid-asus-ally.c
+index f64861e..8d46330 100644
+--- a/drivers/hid/hid-asus-ally.c
++++ b/drivers/hid/hid-asus-ally.c
+@@ -534,6 +534,17 @@ static struct ally_drvdata {
+ 	uint mcu_version;
+ } drvdata;
+ 
++/*
++ * drvdata is shared by the configuration interface (gamepad_cfg, led_rgb_dev)
++ * and the Ally X gamepad interface (ally_x). Each part lives in devres memory
++ * of the interface that created it and is freed right after that interface's
++ * remove() returns, while the other interface can still be bound and still
++ * receiving reports. Readers in raw_event (interrupt context) and the
++ * writers in probe/remove take this lock, so a pointer is never used after
++ * its owner cleared it.
++ */
++static DEFINE_SPINLOCK(ally_drvdata_lock);
++
+ static void reverse_bytes_in_pairs(u8 *buf, size_t size) {
+ 	uint16_t *word_ptr;
+ 	size_t i;
+@@ -1640,10 +1651,11 @@ static struct input_dev *ally_x_alloc_input_dev(struct hid_device *hdev,
+ 
+ static int ally_x_play_effect(struct input_dev *idev, void *data, struct ff_effect *effect)
+ {
+-	struct ally_x_device *ally_x = drvdata.ally_x;
++	struct ally_x_device *ally_x = READ_ONCE(drvdata.ally_x);
+ 	unsigned long flags;
+ 
+-	if (effect->type != FF_RUMBLE)
++	/* NULL once the interface is being removed; the input device goes next */
++	if (!ally_x || effect->type != FF_RUMBLE)
+ 		return 0;
+ 
+ 	spin_lock_irqsave(&ally_x->lock, flags);
+@@ -2632,8 +2644,14 @@ static void ally_rgb_remove(struct hid_device *hdev)
+ static int ally_raw_event(struct hid_device *hdev, struct hid_report *report, u8 *data,
+ 			  int size)
+ {
+-	struct ally_gamepad_cfg *cfg = drvdata.gamepad_cfg;
+-	struct ally_x_device *ally_x = drvdata.ally_x;
++	struct ally_gamepad_cfg *cfg;
++	struct ally_x_device *ally_x;
++	unsigned long flags;
++	int ret = 0;
++
++	spin_lock_irqsave(&ally_drvdata_lock, flags);
++	cfg = drvdata.gamepad_cfg;
++	ally_x = drvdata.ally_x;
+ 
+ 	if (ally_x) {
+ 		if ((hdev->bus == BUS_USB && report->id == ALLY_X_INPUT_REPORT_USB &&
+@@ -2641,11 +2659,9 @@ static int ally_raw_event(struct hid_device *hdev, struct hid_report *report, u8
+ 		    (data[0] == 0x5A)) {
+ 			ally_x_raw_event(ally_x, report, data, size);
+ 		} else {
+-			return -1;
++			ret = -1;
+ 		}
+-	}
+-
+-	if (cfg && !ally_x) {
++	} else if (cfg && cfg->input) {
+ 		input_report_key(cfg->input, KEY_PROG1, data[1] == 0x38);
+ 		input_report_key(cfg->input, KEY_F16,
+ 				 data[1] == ALLY_KEY_QAM || data[1] == ALLY_X20_KEY_QAM);
+@@ -2653,8 +2669,9 @@ static int ally_raw_event(struct hid_device *hdev, struct hid_report *report, u8
+ 		input_report_key(cfg->input, KEY_F18, data[1] == 0xA8);
+ 		input_sync(cfg->input);
+ 	}
++	spin_unlock_irqrestore(&ally_drvdata_lock, flags);
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static int ally_hid_init(struct hid_device *hdev)
+@@ -2696,6 +2713,10 @@ static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_
+ 	struct usb_interface *intf = to_usb_interface(hdev->dev.parent);
+ 	struct usb_device *udev = interface_to_usbdev(intf);
+ 	u16 idProduct = le16_to_cpu(udev->descriptor.idProduct);
++	struct ally_gamepad_cfg *cfg;
++	struct ally_x_device *ally_x;
++	struct ally_rgb_dev *led;
++	unsigned long flags;
+ 	int ret, ep;
+ 
+ 	ep = get_endpoint_address(hdev);
+@@ -2737,35 +2758,56 @@ static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_
+ 		validate_mcu_fw_version(hdev, idProduct);
+ 		ally_disable_nkey_wakeup(hdev);
+ 
+-		drvdata.led_rgb_dev = ally_rgb_create(hdev);
+-		if (IS_ERR(drvdata.led_rgb_dev))
++		/* Keep NULL, never an ERR_PTR, in drvdata: every user tests for NULL */
++		led = ally_rgb_create(hdev);
++		if (IS_ERR(led)) {
+ 			hid_err(hdev, "Failed to create Ally gamepad LEDs.\n");
+-		else
++			led = NULL;
++		} else {
+ 			hid_info(hdev, "Created Ally RGB LED controls.\n");
++		}
++		drvdata.led_rgb_dev = led;
+ 
+-		drvdata.gamepad_cfg = ally_gamepad_cfg_create(hdev);
+-		if (IS_ERR(drvdata.gamepad_cfg))
++		/* ally_gamepad_cfg_create() sets drvdata.gamepad_cfg itself */
++		cfg = ally_gamepad_cfg_create(hdev);
++		if (IS_ERR(cfg)) {
+ 			hid_err(hdev, "Failed to create Ally gamepad attributes.\n");
+-		else
++			cfg = NULL;
++		} else {
+ 			hid_info(hdev, "Created Ally gamepad attributes.\n");
++		}
++		spin_lock_irqsave(&ally_drvdata_lock, flags);
++		drvdata.gamepad_cfg = cfg;
++		spin_unlock_irqrestore(&ally_drvdata_lock, flags);
+ 
+-		if (IS_ERR(drvdata.led_rgb_dev) && IS_ERR(drvdata.gamepad_cfg))
++		if (!led && !cfg)
+ 			goto err_close;
+ 	}
+ 
+ 	/* May or may not exist */
+ 	if (ep == ROG_ALLY_X_INTF_IN) {
+-		drvdata.ally_x = ally_x_create(hdev);
+-		if (IS_ERR(drvdata.ally_x)) {
++		/* raw_event may run already: never expose an ERR_PTR to it */
++		ally_x = ally_x_create(hdev);
++		if (IS_ERR(ally_x)) {
+ 			hid_err(hdev, "Failed to create Ally X gamepad.\n");
+-			drvdata.ally_x = NULL;
+ 			goto err_close;
+ 		}
++		spin_lock_irqsave(&ally_drvdata_lock, flags);
++		drvdata.ally_x = ally_x;
++		spin_unlock_irqrestore(&ally_drvdata_lock, flags);
+ 		hid_info(hdev, "Created Ally X controller.\n");
+ 
+ 		// Not required since we send this inputs ep through the gamepad input dev
+ 		if (drvdata.gamepad_cfg && drvdata.gamepad_cfg->input) {
+-			input_unregister_device(drvdata.gamepad_cfg->input);
++			struct input_dev *input;
++
++			/* raw_event must not use it once it is unregistered (and freed) */
++			spin_lock_irqsave(&ally_drvdata_lock, flags);
++			input = drvdata.gamepad_cfg->input;
++			drvdata.gamepad_cfg->input = NULL;
++			spin_unlock_irqrestore(&ally_drvdata_lock, flags);
++
++			input_unregister_device(input);
+ 			hid_info(hdev, "Ally X removed unrequired input dev.\n");
+ 		}
+ 	}
+@@ -2779,16 +2821,34 @@ static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_
+ 	return ret;
+ }
+ 
++/*
++ * Tear down only what this interface created, then clear the drvdata pointer
++ * before devres frees the object. The two interfaces unbind one after the
++ * other (on rmmod the one bound last goes first), and the other interface's
++ * remove() and raw_event must not touch the freed parts.
++ */
+ static void ally_hid_remove(struct hid_device *hdev)
+ {
+-	if (drvdata.led_rgb_dev)
+-		ally_rgb_remove(hdev);
++	unsigned long flags;
++	int ep = get_endpoint_address(hdev);
+ 
+-	if (drvdata.ally_x)
++	if (ep == ROG_ALLY_CFG_INTF_IN) {
++		if (drvdata.led_rgb_dev)
++			ally_rgb_remove(hdev);
++		drvdata.led_rgb_dev = NULL;
++
++		if (drvdata.gamepad_cfg)
++			ally_cfg_remove(hdev);
++		spin_lock_irqsave(&ally_drvdata_lock, flags);
++		drvdata.gamepad_cfg = NULL;
++		spin_unlock_irqrestore(&ally_drvdata_lock, flags);
++	} else if (ep == ROG_ALLY_X_INTF_IN && drvdata.ally_x) {
++		/* Still allocated until this function returns */
+ 		ally_x_remove(hdev);
+-
+-	if (drvdata.gamepad_cfg)
+-		ally_cfg_remove(hdev);
++		spin_lock_irqsave(&ally_drvdata_lock, flags);
++		drvdata.ally_x = NULL;
++		spin_unlock_irqrestore(&ally_drvdata_lock, flags);
++	}
+ 
+ 	hid_hw_close(hdev);
+ 	hid_hw_stop(hdev);

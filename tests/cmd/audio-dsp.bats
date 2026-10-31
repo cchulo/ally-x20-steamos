@@ -156,3 +156,118 @@ loader="$H/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf"
     assert_failure
     assert_output_contains "read-only"
 }
+
+wpset() { cat "$AX20_ROOT$H/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"; }
+spkconf="$H/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf"
+
+@test "on installs the speaker surround sink, routing defaults on/off" {
+    run ax audio-dsp on
+    assert_success
+    [ -f "$AX20_ROOT$spkconf" ]
+    settings | grep -qx 'speaker_surround=1'
+    settings | grep -qx 'stereo_surround=0'
+    wpset | grep -q 'x20.speaker_surround = true'
+    wpset | grep -q 'x20.stereo_surround = false'
+}
+
+@test "speaker-surround off|on: one command each way, persisted, other settings kept" {
+    ax audio-dsp on
+    ax audio-dsp stereo-hrtf on
+    run ax audio-dsp speaker-surround off
+    assert_success
+    settings | grep -qx 'speaker_surround=0'
+    settings | grep -qx 'stereo_hrtf=1'
+    wpset | grep -q 'x20.speaker_surround = false'
+    wpset | grep -q 'x20.stereo_hrtf = true'
+    # the sink stays installed: the switch is routing-only
+    [ -f "$AX20_ROOT$spkconf" ]
+    run ax audio-dsp speaker-surround on
+    assert_success
+    settings | grep -qx 'speaker_surround=1'
+    wpset | grep -q 'x20.speaker_surround = true'
+    # survives a re-apply
+    ax audio-dsp speaker-surround off
+    ax audio-dsp on
+    wpset | grep -q 'x20.speaker_surround = false'
+    run ax audio-dsp speaker-surround sometimes
+    assert_failure 2
+}
+
+@test "stereo-surround on|off toggles its setting" {
+    ax audio-dsp on
+    run ax audio-dsp stereo-surround on
+    assert_success
+    settings | grep -qx 'stereo_surround=1'
+    wpset | grep -q 'x20.stereo_surround = true'
+    run ax audio-dsp stereo-surround off
+    settings | grep -qx 'stereo_surround=0'
+    wpset | grep -q 'x20.stereo_surround = false'
+}
+
+@test "xtc set renders the parameters and persists them; reset restores defaults" {
+    ax audio-dsp on
+    run ax audio-dsp xtc set 104 5.5 3
+    assert_success
+    settings | grep -qx 'xtc_delay_us=104'
+    settings | grep -qx 'xtc_attenuation_db=5.5'
+    settings | grep -qx 'xtc_taps=3'
+    # 104 us = 4.99 samples -> 5 -> 5.5 / 48000 s; g = 10^(-5.5/20)
+    [ "$(grep -c '"Delay (s)" = 0.00011458 }' "$AX20_ROOT$spkconf")" = 8 ]
+    grep -q '"Gain 2" = 0.530884 "Gain 3" = 0.281838 "Gain 4" = 0.149624 "Gain 5" = 0.000000' "$AX20_ROOT$spkconf"
+    run ax audio-dsp xtc
+    assert_output_contains "xtc_delay_us=104 (5 samples at 48 kHz = 104 us) xtc_attenuation_db=5.5"
+    # taps optional: keeps the current count
+    ax audio-dsp xtc set 120 3
+    settings | grep -qx 'xtc_taps=3'
+    # a re-apply keeps the tuning
+    ax audio-dsp on
+    grep -q 'xtc_delay_us=120' "$AX20_ROOT$spkconf"
+    run ax audio-dsp xtc reset
+    assert_success
+    settings | grep -qx 'xtc_delay_us=117'
+    settings | grep -qx 'xtc_attenuation_db=4'
+    settings | grep -qx 'xtc_taps=4'
+    grep -q '"Delay (s)" = 0.00013542 }' "$AX20_ROOT$spkconf"
+}
+
+@test "xtc set rejects bad values without touching anything" {
+    ax audio-dsp on
+    local before
+    before=$(settings)
+    run ax audio-dsp xtc set 5 4
+    assert_failure 2
+    run ax audio-dsp xtc set 117 0
+    assert_failure 2
+    run ax audio-dsp xtc set 117 4 7
+    assert_failure 2
+    run ax audio-dsp xtc set
+    assert_failure 2
+    run ax audio-dsp xtc frob
+    assert_failure 2
+    [ "$(settings)" = "$before" ]
+}
+
+@test "xtc set and speaker-surround while off only record the choice" {
+    ax audio-dsp on
+    ax audio-dsp off
+    run ax audio-dsp xtc set 90 6 2
+    assert_success
+    run ax audio-dsp speaker-surround off
+    assert_success
+    [ ! -e "$AX20_ROOT$spkconf" ]
+    settings | grep -qx 'xtc_delay_us=90'
+    settings | grep -qx 'speaker_surround=0'
+    settings | grep -qx 'enabled=0'
+    ax audio-dsp on
+    grep -q 'xtc_delay_us=90' "$AX20_ROOT$spkconf"
+    wpset | grep -q 'x20.speaker_surround = false'
+}
+
+@test "status shows the speaker surround settings" {
+    ax audio-dsp on
+    run ax audio-dsp status
+    assert_success
+    assert_output_contains "speaker_surround: 1"
+    assert_output_contains "stereo_surround: 0"
+    assert_output_contains "xtc:             xtc_delay_us=117 (6 samples at 48 kHz = 125 us) xtc_attenuation_db=4 (g=0.6310) xtc_taps=4"
+}

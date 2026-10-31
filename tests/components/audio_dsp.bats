@@ -68,6 +68,7 @@ setup() {
     local r="$AX20_ROOT$H"
     [ -f "$r/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf" ]
     [ -f "$r/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf" ]
+    [ -f "$r/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf" ]
     [ -f "$r/.config/pipewire/pipewire-pulse.conf.d/50-x20-no-upmix.conf" ]
     [ -f "$r/.config/pipewire/client.conf.d/50-x20-no-upmix.conf" ]
     [ -f "$r/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf" ]
@@ -81,7 +82,14 @@ setup() {
     grep -qx 'enabled=1' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     grep -qx 'hrtf=set-a' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     grep -qx 'stereo_hrtf=0' "$r/.config/ally-x20-steamos/audio-dsp.conf"
+    grep -qx 'speaker_surround=1' "$r/.config/ally-x20-steamos/audio-dsp.conf"
+    grep -qx 'stereo_surround=0' "$r/.config/ally-x20-steamos/audio-dsp.conf"
+    grep -qx 'xtc_delay_us=117' "$r/.config/ally-x20-steamos/audio-dsp.conf"
+    grep -qx 'xtc_attenuation_db=4' "$r/.config/ally-x20-steamos/audio-dsp.conf"
+    grep -qx 'xtc_taps=4' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     grep -q 'x20.stereo_hrtf = false' "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
+    grep -q 'x20.speaker_surround = true' "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
+    grep -q 'x20.stereo_surround = false' "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
     [ "$(component_status audio_dsp)" = active ]
 }
 
@@ -90,6 +98,82 @@ setup() {
     local f="$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf"
     ! grep -q '@X20_HRTF_FILE@' "$f"
     [ "$(grep -c "filename = \"$H/.config/ally-x20-steamos/hrtf/current.sofa\"" "$f")" = 12 ]
+    f="$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf"
+    [ "$(grep -c "filename = \"$H/.config/ally-x20-steamos/hrtf/current.sofa\"" "$f")" = 7 ]
+}
+
+# speaker_conf : the rendered speaker surround conf.
+speaker_conf() { printf '%s\n' "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf"; }
+
+@test "speaker surround: defaults rendered (117 us -> 6.5 samples, 4 dB, 4 taps)" {
+    component_apply audio_dsp
+    local f
+    f=$(speaker_conf)
+    ! grep -q '@X20_' "$f"
+    [ "$(grep -c '"Delay (s)" = 0.00013542 }' "$f")" = 8 ]
+    [ "$(grep -c '"Gain 2" = 0.630957 "Gain 3" = 0.398107 "Gain 4" = 0.251189 "Gain 5" = 0.158489 "Gain 6" = 0.5' "$f")" = 2 ]
+    grep -q 'Rendered with: xtc_delay_us=117 (6 samples at 48 kHz = 125 us) xtc_attenuation_db=4 (g=0.6310) xtc_taps=4' "$f"
+    grep -q 'node.name        = "x20-speakers-surround"' "$f"
+    grep -q 'media.class      = Audio/Sink/Internal' "$f"
+    grep -q 'target.object    = "x20-speakers"' "$f"
+}
+
+@test "speaker surround: custom XTC settings are rendered, unused taps muted" {
+    component_apply audio_dsp
+    audio_dsp_write_settings xtc_delay_us=83 xtc_attenuation_db=6 xtc_taps=2
+    component_apply audio_dsp
+    local f
+    f=$(speaker_conf)
+    # 83 us * 48 kHz = 3.98 -> 4 samples -> (4 + 0.5) / 48000 s
+    [ "$(grep -c '"Delay (s)" = 0.00009375 }' "$f")" = 8 ]
+    [ "$(grep -c '"Gain 2" = 0.501187 "Gain 3" = 0.251189 "Gain 4" = 0.000000 "Gain 5" = 0.000000' "$f")" = 2 ]
+    # apply kept the user's values
+    grep -qx 'xtc_delay_us=83' "$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf"
+    grep -qx 'xtc_taps=2' "$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf"
+}
+
+@test "speaker surround: invalid XTC settings fall back to the defaults" {
+    component_apply audio_dsp
+    # a hand edit with out-of-range values
+    printf '%s\n' enabled=1 xtc_delay_us=5000 xtc_attenuation_db=-3 xtc_taps=9 speaker_surround=maybe \
+        >"$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf"
+    component_apply audio_dsp
+    grep -q 'xtc_delay_us=117 (6 samples' "$(speaker_conf)"
+    grep -qx 'xtc_attenuation_db=4' "$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf"
+    grep -qx 'xtc_taps=4' "$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf"
+    grep -qx 'speaker_surround=1' "$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf"
+}
+
+@test "xtc validators and parameter maths" {
+    audio_dsp_xtc_valid_delay 117
+    ! audio_dsp_xtc_valid_delay 9
+    ! audio_dsp_xtc_valid_delay 1001
+    ! audio_dsp_xtc_valid_delay 1.5
+    audio_dsp_xtc_valid_atten 4
+    audio_dsp_xtc_valid_atten 3.5
+    ! audio_dsp_xtc_valid_atten 0.2
+    ! audio_dsp_xtc_valid_atten -1
+    ! audio_dsp_xtc_valid_atten 4dB
+    audio_dsp_xtc_valid_taps 1
+    ! audio_dsp_xtc_valid_taps 0
+    ! audio_dsp_xtc_valid_taps 5
+    [ "$(audio_dsp_xtc_params 117 4 4)" = "0.00013542 0.630957 0.398107 0.251189 0.158489 6 0.6310" ]
+    [ "$(audio_dsp_xtc_params 10 3 1)" = "0.00003125 0.707946 0.000000 0.000000 0.000000 1 0.7079" ]
+}
+
+@test "write_settings keeps keys it is not given" {
+    component_apply audio_dsp
+    audio_dsp_write_settings xtc_taps=3 stereo_surround=1
+    audio_dsp_write_settings speaker_surround=0
+    local c="$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf"
+    grep -qx 'xtc_taps=3' "$c"
+    grep -qx 'stereo_surround=1' "$c"
+    grep -qx 'speaker_surround=0' "$c"
+    grep -qx 'hrtf=set-a' "$c"
+    grep -qx 'enabled=1' "$c"
+    audio_dsp_render_wpsettings
+    grep -q 'x20.speaker_surround = false' "$AX20_ROOT$H/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
+    grep -q 'x20.stereo_surround = true' "$AX20_ROOT$H/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
 }
 
 @test "every manifest entry is in slot home and owned by audio_dsp" {
@@ -119,6 +203,7 @@ setup() {
     [ ! -e "$r/.config/ally-x20-steamos/hrtf/set-a.sofa" ]
     [ -f "$r/.config/ally-x20-steamos/hrtf/set-b.sofa" ]
     [ ! -e "$r/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf" ]
+    [ ! -e "$r/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf" ]
     [ -f "$r/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf" ]
     [ "$(component_status audio_dsp)" = stock ]
 }
@@ -149,6 +234,7 @@ setup() {
     local r="$AX20_ROOT$H"
     [ ! -e "$r/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf" ]
     [ ! -e "$r/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf" ]
+    [ ! -e "$r/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf" ]
     [ ! -e "$r/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf" ]
     [ ! -e "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf" ]
     [ ! -e "$r/.local/share/wireplumber/scripts/x20-route-by-channels.lua" ]
@@ -272,6 +358,34 @@ setup() {
     for a in 30.0 330.0 0.0 90.0 270.0 150.0 210.0 110.0 250.0; do
         grep -q "\"Azimuth\"   = $a\$" "$f"
     done
+}
+
+@test "speaker surround template: 7.1 angles, XTC network wiring, LFE after the canceller" {
+    local f="$REPO_ROOT/overlay/home/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf"
+    grep -q 'audio.position   = \[ FL FR FC LFE RL RR SL SR \]' "$f"
+    for a in 30.0 330.0 0.0 90.0 270.0 150.0 210.0; do
+        grep -q "\"Azimuth\"   = $a\$" "$f"
+    done
+    [ "$(grep -c 'label = delay' "$f")" = 8 ]
+    [ "$(grep -c 'label = invert' "$f")" = 4 ]
+    # odd taps come inverted from the other side, even taps from the same side
+    grep -q '{ output = "ivR1:Out" input = "xoL:In 2" }' "$f"
+    grep -q '{ output = "dL2:Out"  input = "xoL:In 3" }' "$f"
+    grep -q '{ output = "ivR3:Out" input = "xoL:In 4" }' "$f"
+    grep -q '{ output = "dL4:Out"  input = "xoL:In 5" }' "$f"
+    grep -q '{ output = "ivL1:Out" input = "xoR:In 2" }' "$f"
+    grep -q '{ output = "dR4:Out"  input = "xoR:In 5" }' "$f"
+    # band-limited branch, LFE bypasses binaural render and XTC
+    grep -q '{ output = "xlpL:Out" input = "dL1:In" }' "$f"
+    grep -q '{ output = "cpLFE:Out" input = "xoL:In 6" }' "$f"
+    ! grep -q 'cpLFE:Out" input = "bin' "$f"
+    grep -q 'outputs = \[ "xoL:Out" "xoR:Out" \]' "$f"
+}
+
+@test "headphone sinks are labelled headphones-only" {
+    local f="$REPO_ROOT/overlay/home/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf"
+    [ "$(grep -c 'node.description = "X20 headphone surround 7.1 (headphones only)"' "$f")" = 2 ]
+    [ "$(grep -c 'node.description = "X20 headphone surround 5.1 (headphones only)"' "$f")" = 2 ]
 }
 
 # --- Lua decision core (tests/lua/test_x20_route_core.lua) -----------------

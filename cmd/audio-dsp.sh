@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# summary: headphone/speaker virtual surround + speaker chain: on|off|status|hrtf|stereo-hrtf|speaker-surround|stereo-surround|xtc|test
+# summary: headphone/speaker virtual surround + speaker chain: on|off|status|hrtf|stereo-hrtf|speaker-surround|stereo-surround|xtc|lfe|master-gain|test
 # shellcheck source=lib/component.sh
 . "$AX20_SRC/lib/component.sh"
 
@@ -25,6 +25,16 @@ usage: $AX20_NAME audio-dsp <command>
                         tune it: delay per tap 10..1000 us, attenuation per tap
                         0.5..30 dB, taps 1..4 (restarts PipeWire)
   xtc reset             back to the X20 defaults (117 us, 4 dB, 4 taps)
+  lfe                   show the LFE low-pass and level
+  lfe set <cutoff_hz> <gain_db>
+                        LFE low-pass 40..250 Hz and level -40..6 dB in every
+                        chain (default 120 Hz, -6 dB; restarts PipeWire)
+  master-gain           show the worst-case gain analysis and output gains
+  master-gain [speakers] auto|strict|<dB>
+                        output gain of x20-speakers-surround (or, with
+                        "speakers", of x20-speakers): auto (default), strict
+                        (no digital clipping even in the worst case) or a
+                        number -60..12 (restarts PipeWire)
   test                  play 7.1 and stereo test tones and show which sink each
                         used, then the 7.1 channel sequence through the speaker
                         virtual surround
@@ -69,6 +79,14 @@ cmd_audio_dsp() {
             shift
             _audio_dsp_cmd_xtc "$@"
             ;;
+        lfe)
+            shift
+            _audio_dsp_cmd_lfe "$@"
+            ;;
+        master-gain)
+            shift
+            _audio_dsp_cmd_master_gain "$@"
+            ;;
         test) _audio_dsp_cmd_test ;;
         -h | --help | help) _audio_dsp_usage ;;
         '')
@@ -110,6 +128,8 @@ _audio_dsp_cmd_status() {
     printf 'speaker_surround: %s\n' "$(audio_dsp_setting_value speaker_surround)"
     printf 'stereo_surround: %s\n' "$(audio_dsp_setting_value stereo_surround)"
     printf 'xtc:             %s\n' "$(audio_dsp_xtc_describe)"
+    printf 'x20-speakers:    %s\n' "$(AX20_GAIN_CHAIN=speakers audio_dsp_gain_describe)"
+    printf 'speaker surround: %s\n' "$(audio_dsp_gain_describe)"
     printf 'sofa support:    %s (plugin %s, libmysofa %s)\n' "$sofa" "$plugin" "$lib"
     printf 'speaker chain:   %s\n' "$([ "$lsp" = yes ] && echo 'builtin + LSP limiter' || echo builtin)"
     if [ -z "$AX20_ROOT" ] && ax20_have pw-dump && ax20_have jq; then
@@ -230,12 +250,73 @@ _audio_dsp_cmd_xtc() {
     require_root audio-dsp xtc "$@"
     ax20_check_readonly_root
     audio_dsp_write_settings "xtc_delay_us=$d" "xtc_attenuation_db=$a" "xtc_taps=$t"
-    if audio_dsp_enabled && audio_dsp_hrtf_installed "$(audio_dsp_hrtf_current)"; then
-        audio_dsp_render_speaker_surround
-        _audio_dsp_fix_owner
-        audio_dsp_restart_services pipewire.service
-    fi
+    _audio_dsp_rerender
     log_info "$(audio_dsp_xtc_describe)"
+}
+
+# _audio_dsp_rerender : render every chain from the settings and restart
+# PipeWire (only while enabled; otherwise the settings are just recorded).
+_audio_dsp_rerender() {
+    audio_dsp_enabled || return 0
+    audio_dsp_render_speaker_chain
+    if audio_dsp_hrtf_installed "$(audio_dsp_hrtf_current)"; then
+        audio_dsp_render_surround
+        audio_dsp_render_speaker_surround
+    fi
+    _audio_dsp_fix_owner
+    audio_dsp_restart_services pipewire.service
+}
+
+# _audio_dsp_cmd_lfe [show | set <cutoff_hz> <gain_db>]
+_audio_dsp_cmd_lfe() {
+    case "${1:-show}" in
+        show)
+            printf 'lfe_cutoff_hz=%s lfe_gain_db=%s\n' \
+                "$(audio_dsp_setting_value lfe_cutoff_hz)" "$(audio_dsp_setting_value lfe_gain_db)"
+            return 0
+            ;;
+        set)
+            if ! audio_dsp_valid_lfe_cutoff "${2:-}" || ! audio_dsp_valid_lfe_gain "${3:-}"; then
+                log_error "usage: $AX20_NAME audio-dsp lfe set <cutoff_hz 40..250> <gain_db -40..6>"
+                return 2
+            fi
+            ;;
+        *)
+            log_error "usage: $AX20_NAME audio-dsp lfe [show | set <cutoff_hz> <gain_db>]"
+            return 2
+            ;;
+    esac
+    require_root audio-dsp lfe "$@"
+    ax20_check_readonly_root
+    audio_dsp_write_settings "lfe_cutoff_hz=$2" "lfe_gain_db=$3"
+    _audio_dsp_rerender
+    log_info "lfe_cutoff_hz=$2 lfe_gain_db=$3"
+}
+
+# _audio_dsp_cmd_master_gain [show | [speakers] auto|strict|<dB>]
+_audio_dsp_cmd_master_gain() {
+    local key=master_gain_db v
+    case "${1:-show}" in
+        show)
+            printf 'x20-speakers:          %s\n' "$(AX20_GAIN_CHAIN=speakers audio_dsp_gain_describe)"
+            printf 'x20-speakers-surround: %s\n' "$(audio_dsp_gain_describe)"
+            return 0
+            ;;
+        speakers)
+            key=speakers_master_gain_db
+            v=${2:-}
+            ;;
+        *) v=$1 ;;
+    esac
+    if ! audio_dsp_valid_master "$v"; then
+        log_error "usage: $AX20_NAME audio-dsp master-gain [speakers] auto|strict|<dB -60..12>"
+        return 2
+    fi
+    require_root audio-dsp master-gain "$@"
+    ax20_check_readonly_root
+    audio_dsp_write_settings "$key=$v"
+    _audio_dsp_rerender
+    log_info "$key=$v"
 }
 
 # _audio_dsp_as_user <cmd...> : run in the target user's audio session.

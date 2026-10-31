@@ -271,3 +271,78 @@ spkconf="$H/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf"
     assert_output_contains "stereo_surround: 0"
     assert_output_contains "xtc:             xtc_delay_us=117 (6 samples at 48 kHz = 125 us) xtc_attenuation_db=4 (g=0.6310) xtc_taps=4"
 }
+
+chainconf="$H/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf"
+
+@test "lfe set renders every chain and persists; bad values rejected" {
+    ax audio-dsp on
+    run ax audio-dsp lfe
+    assert_output_contains "lfe_cutoff_hz=120 lfe_gain_db=-6"
+    run ax audio-dsp lfe set 90 -9
+    assert_success
+    settings | grep -qx 'lfe_cutoff_hz=90'
+    settings | grep -qx 'lfe_gain_db=-9'
+    grep -q '"Freq" = 90.0' "$AX20_ROOT$chainconf"
+    grep -q '"Freq" = 90.0' "$AX20_ROOT$spkconf"
+    grep -q '"Freq" = 90.0' "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf"
+    local before
+    before=$(settings)
+    run ax audio-dsp lfe set 20 -6
+    assert_failure 2
+    run ax audio-dsp lfe set 120 10
+    assert_failure 2
+    run ax audio-dsp lfe set 120
+    assert_failure 2
+    [ "$(settings)" = "$before" ]
+}
+
+@test "master-gain: show, auto, strict, number, speakers; persisted across apply" {
+    ax audio-dsp on
+    run ax audio-dsp master-gain
+    assert_success
+    assert_output_contains "x20-speakers:          lfe 120 Hz -6 dB; worst case before master: stereo +1.9 dB, 7.1 downmix +11.8 dB; speakers_master_gain_db=auto (+0.0 dB)"
+    assert_output_contains "x20-speakers-surround: lfe 120 Hz -6 dB; worst case of the speaker path before master: uncorrelated +9.6 dB, coherent +18.0 dB; master_gain_db=auto (-9.6 dB)"
+    run ax audio-dsp master-gain strict
+    assert_success
+    settings | grep -qx 'master_gain_db=strict'
+    grep -q '"Gain 1" = 0.125[0-9]* }' "$AX20_ROOT$spkconf"
+    run ax audio-dsp master-gain -4.5
+    assert_success
+    settings | grep -qx 'master_gain_db=-4.5'
+    grep -q '"Gain 1" = 0.595662 }' "$AX20_ROOT$spkconf"
+    run ax audio-dsp master-gain speakers strict
+    assert_success
+    settings | grep -qx 'speakers_master_gain_db=strict'
+    grep -q '"Gain 1" = 0.256832 }' "$AX20_ROOT$chainconf"
+    ax audio-dsp on
+    grep -q '"Gain 1" = 0.256832 }' "$AX20_ROOT$chainconf"
+    run ax audio-dsp master-gain loud
+    assert_failure 2
+    run ax audio-dsp master-gain speakers
+    assert_failure 2
+    run ax audio-dsp master-gain auto
+    assert_success
+    run ax audio-dsp master-gain speakers auto
+    grep -q '"Gain 1" = 0.331504 }' "$AX20_ROOT$spkconf"
+}
+
+@test "lfe and master-gain while off only record the choice" {
+    ax audio-dsp on
+    ax audio-dsp off
+    run ax audio-dsp master-gain strict
+    assert_success
+    run ax audio-dsp lfe set 100 -12
+    assert_success
+    [ ! -e "$AX20_ROOT$chainconf" ]
+    settings | grep -qx 'master_gain_db=strict'
+    settings | grep -qx 'lfe_cutoff_hz=100'
+    ax audio-dsp on
+    grep -q '"Freq" = 100.0' "$AX20_ROOT$chainconf"
+}
+
+@test "status shows the gain structure" {
+    ax audio-dsp on
+    run ax audio-dsp status
+    assert_output_contains "x20-speakers:    lfe 120 Hz -6 dB"
+    assert_output_contains "speaker surround: lfe 120 Hz -6 dB; worst case of the speaker path"
+}

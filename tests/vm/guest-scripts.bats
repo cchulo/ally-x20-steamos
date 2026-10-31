@@ -167,3 +167,57 @@ make_tree() {
     tar -tzf "$tarball" | grep -q 'dmi.txt$'
     tar -tzf "$tarball" | grep -q 'acpidump.txt$'
 }
+
+MSC="$REPO_ROOT/vm/guest/measure-speaker-chain.sh"
+
+# float_wav <path> <size-field> <samples...> : stereo IEEE-float WAV;
+# size-field "ok" writes the real data size, anything else is used as is.
+float_wav() {
+    python3 - "$@" <<'PY'
+import struct, sys
+path, size_field, vals = sys.argv[1], sys.argv[2], [float(v) for v in sys.argv[3:]]
+data = struct.pack('<%df' % len(vals), *vals)
+size = len(data) if size_field == 'ok' else int(size_field, 0)
+fmt = struct.pack('<HHIIHH', 3, 2, 48000, 48000 * 8, 8, 32)
+body = b'WAVE' + b'fmt ' + struct.pack('<I', len(fmt)) + fmt + b'data' + struct.pack('<I', size) + data
+open(path, 'wb').write(b'RIFF' + struct.pack('<I', len(body)) + body)
+PY
+}
+
+@test "measure-speaker-chain: generate writes the 3-segment 7.1 file at -1 dBFS" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not installed"
+    run "$MSC" generate "$BATS_TEST_TMPDIR/t.wav" 0.2
+    assert_success
+    run "$MSC" analyze "$BATS_TEST_TMPDIR/t.wav"
+    assert_success
+    assert_output_contains "8 ch, 48000 Hz, 16-bit PCM, 0.60 s"
+    assert_output_contains "channel 4: peak -1.00 dBFS"
+    assert_output_contains "overall: peak -1.00 dBFS, clipped 0.000% of samples"
+}
+
+@test "measure-speaker-chain: analyze reports overs in a float recording" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not installed"
+    float_wav "$BATS_TEST_TMPDIR/f.wav" ok 0.5 -0.25 1.5 0.1 -1.0 0.2 0.25 0.3
+    run "$MSC" analyze "$BATS_TEST_TMPDIR/f.wav"
+    assert_success
+    assert_output_contains "2 ch, 48000 Hz, float32"
+    assert_output_contains "channel 1: peak +3.52 dBFS"
+    assert_output_contains "clipped 2 of 4 (50.000%)"
+    assert_output_contains "overall: peak +3.52 dBFS, clipped 25.000% of samples"
+}
+
+@test "measure-speaker-chain: unfinished header is read to the end; silence fails" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not installed"
+    float_wav "$BATS_TEST_TMPDIR/u.wav" 0xFFFFFFFF 0.5 0.5 0.5 0.5
+    run "$MSC" analyze "$BATS_TEST_TMPDIR/u.wav"
+    assert_success
+    assert_output_contains "overall: peak -6.02 dBFS"
+    float_wav "$BATS_TEST_TMPDIR/z.wav" ok 0 0 0 0
+    run "$MSC" analyze "$BATS_TEST_TMPDIR/z.wav"
+    assert_failure 3
+    assert_output_contains "digital silence"
+    run "$MSC" frobnicate
+    assert_failure 2
+    run "$MSC" --point
+    assert_failure
+}

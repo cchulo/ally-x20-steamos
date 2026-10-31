@@ -149,8 +149,8 @@ All entries are in the manifest with slot `home` and owned by `audio_dsp`.
 
 | Path (in the user's home) | Source |
 |---|---|
-| `.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf` | rendered from [`overlay/home/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf`](../overlay/home/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf) with the absolute HRTF path |
-| `.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf` | [`51-x20-speaker-chain.conf`](../overlay/home/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf), or the `-lsp` variant |
+| `.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf` | rendered from [`overlay/home/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf`](../overlay/home/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf) with the absolute HRTF path and the LFE settings |
+| `.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf` | rendered from [`51-x20-speaker-chain.conf`](../overlay/home/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf), or the `-lsp` variant, with the LFE and master gain settings |
 | `.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf` | rendered from [`52-x20-speaker-surround.conf`](../overlay/home/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf) with the HRTF path and the XTC parameters |
 | `.config/pipewire/pipewire-pulse.conf.d/50-x20-no-upmix.conf` | copied |
 | `.config/pipewire/client.conf.d/50-x20-no-upmix.conf` | copied |
@@ -180,14 +180,17 @@ absolute path of `current.sofa`.
 | Speaker virtual surround on / off | `sudo ally-x20-steamos audio-dsp speaker-surround on` / `off` (persistent, moves playing streams at once) |
 | Stereo through the speaker virtual surround | `sudo ally-x20-steamos audio-dsp stereo-surround on` / `off` |
 | Tune the crosstalk cancellation | `ally-x20-steamos audio-dsp xtc` (show), `sudo ally-x20-steamos audio-dsp xtc set <delay_us> <atten_db> [taps]`, `xtc reset` |
+| LFE low-pass and level | `ally-x20-steamos audio-dsp lfe` (show), `sudo ally-x20-steamos audio-dsp lfe set <cutoff_hz> <gain_db>` |
+| Output gain (headroom) | `ally-x20-steamos audio-dsp master-gain` (show the analysis), `sudo ally-x20-steamos audio-dsp master-gain [speakers] auto\|strict\|<dB>` |
 | Force one stream somewhere | move it in pavucontrol, Steam or `wpctl`/`pw-metadata`. Explicit targets always win |
 | Speaker EQ / width | edit a copy of the speaker chain under a new name (e.g. `52-my-speakers.conf`) and turn ours off. Hand edits to our files are reported as drift and replaced on the next apply |
 | Target user | `AX20_AUDIO_USER`, `AX20_HOME` (default: `$SUDO_USER`, else `deck`) |
 
 `~/.config/ally-x20-steamos/audio-dsp.conf` holds `enabled`, `hrtf`,
 `stereo_hrtf`, `speaker_surround` (default 1), `stereo_surround` (default 0),
-`xtc_delay_us` (117), `xtc_attenuation_db` (4) and `xtc_taps` (4). The
-commands rewrite it. Out-of-range values fall back to the defaults. `apply` and the boot service read it,
+`xtc_delay_us` (117), `xtc_attenuation_db` (4), `xtc_taps` (4),
+`lfe_cutoff_hz` (120), `lfe_gain_db` (-6), `master_gain_db` (auto) and
+`speakers_master_gain_db` (auto). The commands rewrite it. Out-of-range values fall back to the defaults. `apply` and the boot service read it,
 so `off` stays off across reboots and updates.
 
 ## HRTF sets
@@ -223,7 +226,8 @@ files are still checked against the lock.
 sink `x20-speakers`, uses only builtin nodes that exist since PipeWire 1.0:
 
 1. **Downmix**: 7.1 in, ITU-style coefficients (front 1.0, centre and
-   surrounds 0.707, LFE 0.5). Stereo content passes at unity gain.
+   surrounds 0.707). LFE is low-passed and folded in at -6 dB (see "LFE"
+   below). Stereo content passes at unity gain.
 2. **Width**: mid/side with `mixer` and `invert` nodes,
    `L' = (1+w)/2 L - (w-1)/2 R`, w = 1.4, with -3 dB of headroom.
 3. **EQ**: 150 Hz high-pass (keeps unreproducible bass out of the micro
@@ -239,6 +243,8 @@ sink `x20-speakers`, uses only builtin nodes that exist since PipeWire 1.0:
    Steam Deck speaker, microphone and binaural plugins, which are tuned for
    the Deck. TODO(hw): `ls /usr/lib/lv2 /usr/lib/ladspa` on the X20, and
    check the LSP port names with `lv2info`.
+5. **Master gain**: `speakers_master_gain_db`, default unity (see
+   "Headroom" below).
 
 The plan lists a multiband compressor and a bass enhancer. Neither exists as a
 builtin node, so they depend on the same optional-plugin mechanism and are
@@ -266,8 +272,11 @@ channels here. Stereo goes here too with `stereo-surround on`.
    straight through. The math and the X20 numbers (speakers about 22 cm
    apart, listener at about 40 cm, 117 us, 4 dB) are in
    [`xtc-notes.md`](xtc-notes.md).
-3. **LFE**: added to both channels at -6 dB, after the canceller.
-4. **Speaker chain**: the stereo result goes to `x20-speakers`
+3. **LFE**: low-passed and added to both channels at -6 dB, after the
+   canceller.
+4. **Master gain**: `master_gain_db`, by default computed so that the whole
+   speaker path stays at full scale (see "Headroom" below).
+5. **Speaker chain**: the stereo result goes to `x20-speakers`
    (`target.object`), so the width and EQ stage exists once and is shared
    with the plain path.
 
@@ -299,10 +308,11 @@ What to expect with surround on:
   weakest: expect "wide and a bit behind the sides", not true behind. The
   binaural front/back cue does not survive speakers this small at
   this distance.
-- LFE sounds the same in both modes (the 150 Hz high-pass removes most of
-  it).
-- Dialogue may sound slightly thinner and the image is a few dB quieter.
-  That is the XTC mid dip and HRTF headroom. Match the volume before judging,
+- LFE sounds the same in both modes: low-passed at 120 Hz, then mostly
+  removed by the 150 Hz high-pass.
+- Dialogue may sound slightly thinner, and the surround path is about
+  10 dB quieter than plain stereo. That is the XTC mid dip and the master
+  gain that keeps the path from clipping (see "Headroom"). Match the volume before judging,
   because louder always sounds "better".
 - Move your head 5 cm sideways and the effect collapses. That is the sweet
   spot, not a bug.
@@ -346,6 +356,117 @@ through one of them; moving the stream to a listed device works as usual.
 Manual control is through settings, not the picker: `audio-dsp stereo-hrtf
 on` (stereo through the headphone HRTF), `speaker-surround on|off`,
 `stereo-surround on|off`.
+
+## LFE
+
+Every chain treats the LFE channel the same way. It goes through two
+cascaded 2nd-order low-passes (24 dB/octave, -6 dB at `lfe_cutoff_hz`,
+default 120 Hz). It is then folded into both outputs at `lfe_gain_db`
+(default -6 dB), without HRTF and without crosstalk cancellation.
+`audio-dsp lfe set <cutoff_hz> <gain_db>` changes both settings for every
+chain.
+
+- **Why low-pass**: LFE is band-limited to 120 Hz by spec (Dolby, ITU-R
+  BS.775), and a real subwoofer or bass management filters it at about
+  80-120 Hz. Before this change the chains summed it full band. That is why
+  KDE's LFE test clip sounded clear instead of muffled, and why anything a
+  game leaves above 120 Hz in LFE ended up in the mix.
+- **Speakers**: the X20 has no subwoofer, and its two micro drivers cannot
+  reproduce anything below about 80 Hz. The speaker chains then high-pass
+  everything at 150 Hz. On speakers LFE is therefore mostly protection: a
+  60 Hz rumble at full scale used to take digital headroom (and amplifier
+  excursion) without producing audible bass. Now it is filtered out before
+  the sum.
+- **Headphones**: headphones do reproduce low bass, so the HRTF sinks also
+  low-pass LFE at the same cutoff and keep it at -6 dB. A low-pass at
+  120 Hz removes only out-of-spec content, so real LFE is unaffected.
+
+## Headroom
+
+PipeWire's builtin nodes have no limiter. Samples above full scale travel
+through the graph as floats and are clipped only where they are converted
+to the device format, at the hardware sink. Clipping makes harsh
+broadband noise bursts, which matches what Resident Evil 2 produced on loud
+scenes through `x20-speakers-surround`. The gain structure is the only
+protection, so each speaker chain ends in a master gain stage.
+
+`audio-dsp master-gain` prints the analysis. The component computes it at
+render time (`audio_dsp_gain_numbers`):
+
+- Model: a full-scale sinusoid on every input, swept from 20 Hz to 20 kHz.
+  At each frequency the magnitudes of all input-to-output paths are added,
+  and the maximum over frequency is reported.
+- The paths include the downmix and width gains, the EQ, the LFE low-pass
+  and the XTC taps on their band-limited copy. The biquads use PipeWire's
+  RBJ formulas at 48 kHz.
+- HRTF sources count at their 0.5 gain with HRIRs taken as at most 0 dB.
+  libmysofa normalises the sets, and the measurement script below checks
+  this assumption.
+
+Worst case over full scale, before the master gain (defaults: 117 us, 4 dB,
+4 taps, LFE 120 Hz at -6 dB):
+
+| Path | Before this change (no LFE low-pass, no master) | Now, before master | Master (default) | Now, after master |
+|---|---|---|---|---|
+| `x20-speakers`, stereo (FL/FR only) | +1.9 dB | +1.9 dB | 0 dB (auto) | +1.9 dB |
+| `x20-speakers`, all 8 channels coherent (speaker-surround off) | +13.1 dB | +11.8 dB | 0 dB (auto) | +11.8 dB |
+| `x20-speakers-surround` -> `x20-speakers`, 7 sources uncorrelated | +10.9 dB | +9.6 dB | -9.6 dB (auto) | 0.0 dB |
+| same, 7 sources coherent | +18.6 dB | +18.0 dB | -9.6 dB (auto) | +8.4 dB |
+
+What the settings mean:
+
+- `master_gain_db` (x20-speakers-surround):
+  - `auto` (default) is safe for full-scale uncorrelated sources, a loud
+    game scene. This is a deliberate soft margin: the strict worst case
+    (seven identical full-scale sources) could still exceed full scale by
+    up to 8.4 dB.
+  - `strict` is safe even then (-18.0 dB, or -6.2 dB on top of a strict
+    speakers master).
+  - A number in dB is used as is.
+  - The value always applies after the `x20-speakers` master, so the whole
+    path is covered.
+- `speakers_master_gain_db` (x20-speakers):
+  - `auto` (default) is unity, so stereo keeps its level. The +1.9 dB
+    theoretical worst case comes from the +2 dB air shelf at 8-20 kHz,
+    where real content is never at full scale.
+  - `strict` (-11.8 dB) also covers coherent full-scale 7.1 when
+    speaker-surround is off. It costs stereo the same 11.8 dB.
+
+The master gains lower the digital level only. If the speaker volume is a
+hardware control (the TAS2783 amp volume), raising it restores loudness
+without bringing back digital clipping. If the volume slider is already at
+100 %, the maximum loudness drops by the same amount.
+
+If noise bursts remain with `master-gain strict`, the cause is not digital
+clipping. Suspect the amplifiers' own protection or the drivers'
+excursion, and use `lfe set 120 -20` or a higher speaker high-pass.
+
+### Measuring
+
+[`vm/guest/measure-speaker-chain.sh`](../vm/guest/measure-speaker-chain.sh)
+runs as the desktop user (not root) on the X20. It generates a worst-case
+7.1 file and plays it through the router (or `--sink NODE`). While it
+plays, it records the measurement point in float32 and prints the peak
+dBFS and the share of clipped samples per channel. The file has three
+segments: the same sweep on all 7 channels plus 60 Hz LFE, independent
+noise on every channel plus LFE, and LFE alone, all at -1 dBFS.
+
+```sh
+vm/guest/measure-speaker-chain.sh --point hw         # hardware sink monitor (what the DAC gets)
+vm/guest/measure-speaker-chain.sh --point surround   # x20-speakers-surround.output
+vm/guest/measure-speaker-chain.sh --point speakers   # x20-speakers.output
+vm/guest/measure-speaker-chain.sh --point hw --method parec   # via the pulse monitor source
+vm/guest/measure-speaker-chain.sh analyze rec.wav    # any WAV (PCM or float)
+```
+
+Recording a sink's monitor with PipeWire 1.6 needs `pw-record --target
+<node.name> -P '{ stream.capture.sink = true }'`. The target must be the
+node *name* (or `object.serial`), not the object id that `wpctl status`
+shows. An id is not a valid target, so the recorder silently falls back to
+the default source and records silence. The script prints the links it
+made, and treats an all-zero recording as an error (exit 3). The hardware
+monitor is taken in float before the conversion to the device format, so
+values at or above 1.0 are exactly the samples that clip.
 
 ## Requirements: sofa plugin and libmysofa
 
@@ -439,7 +560,9 @@ core would carry over unchanged.
 - TODO(hw) WirePlumber runs the `main` profile on SteamOS.
 - TODO(hw) speaker EQ/width preset against the Windows reference recording.
 - TODO(hw) HRTF gain (`gain = 0.5` per source) for comfortable loudness without clipping.
-- TODO(hw) speaker virtual surround by ear: XTC defaults, clipping on loud
-  surround scenes (the side boost), speaker separation measured with a ruler.
+- TODO(hw) speaker virtual surround by ear: XTC defaults, speaker separation
+  measured with a ruler.
+- TODO(hw) `measure-speaker-chain.sh --point hw` with the default and the
+  strict master gain; RE2 loud scenes A/B.
 - TODO(vm) bit-identical stereo check, 5.1/7.1 routing and route-change rescans.
 - TODO(vm) the ALSA plugin (`pipewire-alsa`) picks up `client.conf.d`.

@@ -418,3 +418,11 @@ lua_bin() {
         assert_success
     done
 }
+
+@test "every x20 sink is hidden from pulse pickers (media.class Audio/Sink/Internal)" {
+    component_apply audio_dsp
+    for f in "$AX20_ROOT$H"/.config/pipewire/pipewire.conf.d/5*-x20-*.conf; do
+        ! grep -qE 'media.class\s*=\s*Audio/Sink\s*$' "$f" || { echo "visible sink in $f"; false; }
+    done
+    [ "$(grep -h 'media.class' "$AX20_ROOT$H"/.config/pipewire/pipewire.conf.d/5*-x20-*.conf | grep -c 'Audio/Sink/Internal')" -ge 4 ]
+}

@@ -334,24 +334,18 @@ defaults.
 
 PipeWire and WirePlumber 0.5 have no "hidden" node property. pipewire-pulse,
 which feeds KDE, Steam and pavucontrol, lists exactly the nodes whose
-`media.class` is `Audio/Sink`. WirePlumber's software-DSP `hide-parent`
-instead revokes the node's permissions for every client.
-
-- `x20-speakers-surround` uses `media.class = Audio/Sink/Internal`. No pulse
-  client lists it, but WirePlumber still creates a linkable item for every
-  `Audio/*` node, and the router and `pw-play --target` reach it by name.
-  Side effect: pavucontrol shows a stream playing on it with an unknown
-  device. Moving the stream to a listed device works as usual.
-- The headphone sinks stay listed and are described as
-  "X20 headphone surround 7.1/5.1 (headphones only)". All our sinks are
-  `node.virtual`, so KDE Plasma hides them unless "Show virtual devices" is
-  enabled. Hiding them only while no headphones are connected would need the
-  router to change pulse permissions on every jack event. That is riskier
-  than the benefit (a wrong permission hides a sink for good until
-  WirePlumber restarts), so it is left out. Picking one by hand on the
-  speakers plays a headphone render through the speakers: rear and centre
-  sound odd and LFE is not filtered. Use `audio-dsp test` to hear the
-  speaker version instead.
+`media.class` is `Audio/Sink`. **Every `x20-*` sink therefore uses
+`media.class = Audio/Sink/Internal`**: none of them appears in an output
+picker, so the only choices are the hardware "Speakers" and "Headphones".
+(Measured on the X20: Steam Game Mode listed `x20-speakers` and the two HRTF
+sinks next to "Speakers", and picking one sent binaural audio to the
+speakers.) WirePlumber still creates a linkable item for every `Audio/*`
+node, so the router and `pw-play --target` reach them by name. Side effect:
+pavucontrol shows a stream playing on an unknown device while it is routed
+through one of them; moving the stream to a listed device works as usual.
+Manual control is through settings, not the picker: `audio-dsp stereo-hrtf
+on` (stereo through the headphone HRTF), `speaker-surround on|off`,
+`stereo-surround on|off`.
 
 ## Requirements: sofa plugin and libmysofa
 

@@ -5,54 +5,151 @@ command `ally-x20-steamos audio-dsp`, plan section 1.5. It is required and
 installed by default. Everything it adds lives in the `deck` user's home, so
 SteamOS updates do not touch it and the read-only root stays read-only.
 
-What it does, per playback stream:
+It adds four sinks. Every stream plays on the default sink: the one Steam's
+output setting points at, either picked by hand or "Default" (automatic,
+see "Automatic output selection"). Nothing moves single streams between
+sinks.
 
-| Output in use | Stream | Goes to | Processing |
-|---|---|---|---|
-| Headphones (jack, USB or Bluetooth headset) | 1-2 channels | hardware sink | none: samples reach the DAC unchanged |
-| Headphones | 1-2 channels, `stereo-hrtf on` | `x20-virtual-surround-71` | FL/FR rendered at +-30 deg |
-| Headphones | 3-6 channels (3.0, quad, 5.0, 5.1) | `x20-virtual-surround-51` | each channel through an HRTF at its 5.1 angle, summed to 2 ears |
-| Headphones | 7-8 channels (6.1, 7.1) | `x20-virtual-surround-71` | same, 7.1 angles |
-| Internal speakers | 3-8 channels (default, `speaker-surround on`) | `x20-speakers-surround` | each channel through an HRTF at its 7.1 angle, crosstalk cancellation, then the `x20-speakers` width + EQ |
-| Internal speakers | 3-8 channels, `speaker-surround off` | `x20-speakers` | downmix to stereo, stereo width, EQ |
-| Internal speakers | 1-2 channels | `x20-speakers` | stereo width, EQ |
-| Internal speakers | 1-2 channels, `stereo-surround on` | `x20-speakers-surround` | FL/FR rendered at +-30 deg and crosstalk-cancelled (wider than the chassis) |
-| Anything else (HDMI/DP, line out, USB DAC) | anything | hardware sink | none (an AV receiver decodes surround itself) |
+| Sink (Steam name) | `node.name` | Use | Processing | Automatic default? |
+|---|---|---|---|---|
+| X20 Speakers (downmix + width + EQ) | `x20-speakers` | built-in speakers, stereo | surround downmixed to stereo, stereo width, EQ, LFE low-pass, master gain | on the speakers (default) |
+| X20 Speakers (virtual surround) | `x20-speakers-surround` | built-in speakers, surround | each channel through an HRTF at its 7.1 angle, crosstalk cancellation, then the `x20-speakers` chain | on the speakers with `stereo-surround on` |
+| X20 headphone surround 7.1 (headphones only) | `x20-virtual-surround-71` | headphones | each channel through an HRTF at its 7.1 angle, summed to 2 ears | on any headphones (default) |
+| X20 headphone surround 5.1 (headphones only) | `x20-virtual-surround-51` | headphones | same, 5.1 angles | no (manual pick only) |
 
-Streams that already have a target are never touched: an application that
-asks for a specific device (`target.object`, `PULSE_SINK`), or a stream the
-user moved in pavucontrol, Steam or with `wpctl`/`pw-metadata`.
+Where the outputs of the sinks go:
+
+| Output stream | Goes to | How |
+|---|---|---|
+| `x20-speakers.output` | the hardware speaker sink, `alsa_output.pci-0000_64_00.5-platform-amd_sdw.HiFi__Speaker__sink` | pinned in the conf (`target.object`, `node.dont-fallback`) |
+| `x20-speakers-surround.output` | `x20-speakers` (one EQ for both speaker paths) | pinned in the conf (`target.object`) |
+| `x20-virtual-surround-71.output`, `-51.output` | the best available headphone sink: the jack while its route is available, a USB or Bluetooth headset | WirePlumber hook; stays unlinked when no headphones are available |
+
+The hardware speaker sink name is what PipeWire's ACP calls the speaker PCM
+of the UCM `HiFi` verb on this SoC: `alsa_output.` + the PCI path of the ACP
+(the AMD audio coprocessor, `0000:64:00.5`) + `-platform-amd_sdw.` +
+`HiFi__Speaker__sink`. The jack is
+`alsa_output.pci-0000_64_00.5-platform-amd_sdw.HiFi__Headphones__sink`.
+Both measured on the X20 (SteamOS 3.9.5).
+
+### What happened (the silent `x20-speakers` bug)
+
+With `x20-speakers` picked as the output in Steam, nothing was audible.
+`x20-speakers.output` had no target, so WirePlumber linked it like any
+stream: to the default sink. The default was `x20-speakers` itself, which a
+filter cannot feed (same link group). The old router, and WirePlumber's own
+fallback, then took "the non-x20 sink with the highest `priority.session`".
+On the X20 that is the headphone jack sink (1000, against 712 for the
+speaker sink), and it stays in the graph with nothing plugged in: its route
+`[Out] Headphones` is only marked `not available`. The game stream went into
+the chain, and the chain played into an unplugged jack. Only the speaker
+surround chain worked, because its output was already pinned.
+
+The fix: `x20-speakers.output` is pinned to the speaker sink by name and
+never falls back. The per-stream router (streams sent to one sink or
+another by channel count) is gone; the default sink decides, picked by hand
+in Steam or by the automatic output selection below.
+The headphone surround outputs only ever go to headphones that are
+available, never to the speakers and never to an x20 sink.
 
 ## Design
 
-### Why per-stream routing
+### Automatic output selection
 
-There is no single right processing for "the headphone output". A stereo
-music track, a 5.1 film and a 7.1 game each want something different, and
-they can play at the same time. Routing each stream by its own channel count
-keeps stereo untouched, renders 5.1 at 5.1 speaker angles and 7.1 at 7.1
-angles. This is what the vendor solutions on Windows ("Atmos for Headphones",
-Nahimic) do inside their APO; on Linux the equivalent is a WirePlumber policy
-that picks the link target per stream, plus PipeWire filter-chain sinks that
-do the rendering.
+With Steam's output on "Default", WirePlumber picks the default sink. Its
+own rule takes the available sink with the highest `priority.session`
+(measured on the X20: speaker sink 712, headphone jack sink 1000 and only
+while a plug is in; USB and Bluetooth headsets 1000 or more). Our hook
+`x20/select-default-sink`
+([`x20-select-default-sink.lua`](../overlay/home/wireplumber/scripts/x20-select-default-sink.lua))
+runs right after that choice and before it is applied, and swaps a hardware
+choice for its processed counterpart, so every output gets the same
+experience:
 
-Two sinks (5.1 and 7.1) instead of one 7.1 sink with a layout switch: the
-surround speakers sit at different angles in the two layouts (ITU-R BS.775:
-5.1 surrounds at +-110 deg; 7.1 sides at +-90 deg and rears at +-150 deg), and
-the HRTF angles are filter controls shared by every stream on a sink, so a
-switch would re-render one stream whenever another started. An idle sink does
-no processing; the HRTF data is loaded once (`mysofa_open_cached`).
+| Situation | WirePlumber's own choice | Automatic default with our hook | Processing |
+|---|---|---|---|
+| nothing plugged in | speaker sink (or `x20-speakers`, 750) | `x20-speakers` (`x20-speakers-surround` with `stereo-surround on`) | speaker chain (or speaker virtual surround) |
+| jack plugged in | jack sink (1000) | `x20-virtual-surround-71` -> jack | 7.1 HRTF |
+| USB headset/headphones | USB sink | `x20-virtual-surround-71` -> USB sink | 7.1 HRTF |
+| Bluetooth headphones | `bluez_output...` sink | `x20-virtual-surround-71` -> Bluetooth sink | 7.1 HRTF |
+| HDMI/DP, line out, other | that sink | unchanged | none (a receiver decodes surround itself) |
+| any sink picked by hand in Steam | that sink | unchanged | whatever that sink does |
 
-The router is a WirePlumber 0.5 event hook (`x20/route-by-channels`) on the
-`select-target` event. WirePlumber's own hooks run in order: explicit targets
-(`linking/find-defined-target`), smart filters, role-based policy, then the
-default sink. Ours sits after the explicit/filter/role hooks and before the
-default-sink fallback, and returns early when a target was already chosen.
-Re-routing on plug/unplug needs no extra code: WirePlumber rescans every
-stream when a device's `Route` parameter changes, which is what ALSA jack
-detection does.
+Plugging and unplugging switch automatically, like on Windows:
+WirePlumber's `default-nodes/rescan-trigger` schedules a new
+`select-default-node` event when sinks come and go and on device `Route`
+changes (ALSA jack detection), and the hook runs again each time. The
+headphone surround output follows the same way (see "Headphone surround
+outputs"); both use one device classification
+([`x20-sink-facts.lua`](../overlay/home/wireplumber/scripts/lib/x20-sink-facts.lua)
+and `x20-route-core.lua`), so the default and the output target agree.
 
-The decision itself is a pure Lua function
+Bluetooth: the sink receives a plain stereo stream, and binaural rendering
+is stereo, so the HRTF works there too. A Bluetooth sink that reports
+`device.form-factor = speaker` is left alone.
+
+Manual picks: a default the user chose (Steam's manual pick, stored as
+`default.configured.audio.sink`) is ranked by WirePlumber above 15000
+(30000 + priority, 19xxx-20000 for the history of earlier picks). The hook
+never touches it. Choosing "Default" in Steam clears the pick and the
+history, and the hook applies again. The 5.1 headphone sink is only a
+manual pick.
+
+Settings:
+
+| Command | Default | Effect |
+|---|---|---|
+| `sudo ally-x20-steamos audio-dsp speakers-precedence on\|off` | on | off: the speakers stay on the bare hardware sink in automatic mode (no substitution, both speaker sinks at priority 50). Re-renders the confs and restarts PipeWire |
+| `sudo ally-x20-steamos audio-dsp headphones-virtual-surround on\|off` | on | off: headphones stay on the bare headphone sink in automatic mode. Applied to the running session at once (`wpctl settings`) |
+| `sudo ally-x20-steamos audio-dsp stereo-surround on\|off` | off | on: `x20-speakers-surround` instead of `x20-speakers` on the speakers. Restarts PipeWire (it also swaps the priorities) |
+
+Raw hardware output: pick the hardware "Speakers" or "Headphones" in Steam
+by hand, or turn the matching setting off.
+
+Priorities: with `speakers-precedence on`, `x20-speakers` has
+`priority.session` 750 and `x20-speakers-surround` 740 (swapped with
+`stereo-surround on`): above the hardware speakers (712) and below every
+headphone output (1000 or more). The hook alone decides between the two
+speaker sinks; the priorities only help tools that look at priorities, and
+keep the DSP the automatic default if the hook fails to load. They are
+rendered into the PipeWire confs. The headphone surround sinks stay at 50: a
+static priority cannot know whether headphones are present, so the hook
+does that part.
+
+The trade-off: on the speakers the automatic default is an 8-channel sink
+(7.1, so surround keeps its channels until the downmix). Games that query
+the default device's layout see 7.1 and render 7.1; the chain folds it back
+to stereo (or renders it, on `x20-speakers-surround`). That costs a little
+CPU in the game and in the chain, and the downmix is ours instead of the
+game's. A game that offers a speaker-layout setting can be set to stereo.
+Stereo streams are unaffected: they fill FL/FR only (see "Why no upmix").
+
+### Headphone surround outputs
+
+The two headphone sinks render binaural stereo, which only works on
+headphones. Their outputs have no `target.object`; a WirePlumber 0.5 event
+hook (`x20/route-by-channels`, file name historical) on the `select-target`
+event picks the target:
+
+- candidates are hardware sinks only (never an `x20-` sink);
+- a sink qualifies when its `device.form-factor` is `headphone`, `headset`
+  or `hands-free` (USB and Bluetooth), when it is a Bluetooth sink
+  (`device.api = bluez5`) that does not report `speaker`, or when the active `Route` of its
+  ALSA device is a headphone/headset route (name, description or
+  `port.type`) that is not `available = no` (UCM `[Out] Headphones`, ACP
+  `analog-output-headphones`). A speaker route never qualifies;
+- the default sink wins if it qualifies, otherwise the highest
+  `priority.session`;
+- nothing qualifies: the output stays unlinked (the hook stops the event,
+  like `node.dont-fallback`), so binaural audio never reaches the speakers.
+
+Explicit targets always win: our pinned outputs, and an output the user
+moved in pavucontrol or with `wpctl`/`pw-metadata`. Application streams are
+not touched at all. Re-evaluation needs no extra code: WirePlumber rescans
+every stream when a device's `Route` parameter changes (ALSA jack
+detection) and when nodes come and go (a headset connecting).
+
+The decision is a pure Lua function
 ([`x20-route-core.lua`](../overlay/home/wireplumber/scripts/lib/x20-route-core.lua))
 fed with plain tables by thin glue
 ([`x20-route-by-channels.lua`](../overlay/home/wireplumber/scripts/x20-route-by-channels.lua)),
@@ -60,24 +157,23 @@ so it is unit-tested without WirePlumber
 ([`tests/lua/test_x20_route_core.lua`](../tests/lua/test_x20_route_core.lua),
 cases in [`tests/fixtures/audio_dsp/routing-cases.txt`](../tests/fixtures/audio_dsp/routing-cases.txt)).
 
-How the glue gets its facts:
+Two headphone sinks (5.1 and 7.1) instead of one 7.1 sink with a layout
+switch: the surround speakers sit at different angles in the two layouts
+(ITU-R BS.775: 5.1 surrounds at +-110 deg; 7.1 sides at +-90 deg and rears
+at +-150 deg), and the HRTF angles are filter controls shared by every
+stream on a sink. An idle sink does no processing; the HRTF data is loaded
+once (`mysofa_open_cached`).
 
-- **Channel count**: the `audio.channels` property if a client sets it,
-  otherwise the widest raw `EnumFormat` the stream offers. This is the same
-  rule WirePlumber's `si-audio-adapter` uses to configure the stream.
-- **Hardware sink**: the default sink, or, if the user made one of our sinks
-  the default, the non-`x20-` sink with the highest `priority.session`.
-- **Headphones or speakers**: `device.form-factor` of the hardware sink
-  (`headphone`/`headset` for Bluetooth and USB headsets), otherwise the
-  active `Route` of its ALSA device. A route whose name, description or
-  `port.type` mentions headphone/headset and is not `available = no` means
-  headphones. A speaker route means speakers. UCM names these routes
-  `[Out] Headphones`/`[Out] Speaker`; ACP names them
-  `analog-output-headphones`/`analog-output-speaker`.
+### Pinned speaker output
 
-Our own filter outputs (`x20-*.output`) are left to the default sink unless
-the default is one of our sinks. In that case they are sent to the hardware
-sink so audio never loops through two filters.
+`x20-speakers.output` carries `target.object` (the speaker sink name above),
+`node.dont-fallback = true` and `node.linger = true`. WirePlumber's
+`find-defined-target` hook links it to that sink. If the sink does not exist
+(card profile changed, during start-up), it waits unlinked instead of
+falling back to the default sink, which could be the chain itself or the
+jack. `node.linger` matters: without it WirePlumber destroys a stream whose
+defined target is missing. `node.passive = true` stays, so an idle chain
+does not keep the amplifiers awake.
 
 ### Why no upmix
 
@@ -91,16 +187,19 @@ client stream:
 - [`pipewire-pulse.conf.d/50-x20-no-upmix.conf`](../overlay/home/pipewire/pipewire-pulse.conf.d/50-x20-no-upmix.conf)
 - [`client.conf.d/50-x20-no-upmix.conf`](../overlay/home/pipewire/client.conf.d/50-x20-no-upmix.conf)
 
-Downmixing (more channels into fewer) still works. With `stereo-hrtf on`, a
-stereo stream on the 7.1 sink drives only FL/FR, at +-30 deg, the way stereo
-speakers would sound in a room. `channelmix.upmix-method` (`none`, `simple`,
+Downmixing (more channels into fewer) still works. A stereo stream on any of
+the 8-channel x20 sinks drives only FL/FR: on `x20-speakers` it passes the
+downmix at unity, on a headphone surround sink it sits at +-30 deg, the way
+stereo speakers would sound in a room. `channelmix.upmix-method` (`none`, `simple`,
 `psd`) only matters when upmix is on. The comments in the fragments explain
 how to experiment with it.
 
 ### "Bit-identical stereo" and how to verify it
 
-With headphones and `stereo-hrtf off`, a stereo stream is linked straight to
-the hardware sink. PipeWire converts the client's samples to 32-bit float
+With the hardware headphone sink as the default (picked by hand in Steam, or
+automatic with `headphones-virtual-surround off`), a stereo stream is linked
+straight to it.
+PipeWire converts the client's samples to 32-bit float
 and back to the device format. That round trip is lossless for 16-bit and
 24-bit integer PCM as long as nothing else touches the samples:
 
@@ -139,7 +238,7 @@ PY
 cmp /tmp/x20-a.raw /tmp/x20-b.raw && echo "bit-identical"
 ```
 
-Run the same with `stereo-hrtf on`, or on speakers: `cmp` must then report a
+Run the same with an x20 sink as the default: `cmp` must then report a
 difference, since the stream goes through a filter. TODO(vm): run this in the
 SteamOS VM (plan section 6) and on the X20.
 
@@ -150,14 +249,16 @@ All entries are in the manifest with slot `home` and owned by `audio_dsp`.
 | Path (in the user's home) | Source |
 |---|---|
 | `.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf` | rendered from [`overlay/home/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf`](../overlay/home/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf) with the absolute HRTF path and the LFE settings |
-| `.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf` | rendered from [`51-x20-speaker-chain.conf`](../overlay/home/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf), or the `-lsp` variant, with the LFE and master gain settings |
-| `.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf` | rendered from [`52-x20-speaker-surround.conf`](../overlay/home/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf) with the HRTF path and the XTC parameters |
+| `.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf` | rendered from [`51-x20-speaker-chain.conf`](../overlay/home/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf), or the `-lsp` variant, with the LFE, master gain and priority settings |
+| `.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf` | rendered from [`52-x20-speaker-surround.conf`](../overlay/home/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf) with the HRTF path, the XTC parameters and the priority |
 | `.config/pipewire/pipewire-pulse.conf.d/50-x20-no-upmix.conf` | copied |
 | `.config/pipewire/client.conf.d/50-x20-no-upmix.conf` | copied |
-| `.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf` | copied (loader, settings schema) |
-| `.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf` | rendered (`x20.stereo_hrtf`, `x20.speaker_surround`, `x20.stereo_surround`) |
+| `.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf` | copied (loader of both hooks, settings schema) |
+| `.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf` | rendered (`x20.speakers_precedence`, `x20.headphones_virtual_surround`, `x20.stereo_surround`; `x20.stereo_hrtf` and `x20.speaker_surround` for compatibility only) |
 | `.local/share/wireplumber/scripts/x20-route-by-channels.lua` | copied |
+| `.local/share/wireplumber/scripts/x20-select-default-sink.lua` | copied |
 | `.local/share/wireplumber/scripts/lib/x20-route-core.lua` | copied |
+| `.local/share/wireplumber/scripts/lib/x20-sink-facts.lua` | copied |
 | `.config/ally-x20-steamos/hrtf/<set>.sofa`, `current.sofa` | downloaded and verified, symlink |
 | `.config/ally-x20-steamos/audio-dsp.conf` | settings |
 
@@ -167,18 +268,24 @@ is why the Lua files live under `~/.local/share` even though the plan's first
 draft listed `~/.config`.
 
 The sofa plugin passes the file name straight to libmysofa, which does not
-expand `~`. The surround conf is therefore rendered at install time with the
-absolute path of `current.sofa`.
+expand `~`. The surround confs are therefore rendered at install time with
+the absolute path of `current.sofa`.
+
+The file names of the per-stream router version are all kept, so an upgrade
+(`apply` or `audio-dsp on`) rewrites them in place and adds the two new
+files; nothing is left behind.
 
 ## Configuration knobs
 
 | What | How |
 |---|---|
 | Turn everything off / on | `sudo ally-x20-steamos audio-dsp off` / `on` |
+| Pick the output | Steam's output setting (or KDE, pavucontrol, `wpctl set-default`): "Default" (automatic), an X20 sink, or a hardware output |
 | Pick an HRTF set | `ally-x20-steamos audio-dsp hrtf list`, `sudo ally-x20-steamos audio-dsp hrtf <name>` |
-| Stereo through the HRTF too | `sudo ally-x20-steamos audio-dsp stereo-hrtf on` (persistent), or `wpctl settings x20.stereo_hrtf true` (until WirePlumber restarts) |
-| Speaker virtual surround on / off | `sudo ally-x20-steamos audio-dsp speaker-surround on` / `off` (persistent, moves playing streams at once) |
-| Stereo through the speaker virtual surround | `sudo ally-x20-steamos audio-dsp stereo-surround on` / `off` |
+| Automatic default: X20 speaker DSP or bare speakers | `sudo ally-x20-steamos audio-dsp speakers-precedence on` (default) / `off` (re-renders the priorities, restarts PipeWire) |
+| Automatic default: plain chain or speaker virtual surround | `sudo ally-x20-steamos audio-dsp stereo-surround off` (default: `x20-speakers`) / `on` (`x20-speakers-surround`); restarts PipeWire |
+| Automatic default on headphones: virtual surround 7.1 or bare | `sudo ally-x20-steamos audio-dsp headphones-virtual-surround on` (default) / `off` (live, no restart) |
+| `stereo-hrtf`, `speaker-surround` | recorded for compatibility, no effect: they steered the removed per-stream router. Pick the sink in Steam instead |
 | Tune the crosstalk cancellation | `ally-x20-steamos audio-dsp xtc` (show), `sudo ally-x20-steamos audio-dsp xtc set <delay_us> <atten_db> [taps]`, `xtc reset` |
 | LFE low-pass and level | `ally-x20-steamos audio-dsp lfe` (show), `sudo ally-x20-steamos audio-dsp lfe set <cutoff_hz> <gain_db>` |
 | Output gain (headroom) | `ally-x20-steamos audio-dsp master-gain` (show the analysis), `sudo ally-x20-steamos audio-dsp master-gain [speakers] auto\|strict\|<dB>` |
@@ -187,7 +294,9 @@ absolute path of `current.sofa`.
 | Target user | `AX20_AUDIO_USER`, `AX20_HOME` (default: `$SUDO_USER`, else `deck`) |
 
 `~/.config/ally-x20-steamos/audio-dsp.conf` holds `enabled`, `hrtf`,
-`stereo_hrtf`, `speaker_surround` (default 1), `stereo_surround` (default 0),
+`stereo_hrtf` and `speaker_surround` (no effect), `speakers_precedence`
+(default 1), `headphones_virtual_surround` (default 1), `stereo_surround`
+(default 0),
 `xtc_delay_us` (117), `xtc_attenuation_db` (4), `xtc_taps` (4),
 `lfe_cutoff_hz` (120), `lfe_gain_db` (-6), `master_gain_db` (auto) and
 `speakers_master_gain_db` (auto). The commands rewrite it. Out-of-range values fall back to the defaults. `apply` and the boot service read it,
@@ -255,10 +364,11 @@ virtual surround below cancels the crosstalk first.
 ## Speaker virtual surround
 
 [`52-x20-speaker-surround.conf`](../overlay/home/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf),
-sink `x20-speakers-surround`. This is the open counterpart of the "Dolby
-Atmos for built-in speakers" mode the X20 ships with on Windows. When no
-headphones are connected, the router sends every stream with 3 or more
-channels here. Stereo goes here too with `stereo-surround on`.
+sink `x20-speakers-surround` ("X20 Speakers (virtual surround)" in Steam).
+This is the open counterpart of the "Dolby Atmos for built-in speakers" mode
+the X20 ships with on Windows. Pick it in Steam, or make it the automatic
+default with `stereo-surround on`. Every stream on it goes through the
+virtual surround, stereo included (FL/FR rendered at +-30 deg).
 
 1. **Binaural render**: the same sofa spatializers, HRTF set
    (`current.sofa`) and 7.1 angles as `x20-virtual-surround-71`. A 5.1 stream
@@ -280,8 +390,7 @@ channels here. Stereo goes here too with `stereo-surround on`.
    (`target.object`), so the width and EQ stage exists once and is shared
    with the plain path.
 
-Without the sofa plugin or the HRTF data the sink is absent, and the router
-falls back to `x20-speakers`.
+Without the sofa plugin or the HRTF data the sink is absent.
 
 ### Listening test (A/B)
 
@@ -290,15 +399,15 @@ with the speakers. The effect has a sweet spot of a few centimetres.
 
 ```sh
 ally-x20-steamos audio-dsp test                       # channel sequence through the speaker surround
-# play a 5.1/7.1 test (film trailer, game, or speaker-test below), then:
-sudo ally-x20-steamos audio-dsp speaker-surround off  # plain downmix (A)
-sudo ally-x20-steamos audio-dsp speaker-surround on   # virtual surround (B)
+# play a 5.1/7.1 test (film trailer, game, or speaker-test below), then
+# switch the output in Steam, or:
+wpctl set-default "$(pw-dump | jq '.[] | select(.info.props["node.name"]? == "x20-speakers") | .id')"           # plain downmix (A)
+wpctl set-default "$(pw-dump | jq '.[] | select(.info.props["node.name"]? == "x20-speakers-surround") | .id')"  # virtual surround (B)
 speaker-test -D pipewire -c 6 -t wav                  # spoken channel names, 5.1
 ```
 
-Each toggle is one command. It updates the setting in the running
-WirePlumber (`wpctl settings`), so the playing stream moves to the other sink
-within a second, without a restart.
+Switching the default moves streams that follow it within a second, without
+a restart.
 
 What to expect with surround on:
 
@@ -342,12 +451,13 @@ defaults.
 
 ### Device pickers
 
-All `x20-*` sinks are plain `media.class = Audio/Sink`, so they DO appear in
-output pickers (KDE, Steam Game Mode, pavucontrol). Leave the output on the
-hardware "Speakers"/"Headphones": the WirePlumber router moves each stream
-to the right `x20-*` sink by channel count and jack state, and manual control
-is through settings (`audio-dsp stereo-hrtf`, `speaker-surround`,
-`stereo-surround`), not the picker.
+All `x20-*` sinks are plain `media.class = Audio/Sink`, so they appear in
+output pickers (KDE, Steam Game Mode, pavucontrol), and the picker is the
+control: "X20 Speakers" for stereo on the speakers, "X20 Speakers (virtual
+surround)" for surround on the speakers, "X20 headphone surround 5.1/7.1"
+for surround on headphones (silent while no headphones are available), the
+hardware outputs for no processing. "Default" follows "Automatic output
+selection" above.
 
 Measured on the X20 (SteamOS 3.9.5, WirePlumber 0.5.18): `Audio/Sink/Internal`
 is not a usable hiding trick. WirePlumber then logs "No input node for
@@ -375,7 +485,7 @@ chain.
   60 Hz rumble at full scale used to take digital headroom (and amplifier
   excursion) without producing audible bass. Now it is filtered out before
   the sum.
-- **Headphones**: headphones do reproduce low bass, so the HRTF sinks also
+- **Headphones**: headphones do reproduce low bass, so the headphone surround sinks also
   low-pass LFE at the same cutoff and keep it at -6 dB. A low-pass at
   120 Hz removes only out-of-spec content, so real LFE is unaffected.
 
@@ -407,7 +517,7 @@ Worst case over full scale, before the master gain (defaults: 117 us, 4 dB,
 | Path | Before this change (no LFE low-pass, no master) | Now, before master | Master (default) | Now, after master |
 |---|---|---|---|---|
 | `x20-speakers`, stereo (FL/FR only) | +1.9 dB | +1.9 dB | 0 dB (auto) | +1.9 dB |
-| `x20-speakers`, all 8 channels coherent (speaker-surround off) | +13.1 dB | +11.8 dB | 0 dB (auto) | +11.8 dB |
+| `x20-speakers`, all 8 channels coherent (a surround stream on it) | +13.1 dB | +11.8 dB | 0 dB (auto) | +11.8 dB |
 | `x20-speakers-surround` -> `x20-speakers`, 7 sources uncorrelated | +10.9 dB | +9.6 dB | -9.6 dB (auto) | 0.0 dB |
 | same, 7 sources coherent | +18.6 dB | +18.0 dB | -9.6 dB (auto) | +8.4 dB |
 
@@ -427,8 +537,8 @@ What the settings mean:
   - `auto` (default) is unity, so stereo keeps its level. The +1.9 dB
     theoretical worst case comes from the +2 dB air shelf at 8-20 kHz,
     where real content is never at full scale.
-  - `strict` (-11.8 dB) also covers coherent full-scale 7.1 when
-    speaker-surround is off. It costs stereo the same 11.8 dB.
+  - `strict` (-11.8 dB) also covers coherent full-scale 7.1 played on
+    `x20-speakers`. It costs stereo the same 11.8 dB.
 
 The master gains lower the digital level only. If the speaker volume is a
 hardware control (the TAS2783 amp volume), raising it restores loudness
@@ -443,7 +553,7 @@ excursion, and use `lfe set 120 -20` or a higher speaker high-pass.
 
 [`vm/guest/measure-speaker-chain.sh`](../vm/guest/measure-speaker-chain.sh)
 runs as the desktop user (not root) on the X20. It generates a worst-case
-7.1 file and plays it through the router (or `--sink NODE`). While it
+7.1 file and plays it on the default sink (or `--sink NODE`). While it
 plays, it records the measurement point in float32 and prints the peak
 dBFS and the share of clipped samples per channel. The file has three
 segments: the same sweep on all 7 channels plus 60 Hz LFE, independent
@@ -489,8 +599,9 @@ Fallbacks:
   it in `/var/lib/ally-x20-steamos/lib`. The hdr component's
   `/etc/ld.so.conf.d/00-ally-x20-steamos.conf` puts that directory on the
   loader path. Nothing touches `/usr`.
-- **No plugin**: the virtual surround modules fail to load (`nofail`), the
-  sinks are absent and the router sends every stream to the hardware sink.
+- **No plugin**: the virtual surround modules fail to load (`nofail`) and
+  the sinks are absent; the automatic default is then `x20-speakers` on the
+  speakers and the bare headphone sink on headphones.
   The speaker chain does not need libmysofa. A future fallback could
   pre-render HRIR WAV files from the SOFA data and use the builtin
   `convolver`, the way PipeWire's `sink-virtual-surround-7.1-hesuvi.conf`
@@ -502,28 +613,33 @@ Fallbacks:
 ally-x20-steamos audio-dsp status        # settings, probes, live x20 sinks
 ally-x20-steamos audio-dsp test          # 7.1 + stereo tones, prints stream -> sink,
                                          # then 7.1 through x20-speakers-surround
-wpctl status                             # sinks: X20 headphone surround 5.1/7.1, X20 Speakers
-                                         # (x20-speakers-surround is Audio/Sink/Internal)
+wpctl status                             # sinks: X20 Speakers, X20 Speakers (virtual surround),
+                                         # X20 headphone surround 5.1/7.1; "*" marks the default
+wpctl inspect @DEFAULT_AUDIO_SINK@ | grep -e node.name -e priority
 pw-top                                   # which nodes run, rate, xruns, DSP load
 pw-dump | jq -r '.[] | select(.type == "PipeWire:Interface:Link")
   | "\(.info["output-node-id"]) -> \(.info["input-node-id"])"'
 pw-link -l                               # same, by port name
-journalctl --user -u wireplumber | grep 'x20:'   # router decisions (info level)
+journalctl --user -u wireplumber | grep 'x20:'   # headphone-output hook decisions (info level)
 ```
 
-Router decisions are logged at info level on the `s-linking.x20` topic. To
+Expected links: `x20-speakers.output` -> `...HiFi__Speaker__sink`,
+`x20-speakers-surround.output` -> `x20-speakers`, and a headphone surround
+output -> the jack (route available) or a headset, or no link at all.
+
+Hook decisions are logged at info level on the `s-linking.x20` topic. To
 see them, run WirePlumber with `WIREPLUMBER_DEBUG=s-linking.x20:I`, or raise
 the level at runtime with `wpctl set-log-level`.
 
 Simulating a jack plug in the VM (plan section 6): change the active route
-with `wpctl set-route` or pavucontrol's port selector. WirePlumber rescans,
-and new and existing streams move between the hardware sink, the virtual
-sinks and `x20-speakers`. TODO(vm).
+with `wpctl set-route` or pavucontrol's port selector. WirePlumber rescans:
+the automatic default moves to `x20-virtual-surround-71` (output linked to
+the jack) and back to `x20-speakers`. TODO(vm).
 
 ## Turning it off and removing it
 
 - `sudo ally-x20-steamos audio-dsp off` removes every configuration file
-  (filter chains, no-upmix fragments, router script and loader) and restarts
+  (filter chains, no-upmix fragments, hook scripts and loader) and restarts
   the user's PipeWire, so audio behaves exactly as stock. No virtual sinks
   remain in the output picker. HRTF data and the settings file stay, so
   `audio-dsp on` works offline. A file you edited after we installed it is
@@ -536,15 +652,15 @@ sinks and `x20-speakers`. TODO(vm).
 `status` reports `active` when the component is enabled, every file
 verifies and the selected HRTF is in place. It reports `stock` when the
 component is disabled, incomplete or drifted. The probe never reports
-`superseded`: Valve ships no per-stream HRTF routing.
+`superseded`: Valve ships no X20 speaker processing or headphone surround.
 
 ## WirePlumber 0.4 notes (not supported)
 
 SteamOS 3.9 ships WirePlumber 0.5.18, which is the only version this
-component targets. On 0.4 the script would need a different form: a
+component targets. On 0.4 the hook would need a different form: a
 `~/.config/wireplumber/main.lua.d/` (or `policy.lua.d/`) loader calling
 `load_script("x20-route-by-channels.lua")`, scripts in
-`~/.config/wireplumber/scripts/`, and the routing done by patching
+`~/.config/wireplumber/scripts/`, and the target choice done by patching
 `policy-node.lua`'s `findDefinedTarget`/`findBestTarget` logic, or by
 setting `target.object` metadata from an `ObjectManager` `object-added`
 callback. 0.4 has no event hooks and no settings schema. The pure decision
@@ -552,8 +668,12 @@ core would carry over unchanged.
 
 ## Open items needing the device or the VM
 
-- TODO(hw) UCM route names for the X20 headphone jack and speakers, and
-  whether jack detection reports `available = no` on unplug.
+- Measured on the X20 (SteamOS 3.9.5): UCM routes `[Out] Headphones` and
+  `[Out] Speaker`; the unplugged jack reports `not available`; priorities
+  1000 (jack) and 712 (speakers).
+- TODO(hw) automatic default: `x20-speakers` without headphones,
+  `x20-virtual-surround-71` -> jack while plugged, back on unplug; the same
+  with a USB and a Bluetooth headset; a manual pick in Steam is kept.
 - TODO(hw) presence of the sofa plugin, libmysofa and any LV2/LADSPA plugins.
 - TODO(hw) WirePlumber runs the `main` profile on SteamOS.
 - TODO(hw) speaker EQ/width preset against the Windows reference recording.
@@ -562,5 +682,6 @@ core would carry over unchanged.
   measured with a ruler.
 - TODO(hw) `measure-speaker-chain.sh --point hw` with the default and the
   strict master gain; RE2 loud scenes A/B.
-- TODO(vm) bit-identical stereo check, 5.1/7.1 routing and route-change rescans.
+- TODO(vm) bit-identical stereo check and route-change rescans of the
+  headphone surround outputs.
 - TODO(vm) the ALSA plugin (`pipewire-alsa`) picks up `client.conf.d`.

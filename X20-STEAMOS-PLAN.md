@@ -153,6 +153,18 @@ Probe: none needed (never superseded by Valve); `status` just reports on/off.
 VM test: fully testable — play a 7.1 test file and a stereo file, confirm
 routing via `pw-top`/`pw-dump` (which sink each stream targets) and that the
 stereo stream's samples pass through unchanged (loopback capture + compare).
+**Changed after on-device testing (2026-10-31), replaces the automatic
+per-stream routing of item 3 and the automatic selection of item 4:** the
+user picks the output in Steam and every stream follows the default sink.
+With Steam's output on "Default", a WirePlumber hook on select-default-node
+swaps WirePlumber's automatic choice: built-in speakers -> x20-speakers (or
+x20-speakers-surround with `stereo-surround on`), any headphones (jack, USB,
+Bluetooth) -> x20-virtual-surround-71; plug/unplug switch; a manual pick
+always wins; `speakers-precedence off` / `headphones-virtual-surround off`
+opt out. The speaker chain output is pinned to the hardware speaker sink,
+and the HRTF outputs only link to available headphones. Reason:
+an unpinned output followed the fallback to the unplugged jack sink
+(silence). Details in docs/audio-dsp.md.
 
 ---
 
@@ -635,8 +647,8 @@ Dolby on and off. This is the tuning target for the speaker chain.
    stock fallback (Game Mode); VM check 8.
 7. RAUC hook + boot service; A/B update survival in VM.
 8. Audio DSP (§1.5, required): headphone virtual surround (filter-chain +
-   no-upmix + WirePlumber channel-count routing + jack switching) and the
-   speaker chain; VM-tested with 2ch/5.1/7.1 fixtures and jack-state
+   no-upmix + WirePlumber hook for the headphone outputs; channel-count
+   routing dropped after on-device testing, see §1.5) and the speaker chain; VM-tested with 2ch/5.1/7.1 fixtures and jack-state
    simulation. Ships in v0.1.
 9. First on-device run: collect §7 data, adjust layout/LED findings, release
    v0.1 with CI-built artifacts.

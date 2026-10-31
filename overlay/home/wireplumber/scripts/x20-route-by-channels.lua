@@ -25,6 +25,7 @@
 -- for every stream.
 
 local core = require ("x20-route-core")
+local facts = require ("x20-sink-facts")
 local lutils = require ("linking-utils")
 local cutils = require ("common-utils")
 local log = Log.open_topic ("s-linking.x20")
@@ -47,46 +48,6 @@ end
 -- (WirePlumber 0.5 cannot link streams into Audio/Sink/Internal).
 local SINK_CLASSES = "Audio/Sink*"
 
--- Active output routes of the device behind a sink node (the device's
--- "Route" params for the sink's card.profile.device, the same lookup
--- linking-utils.haveAvailableRoutes does).
-local function active_routes (props)
-  local routes = {}
-  local device_id = props ["device.id"]
-  if not device_id then
-    return routes
-  end
-  local device = cutils.get_object_manager ("device"):lookup {
-    Constraint { "bound-id", "=", device_id, type = "gobject" },
-  }
-  if not device then
-    return routes
-  end
-  local card_dev = tonumber (props ["card.profile.device"])
-  for param in device:iterate_params ("Route") do
-    local r = cutils.parseParam (param, "Route")
-    if r and (card_dev == nil or r.device == card_dev) then
-      local port_type = nil
-      if type (r.info) == "table" then
-        -- info is a flat key/value list: { n, k1, v1, k2, v2, ... }
-        for i = 1, #r.info - 1 do
-          if r.info [i] == "port.type" then
-            port_type = r.info [i + 1]
-          end
-        end
-      end
-      table.insert (routes, {
-        name = r.name,
-        description = r.description,
-        available = r.available,
-        direction = r.direction,
-        port_type = port_type,
-      })
-    end
-  end
-  return routes
-end
-
 -- Every audio sink as a plain table for the core, the linkable items by
 -- name, and the default sink's name.
 local function collect_sinks (om, si_props)
@@ -98,12 +59,7 @@ local function collect_sinks (om, si_props)
     local p = item.properties
     local name = p ["node.name"]
     if name then
-      table.insert (sinks, {
-        name = name,
-        priority = tonumber (p ["priority.session"]) or 0,
-        form_factor = p ["device.form-factor"],
-        routes = core.is_x20_name (name) and {} or active_routes (p),
-      })
+      table.insert (sinks, facts.sink (p))
       by_name [name] = item
       by_id [tostring (p ["node.id"])] = item
     end

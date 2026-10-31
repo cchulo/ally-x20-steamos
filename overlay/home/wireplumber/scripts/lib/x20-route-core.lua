@@ -7,6 +7,10 @@
 -- which loads it with require ("x20-route-core") from
 -- ~/.local/share/wireplumber/scripts/lib/.
 --
+-- Two decisions live here, sharing one device classification so they always
+-- agree: decide () (link target of our filter outputs, below) and
+-- decide_default () (the automatic default sink, see its comment).
+--
 -- Policy. The user picks the output (the default sink) by hand in Steam:
 -- the hardware speakers or headphones, "X20 Speakers", the speaker virtual
 -- surround or one of the headphone surround sinks. Application streams are
@@ -84,6 +88,16 @@ local function lower (s)
   return s:lower ()
 end
 
+-- The X20 internal speaker sink (UCM HiFi verb, Speaker device, on the ACP
+-- at PCI 0000:64:00.5), measured on SteamOS 3.9.5.
+M.X20_SPEAKER_SINK = "alsa_output.pci-0000_64_00.5-platform-amd_sdw.HiFi__Speaker__sink"
+
+-- priority above which a default was chosen by the user: WirePlumber ranks
+-- the configured default (Steam's manual pick) at 30000 + priority and the
+-- stored history of configured defaults at 19xxx-20000; the automatic choice
+-- (find-best-default-node) is the plain priority.session.
+M.MANUAL_PRIORITY = 15000
+
 local function mentions (route, word)
   return lower (route.name):find (word, 1, true) ~= nil
       or lower (route.description):find (word, 1, true) ~= nil
@@ -95,6 +109,7 @@ end
 --   sink = { name = node.name,
 --            form_factor = device.form-factor ("headphone", "headset",
 --                          "hands-free", "internal", ...),
+--            api = device.api ("alsa", "bluez5", ...),
 --            routes = the device's active output routes for this sink:
 --                     { name = "[Out] Headphones" | "analog-output-..." ...,
 --                       description = ..., port_type = ...,
@@ -102,6 +117,10 @@ end
 --                       direction = "Output" } }
 -- ALSA jack detection sets route.available to "no" while the plug is out;
 -- the jack sink node itself stays, which is why availability matters.
+-- Bluetooth sinks (device.api "bluez5") count as headphones unless they
+-- say they are a speaker: headsets and earbuds are the common case, and a
+-- Bluetooth output always receives a plain stereo stream, so binaural audio
+-- works there.
 function M.is_headphone_sink (sink)
   if type (sink) ~= "table" or M.is_x20_name (sink.name) then
     return false
@@ -110,11 +129,37 @@ function M.is_headphone_sink (sink)
   if ff == "headphone" or ff == "headset" or ff == "hands-free" then
     return true
   end
+  if lower (sink.api) == "bluez5" and ff ~= "speaker" then
+    return true
+  end
   for _, r in ipairs (sink.routes or {}) do
     local dir = lower (r.direction)
     if (dir == "" or dir == "output") and lower (r.available) ~= "no"
         and not mentions (r, "speaker")
         and (mentions (r, "headphone") or mentions (r, "headset")) then
+      return true
+    end
+  end
+  return false
+end
+
+-- is_speaker_sink (sink) : a hardware built-in speaker output: the X20
+-- speaker sink by name, or an output route that names a speaker and is not
+-- "available = no" (and no headphone route).
+function M.is_speaker_sink (sink)
+  if type (sink) ~= "table" or M.is_x20_name (sink.name) then
+    return false
+  end
+  if M.is_headphone_sink (sink) then
+    return false
+  end
+  if sink.name == M.X20_SPEAKER_SINK then
+    return true
+  end
+  for _, r in ipairs (sink.routes or {}) do
+    local dir = lower (r.direction)
+    if (dir == "" or dir == "output") and lower (r.available) ~= "no"
+        and mentions (r, "speaker") then
       return true
     end
   end
@@ -169,6 +214,80 @@ function M.decide (stream, env)
     return name, "headphone surround output to the headphone sink"
   end
   return M.UNLINKED, "headphone surround output, but no headphones are available"
+end
+
+-- decide_default (selected, env) -> sink-name | nil, reason
+-- Runs after WirePlumber chose the default sink (select-default-node, before
+-- it is applied). nil keeps WirePlumber's choice.
+--   selected = { name = node.name, priority = selected-node-priority,
+--                sink = is_headphone_sink () table of that node }
+--   env = { speakers_precedence (bool, nil = true),
+--           headphones_virtual_surround (bool, nil = true),
+--           stereo_surround (bool),
+--           available = { [node.name] = true } (the selectable sinks) }
+-- Policy, automatic choices only (a manual pick always wins):
+--   built-in speakers, or one of our speaker sinks, chosen automatically
+--       -> x20-speakers (x20-speakers-surround with stereo_surround), when
+--          speakers_precedence; the other speaker sink when the preferred
+--          one is not loaded (no sofa plugin or HRTF data)
+--   headphones (jack with its route available, USB, Bluetooth)
+--       -> x20-virtual-surround-71, when headphones_virtual_surround
+--   anything else (HDMI/DP, line out, our headphone sinks) -> unchanged
+function M.decide_default (selected, env)
+  selected = selected or {}
+  env = env or {}
+  local available = env.available or {}
+  local name = selected.name
+  if type (name) ~= "string" then
+    return nil, "no default selected"
+  end
+  if (tonumber (selected.priority) or 0) > M.MANUAL_PRIORITY then
+    return nil, "chosen by the user"
+  end
+
+  local function speakers ()
+    if env.speakers_precedence == false then
+      return nil, "speakers, speakers-precedence off"
+    end
+    local want, other = M.SINK_SPEAKERS, M.SINK_SPEAKERS_SURROUND
+    if env.stereo_surround then
+      want, other = other, want
+    end
+    if available[want] then
+      if want == name then
+        return nil, "already the preferred speaker sink"
+      end
+      return want, "speakers: preferred speaker sink"
+    end
+    if want == M.SINK_SPEAKERS_SURROUND and available[other] then
+      if other == name then
+        return nil, "already the speaker chain (surround sink not loaded)"
+      end
+      return other, "speakers: " .. want .. " not loaded"
+    end
+    return nil, "speakers, but " .. want .. " is not loaded"
+  end
+
+  if name == M.SINK_SPEAKERS or name == M.SINK_SPEAKERS_SURROUND then
+    return speakers ()
+  end
+  if M.is_x20_name (name) then
+    return nil, "one of our headphone sinks"
+  end
+  local sink = selected.sink or { name = name }
+  if M.is_headphone_sink (sink) then
+    if env.headphones_virtual_surround == false then
+      return nil, "headphones, headphones-virtual-surround off"
+    end
+    if not available[M.SINK_71] then
+      return nil, "headphones, but " .. M.SINK_71 .. " is not loaded"
+    end
+    return M.SINK_71, "headphones: virtual surround 7.1"
+  end
+  if M.is_speaker_sink (sink) then
+    return speakers ()
+  end
+  return nil, "neither speakers nor headphones"
 end
 
 return M

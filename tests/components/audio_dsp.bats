@@ -36,7 +36,7 @@ setup() {
 @test "files: every destination is in the deck home, x20-prefixed, slot home" {
     run audio_dsp_files
     assert_success
-    [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" = 5 ]
+    [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" = 7 ]
     while IFS=$'\t' read -r src dest mode slot; do
         [ -f "$REPO_ROOT/overlay/$src" ]
         case "$dest" in "$H"/*) ;; *) false ;; esac
@@ -77,6 +77,9 @@ setup() {
     [ -f "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf" ]
     [ -f "$r/.local/share/wireplumber/scripts/x20-route-by-channels.lua" ]
     [ -f "$r/.local/share/wireplumber/scripts/lib/x20-route-core.lua" ]
+    [ -f "$r/.local/share/wireplumber/scripts/x20-select-default-sink.lua" ]
+    [ -f "$r/.local/share/wireplumber/scripts/lib/x20-sink-facts.lua" ]
+    grep -q 'name = x20-select-default-sink.lua, type = script/lua' "$r/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf"
     for n in set-a set-b set-c; do
         cmp "$r/.config/ally-x20-steamos/hrtf/$n.sofa" "$AX20_HRTF_SOURCE_DIR/$n.sofa"
     done
@@ -93,6 +96,9 @@ setup() {
     grep -q 'x20.stereo_hrtf = false' "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
     grep -q 'x20.speaker_surround = true' "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
     grep -q 'x20.stereo_surround = false' "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
+    grep -q 'x20.speakers_precedence = true' "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
+    grep -q 'x20.headphones_virtual_surround = true' "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
+    grep -qx 'headphones_virtual_surround=1' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     [ "$(component_status audio_dsp)" = active ]
 }
 
@@ -155,6 +161,31 @@ prio() {
     [ "$(prio 51-x20-speaker-chain.conf)" = "740 740" ]
     [ "$(prio 52-x20-speaker-surround.conf)" = "750 750" ]
     [ "$(prio 50-x20-virtual-surround.conf)" = "50 50 " ]
+}
+
+@test "WirePlumber settings: precedence and headphone surround rendered from audio-dsp.conf" {
+    component_apply audio_dsp
+    audio_dsp_write_settings speakers_precedence=0 headphones_virtual_surround=0 stereo_surround=1
+    audio_dsp_render_wpsettings
+    local w="$AX20_ROOT$H/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
+    grep -q 'x20.speakers_precedence = false' "$w"
+    grep -q 'x20.headphones_virtual_surround = false' "$w"
+    grep -q 'x20.stereo_surround = true' "$w"
+    # every rendered key has a schema entry in the loader
+    for k in $(sed -n 's/^  \(x20\.[a-z_]*\) = .*/\1/p' "$w"); do
+        grep -q "^  $k = {" "$REPO_ROOT/overlay/home/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf"
+    done
+}
+
+@test "uninstall removes the WirePlumber hook files" {
+    component_apply audio_dsp
+    run sh "$REPO_ROOT/uninstall/uninstall.sh" --root "$AX20_ROOT" --yes --quiet --component audio_dsp
+    assert_success
+    local r="$AX20_ROOT$H"
+    [ ! -e "$r/.local/share/wireplumber/scripts/x20-select-default-sink.lua" ]
+    [ ! -e "$r/.local/share/wireplumber/scripts/lib/x20-sink-facts.lua" ]
+    [ ! -e "$r/.local/share/wireplumber/scripts/x20-route-by-channels.lua" ]
+    [ ! -e "$r/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf" ]
 }
 
 @test "priorities: speakers_precedence=0 puts both speaker sinks at 50 (also with the LSP variant)" {
@@ -402,6 +433,9 @@ PY
     [ ! -e "$r/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf" ]
     [ ! -e "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf" ]
     [ ! -e "$r/.local/share/wireplumber/scripts/x20-route-by-channels.lua" ]
+    [ ! -e "$r/.local/share/wireplumber/scripts/x20-select-default-sink.lua" ]
+    [ ! -e "$r/.local/share/wireplumber/scripts/lib/x20-sink-facts.lua" ]
+    [ ! -e "$r/.local/share/wireplumber/scripts/lib/x20-route-core.lua" ]
     [ -f "$r/.config/ally-x20-steamos/hrtf/set-a.sofa" ]
     grep -qx 'enabled=0' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     [ -z "$(audio_dsp_files)" ]
@@ -576,8 +610,8 @@ lua_bin() {
 @test "lua: hook glue and core parse" {
     local lua f
     lua=$(lua_bin) || skip "no Lua interpreter (lua, lua5.4, lua5.3, luajit) installed; syntax check not run"
-    for f in "$REPO_ROOT"/overlay/home/wireplumber/scripts/x20-route-by-channels.lua \
-        "$REPO_ROOT"/overlay/home/wireplumber/scripts/lib/x20-route-core.lua; do
+    for f in "$REPO_ROOT"/overlay/home/wireplumber/scripts/*.lua \
+        "$REPO_ROOT"/overlay/home/wireplumber/scripts/lib/*.lua; do
         run "$lua" -e "assert(loadfile('$f'))"
         assert_success
     done

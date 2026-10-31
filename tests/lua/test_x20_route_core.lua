@@ -76,12 +76,61 @@ end
 fh:close ()
 check ("fixture has cases", cases > 10, true)
 
--- 2. Non-playback streams are never touched.
+-- 2. Table-driven decide_default () cases (automatic default sink).
+local NAMES = {
+  spk = core.X20_SPEAKER_SINK,
+  jack = "alsa_output.pci-0000_64_00.5-platform-amd_sdw.HiFi__Headphones__sink",
+}
+local ALL_X20 = { core.SINK_SPEAKERS, core.SINK_SPEAKERS_SURROUND, core.SINK_71, core.SINK_51 }
+fh = assert (io.open (root .. "/tests/fixtures/audio_dsp/default-cases.txt", "r"))
+local dcases = 0
+for line in fh:lines () do
+  if line:match ("%S") and not line:match ("^%s*#") then
+    local f = split (line, "%S+")
+    assert (#f == 12, "bad default fixture line: " .. line)
+    local name = NAMES[f[2]] or f[2]
+    local sink = { name = name, routes = {} }
+    if f[4] ~= "-" then
+      sink.form_factor = f[4]
+    end
+    if f[5] ~= "-" then
+      local r = assert (ROUTES[f[5]], "unknown route shorthand " .. f[5])
+      sink.routes[1] = { name = r.name, description = r.description,
+        direction = "Output", available = f[6] }
+    end
+    if f[7] ~= "-" then
+      sink.api = f[7]
+    end
+    local available = { [NAMES.spk] = true, [NAMES.jack] = true, [name] = true }
+    local present = (f[11] == "all") and ALL_X20 or split (f[11], "[^,]+")
+    for _, n in ipairs (present) do
+      available[n] = true
+    end
+    local got = core.decide_default (
+      { name = name, priority = tonumber (f[3]), sink = sink },
+      { speakers_precedence = f[8] == "yes", headphones_virtual_surround = f[9] == "yes",
+        stereo_surround = f[10] == "yes", available = available })
+    check ("default/" .. f[1], tostring (got), f[12])
+    dcases = dcases + 1
+  end
+end
+fh:close ()
+check ("default fixture has cases", dcases > 10, true)
+check ("default/nothing-selected", core.decide_default (nil, nil), nil)
+-- precedence and headphone settings default to on when absent (nil)
+check ("default/settings-absent-speakers", core.decide_default (
+  { name = core.X20_SPEAKER_SINK, priority = 712 },
+  { available = { [core.SINK_SPEAKERS] = true } }), core.SINK_SPEAKERS)
+check ("default/settings-absent-headphones", core.decide_default (
+  { name = "bluez_output.x", priority = 1010, sink = { name = "bluez_output.x", api = "bluez5" } },
+  { available = { [core.SINK_71] = true } }), core.SINK_71)
+
+-- 3. Non-playback streams are never touched.
 check ("decide/capture", core.decide ({ media_class = "Stream/Input/Audio", node_name = "x20-virtual-surround-71.output" },
   { sinks = { parse_sink ("jack:1000:-:hp:yes") } }), nil)
 check ("decide/empty", core.decide (nil, nil), nil)
 
--- 3. Headphone sink classification (jack detection through availability).
+-- 4. Headphone and speaker sink classification (jack detection through availability).
 check ("hp/ucm-available", core.is_headphone_sink (parse_sink ("j:1:-:hp:yes")), true)
 check ("hp/ucm-unavailable", core.is_headphone_sink (parse_sink ("j:1:-:hp:no")), false)
 check ("hp/speaker", core.is_headphone_sink (parse_sink ("s:1:-:spk:yes")), false)
@@ -96,8 +145,16 @@ check ("hp/port-type", core.is_headphone_sink ({ name = "a",
 check ("hp/speaker-and-headphone-words", core.is_headphone_sink ({ name = "a",
   routes = { { name = "Speaker + Headphones", available = "yes" } } }), false)
 check ("hp/nil", core.is_headphone_sink (nil), false)
+check ("hp/bluez5", core.is_headphone_sink ({ name = "bluez_output.a", api = "bluez5" }), true)
+check ("hp/bluez5-speaker", core.is_headphone_sink ({ name = "bluez_output.a", api = "bluez5", form_factor = "speaker" }), false)
+check ("spk/x20-speaker-sink", core.is_speaker_sink ({ name = core.X20_SPEAKER_SINK }), true)
+check ("spk/route", core.is_speaker_sink (parse_sink ("s:1:-:spk:unknown")), true)
+check ("spk/route-unavailable", core.is_speaker_sink (parse_sink ("s:1:-:spk:no")), false)
+check ("spk/headphone-route", core.is_speaker_sink (parse_sink ("j:1:-:hp:yes")), false)
+check ("spk/x20", core.is_speaker_sink ({ name = "x20-speakers" }), false)
+check ("spk/hdmi", core.is_speaker_sink (parse_sink ("h:1:-:hdmi:yes")), false)
 
--- 4. Helpers.
+-- 5. Helpers.
 check ("x20-name", core.is_x20_name ("x20-speakers"), true)
 check ("x20-name/other", core.is_x20_name ("alsa_output.x20"), false)
 check ("hp-output-name/71", core.is_headphone_output_name ("x20-virtual-surround-71.output"), true)

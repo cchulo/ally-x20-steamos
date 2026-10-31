@@ -403,3 +403,30 @@ prio_of() { sed -n 's/^ *priority.session = //p' "$AX20_ROOT$1" | head -n1; }
     assert_success
     assert_output_contains "no longer changes routing"
 }
+
+@test "headphones-virtual-surround off|on: persisted and rendered for the default-sink hook" {
+    ax audio-dsp on
+    settings | grep -qx 'headphones_virtual_surround=1'
+    wpset | grep -q 'x20.headphones_virtual_surround = true'
+    run ax audio-dsp headphones-virtual-surround off
+    assert_success
+    settings | grep -qx 'headphones_virtual_surround=0'
+    wpset | grep -q 'x20.headphones_virtual_surround = false'
+    run ax audio-dsp status
+    assert_output_contains "headphones_virtual_surround: 0"
+    # survives a re-apply
+    ax audio-dsp on
+    wpset | grep -q 'x20.headphones_virtual_surround = false'
+    run ax audio-dsp headphones-virtual-surround on
+    assert_success
+    wpset | grep -q 'x20.headphones_virtual_surround = true'
+    run ax audio-dsp headphones-virtual-surround maybe
+    assert_failure 2
+}
+
+@test "speakers-precedence is rendered for the default-sink hook too" {
+    ax audio-dsp on
+    wpset | grep -q 'x20.speakers_precedence = true'
+    ax audio-dsp speakers-precedence off
+    wpset | grep -q 'x20.speakers_precedence = false'
+}

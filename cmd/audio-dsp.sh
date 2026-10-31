@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# summary: headphone/speaker virtual surround + speaker chain: on|off|status|hrtf|speakers-precedence|stereo-surround|stereo-hrtf|speaker-surround|xtc|lfe|master-gain|test
+# summary: headphone/speaker virtual surround + speaker chain: on|off|status|hrtf|speakers-precedence|headphones-virtual-surround|stereo-surround|stereo-hrtf|speaker-surround|xtc|lfe|master-gain|test
 # shellcheck source=lib/component.sh
 . "$AX20_SRC/lib/component.sh"
 
@@ -13,15 +13,19 @@ usage: $AX20_NAME audio-dsp <command>
   hrtf list             list HRTF sets (* = current)
   hrtf <name>           switch the HRTF set (relinks current.sofa, restarts PipeWire)
   speakers-precedence on|off
-                        on (default): WirePlumber's automatic default is the
-                        X20 speaker DSP (priority 750, above the bare speakers
-                        at 712, below headphones at >= 1000); off: both
-                        speaker sinks at priority 50, picked by hand only
-                        (re-renders, restarts PipeWire)
+                        on (default): with Steam's output on "Default", the
+                        built-in speakers play through the X20 speaker DSP;
+                        off: through the bare hardware sink (both speaker
+                        sinks at priority 50; re-renders, restarts PipeWire)
+  headphones-virtual-surround on|off
+                        on (default): with Steam's output on "Default", any
+                        headphones (jack, USB, Bluetooth) play through
+                        x20-virtual-surround-71; off: the bare headphone sink.
+                        Applied to the running session at once
   stereo-surround on|off
-                        on: the automatic default is the speaker virtual
-                        surround instead of the plain speaker chain (swaps
-                        their priorities; default off; restarts PipeWire)
+                        on: the automatic default on the speakers is the
+                        speaker virtual surround instead of the plain speaker
+                        chain (default off; restarts PipeWire)
   stereo-hrtf on|off
   speaker-surround on|off
                         no effect any more: streams follow the sink picked in
@@ -45,9 +49,10 @@ usage: $AX20_NAME audio-dsp <command>
                         used (the default sink), then the 7.1 channel sequence
                         through the speaker virtual surround
 
-Streams follow the default sink: Steam's "Default" (automatic) or the output
-picked there by hand ("X20 Speakers", "X20 Speakers (virtual surround)", "X20
-headphone surround 5.1/7.1", or the hardware outputs).
+Streams follow the default sink: Steam's "Default" (automatic, see above) or
+the output picked there by hand ("X20 Speakers", "X20 Speakers (virtual
+surround)", "X20 headphone surround 5.1/7.1", or the hardware outputs). A
+manual pick always wins.
 
 The user whose session is configured is \$SUDO_USER (or deck); override with
 AX20_AUDIO_USER / AX20_HOME. See docs/audio-dsp.md.
@@ -88,6 +93,10 @@ cmd_audio_dsp() {
         speakers-precedence)
             shift
             _audio_dsp_cmd_priority speakers-precedence speakers_precedence "$@"
+            ;;
+        headphones-virtual-surround)
+            shift
+            _audio_dsp_cmd_setting headphones-virtual-surround headphones_virtual_surround "$@"
             ;;
         xtc)
             shift
@@ -144,6 +153,7 @@ _audio_dsp_cmd_status() {
     printf 'speakers_precedence: %s (priority.session x20-speakers %s, x20-speakers-surround %s)\n' \
         "$(audio_dsp_setting_value speakers_precedence)" \
         "$(audio_dsp_priorities | cut -d' ' -f1)" "$(audio_dsp_priorities | cut -d' ' -f2)"
+    printf 'headphones_virtual_surround: %s\n' "$(audio_dsp_setting_value headphones_virtual_surround)"
     printf 'xtc:             %s\n' "$(audio_dsp_xtc_describe)"
     printf 'x20-speakers:    %s\n' "$(AX20_GAIN_CHAIN=speakers audio_dsp_gain_describe)"
     printf 'speaker surround: %s\n' "$(audio_dsp_gain_describe)"
@@ -227,15 +237,17 @@ _audio_dsp_cmd_priority() {
 # follow the default sink, so they are only recorded (audio-dsp.conf and
 # 51-x20-settings.conf) for compatibility.
 _audio_dsp_cmd_toggle() {
+    _audio_dsp_cmd_setting "$@" || return $?
+    log_warn "$1 no longer changes routing: streams follow the output picked in Steam"
+}
+
+# _audio_dsp_cmd_setting <command> <key> on|off : a WirePlumber setting:
+# persisted in audio-dsp.conf and 51-x20-settings.conf, and applied to the
+# running session with `wpctl settings` (x20-select-default-sink.lua
+# re-evaluates the default sink when its settings change).
+_audio_dsp_cmd_setting() {
     local cmd=$1 key=$2 v
-    case "${3:-}" in
-        on) v=1 ;;
-        off) v=0 ;;
-        *)
-            log_error "usage: $AX20_NAME audio-dsp $cmd on|off"
-            return 2
-            ;;
-    esac
+    v=$(_audio_dsp_on_off "$cmd" "${3:-}") || return 2
     require_root audio-dsp "$cmd" "$3"
     ax20_check_readonly_root
     audio_dsp_write_settings "$key=$v"
@@ -245,7 +257,6 @@ _audio_dsp_cmd_toggle() {
         _audio_dsp_live_setting "x20.$key" "$(_audio_dsp_bool "$v")"
     fi
     log_info "$cmd: $3"
-    log_warn "$cmd no longer changes routing: streams follow the output picked in Steam"
 }
 
 # _audio_dsp_live_setting <key> <true|false> : set a WirePlumber setting in
@@ -462,9 +473,9 @@ PY
     sleep 1
     _audio_dsp_links
     wait "$pid71" "$pid20" 2>/dev/null || true
-    printf '   expected: both streams -> the default sink (x20-speakers in auto mode without\n'
-    printf '             headphones, x20-speakers-surround with stereo-surround on, the jack or\n'
-    printf '             headset sink while one is available);\n'
+    printf '   expected: both streams -> the default sink (Steam on "Default": x20-speakers,\n'
+    printf '             or x20-speakers-surround with stereo-surround on; with headphones\n'
+    printf '             x20-virtual-surround-71; a manual pick in Steam wins);\n'
     printf '             x20-speakers.output -> the hardware Speaker sink;\n'
     printf '             x20-virtual-surround-*.output -> a headphone sink, or unlinked\n'
 

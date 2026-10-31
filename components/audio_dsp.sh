@@ -3,12 +3,13 @@
 # speaker virtual surround (binaural render + crosstalk cancellation)
 # (X20-STEAMOS-PLAN.md section 1.5). Required component, on by default.
 #
-# Streams follow the default sink. WirePlumber's automatic default is
-# x20-speakers (or x20-speakers-surround) through their priority while no
-# headphones are available; the user can pick any x20 sink by hand in Steam.
+# Streams follow the default sink. With Steam's output on "Default", the
+# x20-select-default-sink hook makes it x20-speakers (or
+# x20-speakers-surround) on the built-in speakers and x20-virtual-surround-71
+# on any headphones; a sink picked by hand in Steam always wins.
 # x20-speakers.output is pinned to the hardware speaker sink in its conf; the
-# WirePlumber hook only links the headphone surround outputs to an available
-# headphone sink (docs/audio-dsp.md, "Routing").
+# route-by-channels hook links the headphone surround outputs to an available
+# headphone sink (docs/audio-dsp.md, "Automatic output selection").
 #
 # Everything lives in the user's home (manifest slot "home"), so it survives
 # SteamOS updates untouched and never needs the read-only root:
@@ -20,7 +21,9 @@
 #   ~/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf
 #   ~/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf      (rendered)
 #   ~/.local/share/wireplumber/scripts/x20-route-by-channels.lua
+#   ~/.local/share/wireplumber/scripts/x20-select-default-sink.lua
 #   ~/.local/share/wireplumber/scripts/lib/x20-route-core.lua
+#   ~/.local/share/wireplumber/scripts/lib/x20-sink-facts.lua
 #   ~/.config/ally-x20-steamos/hrtf/<set>.sofa + current.sofa -> <set>.sofa
 #   ~/.config/ally-x20-steamos/audio-dsp.conf                          (settings)
 #
@@ -35,13 +38,16 @@
 #   stereo_hrtf=0|1   kept for compatibility; no effect since streams follow
 #                     the default sink (pick a headphone surround sink in Steam)
 #   speaker_surround=1|0  kept for compatibility; no effect (same reason)
-#   speakers_precedence=1|0  1 (default): x20-speakers and
+#   speakers_precedence=1|0  1 (default): the automatic default on the
+#                     speakers is our chain (hook), and x20-speakers and
 #                     x20-speakers-surround get priority 750/740, above the
-#                     hardware Speaker sink (712), so WirePlumber's automatic
-#                     default is the DSP chain; 0: both at 50 (manual only)
-#   stereo_surround=0|1   1 swaps the two priorities (surround 750, speakers
-#                     740): the automatic default is the speaker virtual
-#                     surround
+#                     hardware Speaker sink (712); 0: neither (both at 50,
+#                     manual pick only)
+#   stereo_surround=0|1   1: the automatic default on the speakers is
+#                     x20-speakers-surround (hook; also swaps the priorities
+#                     to surround 750, speakers 740)
+#   headphones_virtual_surround=1|0  1 (default): the automatic default on
+#                     headphones is x20-virtual-surround-71
 #   xtc_delay_us=<int>    crosstalk cancellation delay per tap (10..1000)
 #   xtc_attenuation_db=<num>  attenuation per tap in dB (0.5..30)
 #   xtc_taps=1..4         number of RACE taps
@@ -70,7 +76,7 @@ COMPONENT_DESCRIPTION="headphone virtual surround (HRTF) + speaker chain + speak
 AUDIO_DSP_COMPONENT=audio_dsp
 
 # Settings keys, in the order they are written to audio-dsp.conf.
-AUDIO_DSP_KEYS="enabled hrtf stereo_hrtf speaker_surround speakers_precedence stereo_surround xtc_delay_us xtc_attenuation_db xtc_taps lfe_cutoff_hz lfe_gain_db master_gain_db speakers_master_gain_db"
+AUDIO_DSP_KEYS="enabled hrtf stereo_hrtf speaker_surround speakers_precedence headphones_virtual_surround stereo_surround xtc_delay_us xtc_attenuation_db xtc_taps lfe_cutoff_hz lfe_gain_db master_gain_db speakers_master_gain_db"
 
 # priority.session of the two speaker sinks. Measured on the X20 (SteamOS
 # 3.9.5): hardware Speaker sink 712, headphone jack sink 1000; USB and
@@ -197,7 +203,7 @@ audio_dsp_setting_value() {
             audio_dsp_hrtf_current
             return 0
             ;;
-        enabled | speaker_surround | speakers_precedence)
+        enabled | speaker_surround | speakers_precedence | headphones_virtual_surround)
             v=$(audio_dsp_setting "$1" 1)
             case "$v" in 0 | 1) ;; *) v=1 ;; esac
             ;;
@@ -364,7 +370,9 @@ _audio_dsp_static_files() {
     printf 'home/pipewire/client.conf.d/50-x20-no-upmix.conf\t%s/.config/pipewire/client.conf.d/50-x20-no-upmix.conf\t0644\thome\n' "$h"
     printf 'home/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf\t%s/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf\t0644\thome\n' "$h"
     printf 'home/wireplumber/scripts/x20-route-by-channels.lua\t%s/.local/share/wireplumber/scripts/x20-route-by-channels.lua\t0644\thome\n' "$h"
+    printf 'home/wireplumber/scripts/x20-select-default-sink.lua\t%s/.local/share/wireplumber/scripts/x20-select-default-sink.lua\t0644\thome\n' "$h"
     printf 'home/wireplumber/scripts/lib/x20-route-core.lua\t%s/.local/share/wireplumber/scripts/lib/x20-route-core.lua\t0644\thome\n' "$h"
+    printf 'home/wireplumber/scripts/lib/x20-sink-facts.lua\t%s/.local/share/wireplumber/scripts/lib/x20-sink-facts.lua\t0644\thome\n' "$h"
 }
 
 audio_dsp_files() {
@@ -411,13 +419,17 @@ audio_dsp_write_settings() {
 _audio_dsp_bool() { if [ "$1" = 1 ]; then echo true; else echo false; fi; }
 
 # audio_dsp_render_wpsettings : WirePlumber settings fragment from the
-# current settings file (stereo_hrtf, speaker_surround, stereo_surround).
+# current settings file (read by x20-select-default-sink.lua; stereo_hrtf and
+# speaker_surround are kept for compatibility only).
 audio_dsp_render_wpsettings() {
     printf '%s\n' \
         "# SPDX-License-Identifier: GPL-2.0-only" \
-        "# Generated by $AX20_NAME (audio-dsp stereo-hrtf, speaker-surround," \
-        "# stereo-surround); do not edit. See 50-x20-route-by-channels.conf." \
+        "# Generated by $AX20_NAME (audio-dsp speakers-precedence," \
+        "# headphones-virtual-surround, stereo-surround); do not edit." \
+        "# See 50-x20-route-by-channels.conf." \
         "wireplumber.settings = {" \
+        "  x20.speakers_precedence = $(_audio_dsp_bool "$(audio_dsp_setting_value speakers_precedence)")" \
+        "  x20.headphones_virtual_surround = $(_audio_dsp_bool "$(audio_dsp_setting_value headphones_virtual_surround)")" \
         "  x20.stereo_hrtf = $(_audio_dsp_bool "$(audio_dsp_setting_value stereo_hrtf)")" \
         "  x20.speaker_surround = $(_audio_dsp_bool "$(audio_dsp_setting_value speaker_surround)")" \
         "  x20.stereo_surround = $(_audio_dsp_bool "$(audio_dsp_setting_value stereo_surround)")" \

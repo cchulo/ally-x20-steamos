@@ -7,7 +7,15 @@ The X20 BIOS publishes `acp-audio-config-flag = 0x10` (DMIC only) in a
 drivers honour it and skip SoundWire, so the TAS2783 amplifiers never probe.
 Windows ignores the flag.
 
-We give the kernel a corrected copy of the DSDT through the ACPI *table
+**Measured on the X20 (BIOS RC74XA.303, 2026-10-31): the flag is not in the
+DSDT.** It is in an SSDT with OEM ID `AMD` and OEM table ID `OEMACP`
+(`/sys/firmware/acpi/tables/SSDT8`, 136873 bytes), as a single
+`ByteConst 0x10` inside a `_DSD` package. The tooling scans `DSDT` and every
+`SSDT*` and patches whichever table carries the property; the kernel's table
+upgrade replaces a firmware table whose signature, OEM ID and OEM table ID
+match, so only that SSDT is swapped.
+
+We give the kernel a corrected copy of the table through the ACPI *table
 upgrade* mechanism: an uncompressed cpio placed first in the initrd chain,
 holding `kernel/firmware/acpi/DSDT.aml`. The kernel replaces a firmware table
 whose signature, OEM ID and OEM table ID match and whose OEM revision is
@@ -64,14 +72,15 @@ root, mtime is `$SOURCE_DATE_EPOCH` or 0, inode numbers are fixed.
 ## Interface for the `audio` component
 
 ```
-acpi/build-override.sh --out <dir> [--dsdt <file>] [--value N] [--all]
+acpi/build-override.sh --out <dir> [--table <file>] [--value N] [--all]   # --dsdt is an alias
 ```
 
-- Input: `--dsdt <file>` if given. Otherwise (Linux only) the live table at
-  `/sys/firmware/acpi/tables/DSDT`, which needs root. Paths under `/sys`
+- Input: `--table <file>` if given. Otherwise (Linux only) the live table
+  under `/sys/firmware/acpi/tables/` that carries the property (`DSDT`, then
+  `SSDT*` in order; on the X20 that is `SSDT8`), which needs root. Paths under `/sys`
   honour `AX20_ROOT` like the rest of the tool. If the live table is
-  byte-identical to `<dir>/DSDT.patched.aml`, our override is already
-  active, so the script rebuilds from the saved `<dir>/DSDT.orig.aml`
+  byte-identical to `<dir>/TABLE.patched.aml`, our override is already
+  active, so the script rebuilds from the saved `<dir>/TABLE.orig.aml`
   instead. It refuses with exit 5 if the BIOS version changed since that
   original was saved.
 - Pipeline: patch, verify, diff `--check-expected`, mkinitrd, list. The
@@ -80,9 +89,9 @@ acpi/build-override.sh --out <dir> [--dsdt <file>] [--value N] [--all]
 
   | file | content |
   |---|---|
-  | `ally-x20-steamos-acpi.img` | uncompressed newc cpio: `kernel/`, `kernel/firmware/`, `kernel/firmware/acpi/` (0755) and `kernel/firmware/acpi/DSDT.aml` (0644) |
-  | `DSDT.patched.aml` | the table inside the image |
-  | `DSDT.orig.aml` | the unpatched input |
+  | `ally-x20-steamos-acpi.img` | uncompressed newc cpio: `kernel/`, `kernel/firmware/`, `kernel/firmware/acpi/` (0755) and `kernel/firmware/acpi/<DSDT|SSDT>.aml` (0644) |
+  | `TABLE.patched.aml` | the table inside the image |
+  | `TABLE.orig.aml` | the unpatched input |
   | `BUILD-INFO` | `key=value` lines: `tool`, `tool_version`, `built_utc`, `input`, `input_sha256`, `patched_aml_sha256`, `output`, `output_sha256`, `flag_value_before`, `flag_value_after`, `oem_id`, `oem_table_id`, `oem_revision_before`, `oem_revision_after`, `bios_version` |
 
 - stdout: the last line is `<sha256>  <dir>/ally-x20-steamos-acpi.img`.
@@ -90,7 +99,7 @@ acpi/build-override.sh --out <dir> [--dsdt <file>] [--value N] [--all]
 - Exit codes: 0 built; 2 invalid input table; 3 no override needed (flag
   already at the target value, for example after a BIOS fix) or flag not
   patchable; 4 I/O error (no root for sysfs, missing file); 5 the saved
-  original is stale after a BIOS update; 64 usage (also when no `--dsdt` is
+  original is stale after a BIOS update; 64 usage (also when no `--table` is
   given on a non-Linux host).
 - Environment: `PYTHON` (default `python3`), `AX20_ROOT`,
   `SOURCE_DATE_EPOCH`.

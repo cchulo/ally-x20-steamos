@@ -3,14 +3,22 @@
 # acpi/build-override.sh — build the ACPI table-upgrade early initrd that
 # clears acp-audio-config-flag on the ROG Xbox Ally X20 (plan §1.1 item 1).
 #
-#   dump (Linux, unless --dsdt) -> patch -> verify -> diff -> mkinitrd
+#   find the table (Linux, unless --table) -> patch -> verify -> diff -> mkinitrd
 #
-# Usage: acpi/build-override.sh --out <dir> [--dsdt <file>] [--value N] [--all]
+# On the X20 the flag is NOT in the DSDT: it sits in an SSDT (OEM ID "AMD",
+# OEM table ID "OEMACP", /sys/firmware/acpi/tables/SSDT8 on BIOS 303). The
+# script therefore scans DSDT and every SSDT* for the property name and
+# patches whichever table carries it; the kernel's table upgrade matches the
+# replacement by signature + OEM ID + OEM table ID, so only that table is
+# replaced.
+#
+# Usage: acpi/build-override.sh --out <dir> [--table <file>] [--value N] [--all]
+#        (--dsdt <file> is accepted as an alias of --table)
 #
 # Writes into <dir>:
-#   ally-x20-steamos-acpi.img  uncompressed newc cpio, kernel/firmware/acpi/DSDT.aml
-#   DSDT.patched.aml           the patched table inside the image
-#   DSDT.orig.aml              the unpatched input (kept so a rebuild works
+#   ally-x20-steamos-acpi.img  uncompressed newc cpio, kernel/firmware/acpi/<SIG>.aml
+#   TABLE.patched.aml          the patched table inside the image
+#   TABLE.orig.aml             the unpatched input (kept so a rebuild works
 #                              while the override is active)
 #   BUILD-INFO                 key=value provenance (see acpi/README.md)
 # and prints "<sha256>  <image path>" as the last line of stdout.
@@ -20,7 +28,8 @@
 #
 # Exit codes: 0 built, 2 invalid table, 3 no override needed (the input
 # already has the flag at the target value) or flag not patchable,
-# 4 I/O error, 5 cached original is from another BIOS version, 64 usage.
+# 4 I/O error (no readable table), 5 cached original is from another BIOS
+# version, 64 usage.
 #
 # Paths under /sys honour AX20_ROOT (fixture root) like the rest of the tool.
 set -eu
@@ -77,6 +86,28 @@ info_get() {
     sed -n "s/^$2=//p" "$1" | head -n 1
 }
 
+# find_live_table : print the sysfs table (DSDT or SSDT*) that carries the
+# property; nothing printed when none does. A cheap substring grep narrows
+# the candidates, then the tool decides (an exact AML string, so a decoy
+# such as "acp-audio-config-flag-x" does not count). Unreadable files are
+# skipped (root is needed for /sys/firmware/acpi/tables).
+find_live_table() {
+    dir=$(root_path /sys/firmware/acpi/tables)
+    found=""
+    for t in "$dir/DSDT" "$dir"/SSDT*; do
+        [ -r "$t" ] || continue
+        LC_ALL=C grep -aq -- "acp-audio-config-flag" "$t" 2>/dev/null || continue
+        case "$(flag_state "$t")" in
+            0 | 1)
+                found=$t
+                break
+                ;;
+        esac
+    done
+    [ -n "$found" ] && printf '%s\n' "$found"
+    return 0
+}
+
 out=""
 dsdt=""
 value=0
@@ -88,7 +119,7 @@ while [ $# -gt 0 ]; do
             out=$2
             shift 2
             ;;
-        --dsdt)
+        --table | --dsdt)
             [ $# -ge 2 ] || usage
             dsdt=$2
             shift 2
@@ -111,8 +142,8 @@ command -v "$PYTHON" >/dev/null 2>&1 || die 4 "$PYTHON not found"
 mkdir -p "$out" || die 4 "cannot create $out"
 
 img="${out}/${IMG_NAME}"
-patched="${out}/DSDT.patched.aml"
-orig="${out}/DSDT.orig.aml"
+patched="${out}/TABLE.patched.aml"
+orig="${out}/TABLE.orig.aml"
 buildinfo="${out}/BUILD-INFO"
 tmp="${out}/.build-override.$$"
 mkdir "$tmp" || die 4 "cannot create $tmp"
@@ -135,11 +166,15 @@ if [ -n "$dsdt" ]; then
     source_desc="$dsdt"
 else
     if [ -z "${AX20_ROOT:-}" ] && [ "$(uname -s)" != "Linux" ]; then
-        die 64 "dumping the DSDT needs Linux; pass --dsdt <file> (see acpi/dump-dsdt.md)"
+        die 64 "reading the live ACPI tables needs Linux; pass --table <file> (see acpi/dump-dsdt.md)"
     fi
-    sysfs=$(root_path /sys/firmware/acpi/tables/DSDT)
+    tables_dir=$(root_path /sys/firmware/acpi/tables)
+    [ -r "$tables_dir/DSDT" ] || die 4 "cannot read $tables_dir/DSDT (run as root, or pass --table <file>)"
+    sysfs=$(find_live_table)
+    [ -n "$sysfs" ] || die 3 "acp-audio-config-flag not found in any table under $tables_dir (DSDT, SSDT*)"
     cat "$sysfs" >"$tmp/live.aml" 2>/dev/null \
-        || die 4 "cannot read $sysfs (run as root, or pass --dsdt <file>)"
+        || die 4 "cannot read $sysfs (run as root, or pass --table <file>)"
+    info "acp-audio-config-flag lives in $(basename "$sysfs")"
     st=$(flag_state "$tmp/live.aml")
     if [ "$st" = 0 ] && [ -f "$patched" ] && cmp -s "$tmp/live.aml" "$patched"; then
         # Our override is active, so sysfs shows our own table. Rebuild from
@@ -175,8 +210,8 @@ tool verify --value "$value" "$tmp/patched.aml" >&2 || die "$?" "patched table f
 tool diff --check-expected "$tmp/input.aml" "$tmp/patched.aml" >&2 \
     || die 2 "patched table differs outside the expected bytes"
 tool mkinitrd -o "$tmp/image.img" "$tmp/patched.aml" >&2 || die "$?" "mkinitrd failed"
-tool list "$tmp/image.img" | grep -q ' kernel/firmware/acpi/DSDT.aml$' \
-    || die 2 "image does not contain kernel/firmware/acpi/DSDT.aml"
+tool list "$tmp/image.img" | grep -Eq ' kernel/firmware/acpi/(DSDT|SSDT)\.aml$' \
+    || die 2 "image does not contain kernel/firmware/acpi/<DSDT|SSDT>.aml"
 after=$(flag_values "$tmp/patched.aml")
 
 in_sha=$(sha256_of "$tmp/input.aml")
@@ -193,6 +228,8 @@ img_sha=$(sha256_of "$tmp/image.img")
     echo "output_sha256=$img_sha"
     echo "flag_value_before=$before"
     echo "flag_value_after=$after"
+    echo "table_signature=$(json_field "$tmp/input.aml" 'r["header"]["signature"]')"
+    echo "table_source=$(basename "$source_desc" | cut -d' ' -f1)"
     echo "oem_id=$(json_field "$tmp/input.aml" 'r["header"]["oem_id"]')"
     echo "oem_table_id=$(json_field "$tmp/input.aml" 'r["header"]["oem_table_id"]')"
     echo "oem_revision_before=$(json_field "$tmp/input.aml" '"0x%08x" % r["header"]["oem_revision"]')"

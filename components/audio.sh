@@ -17,7 +17,7 @@
 #   /efi/EFI/steamos/ally-x20-steamos-acpi.img    early initrd (slot "esp")
 #
 # Interfaces used from other packages (all optional, guarded):
-#   $AX20_SRC/acpi/build-override.sh --out <dir> [--dsdt <file>]
+#   $AX20_SRC/acpi/build-override.sh --out <dir> [--table <file>]
 #       (override with AX20_ACPI_BUILD_TOOL); exit 3 = no override needed.
 #   slot_set_early_initrd <slot> <initrd-path>   from lib/slots.sh, called only
 #       if defined; <slot> is $AX20_SLOT or "active", <initrd-path> is the
@@ -52,11 +52,28 @@ AUDIO_ACPI_IMG_NAME=ally-x20-steamos-acpi.img
 AUDIO_ACPI_STATE_REL="${AX20_STATE_REL}/acpi"
 AUDIO_ESP_DIR_REL=/efi/EFI/steamos
 AUDIO_ESP_IMG_REL="${AUDIO_ESP_DIR_REL}/${AUDIO_ACPI_IMG_NAME}"
-AUDIO_DSDT_REL=/sys/firmware/acpi/tables/DSDT
+AUDIO_ACPI_TABLES_REL=/sys/firmware/acpi/tables
 AUDIO_ACPI_FLAG_NAME=acp-audio-config-flag
 AUDIO_CARDS_REL=/proc/asound/cards
 AUDIO_ACPI_TOOL="${AX20_ACPI_BUILD_TOOL:-$AX20_SRC/acpi/build-override.sh}"
-AUDIO_ACPI_FIXTURE_DSDT="${AX20_ACPI_FIXTURE_DSDT:-$AX20_SRC/acpi/fixtures/x20-dsdt.aml}"
+AUDIO_ACPI_FIXTURE_TABLE="${AX20_ACPI_FIXTURE_TABLE:-$AX20_SRC/acpi/fixtures/synthetic-dsdt.aml}"
+
+# _audio_acpi_live_table : the live table (DSDT or an SSDT) that carries
+# acp-audio-config-flag; on the X20 it is the AMD "OEMACP" SSDT, not the
+# DSDT. Prints the path; fails when none is readable (needs root) or none
+# carries the flag.
+_audio_acpi_live_table() {
+    local dir t
+    dir=$(ax20_path "$AUDIO_ACPI_TABLES_REL")
+    for t in "$dir/DSDT" "$dir"/SSDT*; do
+        [ -r "$t" ] || continue
+        if audio_dsdt_flag "$t" >/dev/null 2>&1; then
+            printf '%s\n' "$t"
+            return 0
+        fi
+    done
+    return 1
+}
 
 # ------------------------------------------------------------- contract --
 
@@ -152,18 +169,18 @@ EOF
 
 # acpi: the stock boot gets a SoundWire card although the BIOS flag says
 # "DMIC only" (kernel quirk landed), or the BIOS no longer sets the flag.
-# Only decidable on a live boot without our override: needs the live DSDT and
+# Only decidable on a live boot without our override: needs the live table and
 # /proc/asound/cards; while our override is active it reports unknown.
 audio_probe_acpi() {
-    local cards dsdt patched flag
+    local cards table patched flag
     cards=$(ax20_path "$AUDIO_CARDS_REL")
-    dsdt=$(ax20_path "$AUDIO_DSDT_REL")
-    [ -r "$cards" ] && [ -r "$dsdt" ] || return "$PROBE_UNKNOWN"
-    patched=$(ax20_path "$AUDIO_ACPI_STATE_REL/DSDT.patched.aml")
-    if [ -f "$patched" ] && cmp -s "$dsdt" "$patched"; then
+    [ -r "$cards" ] || return "$PROBE_UNKNOWN"
+    table=$(_audio_acpi_live_table) || return "$PROBE_UNKNOWN"
+    patched=$(ax20_path "$AUDIO_ACPI_STATE_REL/TABLE.patched.aml")
+    if [ -f "$patched" ] && cmp -s "$table" "$patched"; then
         return "$PROBE_UNKNOWN" # booted with our override: cannot tell
     fi
-    flag=$(audio_dsdt_flag "$dsdt") || return "$PROBE_UNKNOWN"
+    flag=$(audio_dsdt_flag "$table") || return "$PROBE_UNKNOWN"
     [ "$flag" = 0 ] && return "$PROBE_YES" # BIOS fixed
     if grep -Eq 'amdsoundwire|amd-soundwire|sof-soundwire' "$cards"; then
         return "$PROBE_YES"
@@ -174,8 +191,17 @@ audio_probe_acpi() {
 # audio_dsdt_flag <aml> : decimal value of acp-audio-config-flag in an AML
 # table (_DSD string followed by a ByteConst/ZeroOp/OneOp), or fail.
 audio_dsdt_flag() {
-    local off voff op val
-    off=$(LC_ALL=C grep -abo -- "$AUDIO_ACPI_FLAG_NAME" "$1" 2>/dev/null | head -n1 | cut -d: -f1)
+    local off voff op val nul
+    [ -f "$1" ] || return 1
+    # First occurrence that is an exact AML string (name followed by NUL), so
+    # a longer property name sharing the prefix is not mistaken for it.
+    off=""
+    for nul in $(LC_ALL=C grep -abo -- "$AUDIO_ACPI_FLAG_NAME" "$1" 2>/dev/null | cut -d: -f1); do
+        if [ "$(od -An -v -tu1 -j $((nul + ${#AUDIO_ACPI_FLAG_NAME})) -N1 "$1" | tr -d ' ')" = 0 ]; then
+            off=$nul
+            break
+        fi
+    done
     [ -n "$off" ] || return 1
     # name, NUL terminator, then the data object
     voff=$((off + ${#AUDIO_ACPI_FLAG_NAME} + 1))
@@ -379,7 +405,7 @@ _audio_fw_class_path_apply() {
 # ------------------------------------------------------------------ ACPI --
 
 _audio_acpi_apply() {
-    local board dsdt staging rc f esp args
+    local board staging rc f esp args
     board=$(cat "$(ax20_path /sys/class/dmi/id/board_name)" 2>/dev/null || true)
     if [ "$board" != "$AX20_BOARD" ]; then
         log_info "ACPI: board '${board:-unknown}' is not $AX20_BOARD; skipping the ACPI override"
@@ -389,16 +415,15 @@ _audio_acpi_apply() {
         log_info "ACPI: override tool or python3 not available; ACPI step pending"
         return 0
     fi
-    dsdt=$(ax20_path "$AUDIO_DSDT_REL")
     args=""
-    if ! [ -r "$dsdt" ]; then
+    if ! _audio_acpi_live_table >/dev/null; then
         # The repository fixture is only ever used against a fixture/VM root:
-        # loading another firmware revision's DSDT on real hardware could
-        # break the boot.
-        if [ -n "$AX20_ROOT" ] && [ -f "$AUDIO_ACPI_FIXTURE_DSDT" ]; then
-            args="--dsdt $AUDIO_ACPI_FIXTURE_DSDT"
+        # loading another firmware's table on real hardware could break the
+        # boot.
+        if [ -n "$AX20_ROOT" ] && [ -f "$AUDIO_ACPI_FIXTURE_TABLE" ]; then
+            args="--table $AUDIO_ACPI_FIXTURE_TABLE"
         else
-            log_info "ACPI: no DSDT available; ACPI step pending"
+            log_info "ACPI: no readable ACPI table carries $AUDIO_ACPI_FLAG_NAME (not root, or BIOS already fixed); ACPI step pending"
             return 0
         fi
     fi
@@ -412,12 +437,12 @@ _audio_acpi_apply() {
         return 0
     fi
     staging=$(mktemp -d "${TMPDIR:-/tmp}/ax20-acpi.XXXXXX") || return 0
-    # Seed the tool's cache (it rebuilds from DSDT.orig.aml while our
+    # Seed the tool's cache (it rebuilds from TABLE.orig.aml while our
     # override is active, and checks BUILD-INFO for BIOS changes).
-    for f in DSDT.orig.aml DSDT.patched.aml BUILD-INFO; do
+    for f in TABLE.orig.aml TABLE.patched.aml BUILD-INFO; do
         [ -f "$(ax20_path "$AUDIO_ACPI_STATE_REL/$f")" ] && cp "$(ax20_path "$AUDIO_ACPI_STATE_REL/$f")" "$staging/$f"
     done
-    # shellcheck disable=SC2086  # args is either empty or "--dsdt <path>"
+    # shellcheck disable=SC2086  # args is either empty or "--table <path>"
     AX20_ROOT="$AX20_ROOT" "$AUDIO_ACPI_TOOL" --out "$staging" $args >/dev/null
     rc=$?
     case "$rc" in
@@ -428,7 +453,7 @@ _audio_acpi_apply() {
             return 0
             ;;
         5)
-            log_warn "ACPI: the BIOS changed since the saved original DSDT was dumped; boot once without the override (uninstall the audio component or remove the early initrd from the boot entry), then apply again"
+            log_warn "ACPI: the BIOS changed since the saved original table was dumped; boot once without the override (uninstall the audio component or remove the early initrd from the boot entry), then apply again"
             rm -rf "$staging"
             return 0
             ;;
@@ -443,7 +468,7 @@ _audio_acpi_apply() {
         rm -rf "$staging"
         return 0
     fi
-    for f in "$AUDIO_ACPI_IMG_NAME" DSDT.patched.aml DSDT.orig.aml BUILD-INFO; do
+    for f in "$AUDIO_ACPI_IMG_NAME" TABLE.patched.aml TABLE.orig.aml BUILD-INFO; do
         [ -f "$staging/$f" ] || continue
         manifest_install_file "$staging/$f" "$AUDIO_ACPI_STATE_REL/$f" audio 0644 shared
     done
@@ -458,13 +483,14 @@ _audio_acpi_apply() {
     return 0
 }
 
-# _audio_acpi_current : the live DSDT is our patched table and the ESP image
+# _audio_acpi_current : the live table is our patched table and the ESP image
 # still verifies, so a rebuild would change nothing.
 _audio_acpi_current() {
-    local patched
-    patched=$(ax20_path "$AUDIO_ACPI_STATE_REL/DSDT.patched.aml")
+    local patched table
+    patched=$(ax20_path "$AUDIO_ACPI_STATE_REL/TABLE.patched.aml")
     [ -f "$patched" ] || return 1
-    cmp -s "$(ax20_path "$AUDIO_DSDT_REL")" "$patched" || return 1
+    table=$(_audio_acpi_live_table) || return 1
+    cmp -s "$table" "$patched" || return 1
     manifest_verify "$AUDIO_ESP_IMG_REL" >/dev/null 2>&1
 }
 

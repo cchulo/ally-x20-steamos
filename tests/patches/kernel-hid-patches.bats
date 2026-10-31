@@ -11,10 +11,10 @@ hid_patches() {
     ls "$PATCH_DIR"/001[0-9]-hid-asus-ally-*.patch 2>/dev/null
 }
 
-@test "the four hid-asus-ally patches exist" {
+@test "the five hid-asus-ally patches exist" {
     run hid_patches
     assert_success
-    [ "$(printf '%s\n' "$output" | grep -c .)" -eq 4 ] || {
+    [ "$(printf '%s\n' "$output" | grep -c .)" -eq 5 ] || {
         echo "$output"
         false
     }
@@ -98,7 +98,7 @@ hid_patches() {
             false
         }
     done <"$LIST"
-    [ "$n" -eq 4 ]
+    [ "$n" -eq 5 ]
 }
 
 @test "every hid-asus-ally patch is listed in modules-hid.list" {

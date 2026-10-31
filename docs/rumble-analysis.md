@@ -44,7 +44,7 @@ the stock-adapted variant, see [inputplumber.md](inputplumber.md)).
   value (101..127). What the MCU does with those values is not documented.
   If it wraps them modulo 100, 65535 → 127 → 27 %, which would match "100 %
   feels like 25 %" [inferred]. Draft fix:
-  [`patches/kernel/drafts/0014-…`](../patches/kernel/drafts/0014-hid-asus-ally-scale-rumble-and-vibration-intensity-to-0-100.patch).
+  [`patches/kernel/0014-…`](../patches/kernel/0014-hid-asus-ally-scale-rumble-and-vibration-intensity-to-0-100.patch).
 - **The hiss itself is still unexplained.** Since both paths reach the same
   kernel code, what differs between a game and the test is the *pattern*
   sent to the motors, not the report format. Top hypothesis: the motor
@@ -83,7 +83,7 @@ each one [inferred from the duration and loop fields; not documented].
 | implementation | report | transport | interface | strong/weak magnitude | trigger bytes 2-3 | enable | other |
 |---|---|---|---|---|---|---|---|
 | **Valve `hid-asus-ally` @ 7.2.7-valve2 (what runs now)** [source] | `0d 0f 00 00 SS WW ff 00 eb` | **SET_REPORT feature** (`hid_hw_raw_request(..., HID_FEATURE_REPORT, HID_REQ_SET_REPORT)`) | gamepad, EP `0x87` (interface 5) | **`magnitude / 512` → 0..127** (out of range above 78 %) | always 0 | `0x0f` | one report per `play_effect`, from a work item; no rate limit. Also sends the all-off report `0d 0f 00 00 00 00 ff 00 eb` to *both* interfaces at probe |
-| same, with draft patch 0014 | same | same | same | `DIV_ROUND_CLOSEST(m * 100, 0xffff)` → 0..100 | 0 | `0x0f` | |
+| same, with patch 0014 | same | same | same | `DIV_ROUND_CLOSEST(m * 100, 0xffff)` → 0..100 | 0 | `0x0f` | |
 | Valve before `142c7546` (May 2026, not in 7.2.7-valve2) | strong/weak also copied into bytes 2-3 | feature | 5 | /512 | = strong/weak | `0x0f` | Valve removed the copy: "effectively double rumble intensity" on the Xbox Ally X |
 | **InputPlumber 0.78.0 (stock SteamOS)** [source] | none: forwards `FF_RUMBLE` effects to the kernel evdev device | evdev | n/a | unchanged u16 (the kernel scales it) | n/a | n/a | the hidraw `RogAlly` source has an empty `SourceOutputDevice` impl |
 | **InputPlumber 0.83.0/0.83.1** (our fallback build; upstream since commit `dbcd6c06`) [source] | `0d 0f LT RT SS WW ff 00 eb` | **output report** (hidapi `write()` on hidraw) | interface 5, opened only when `board_name` is `RC73XA` or `RC74XA` | `round(m / 65535 * 100)`, clamped to 100 | Steam Deck trigger-haptic pulses and `TriggerVibrationExtended` (0..100) | `0x0f` | On those boards the evdev source reports **no** FF output capability, so the kernel path is not used to play effects. The report is written on every change, and every 10 ms for trigger pulse trains |
@@ -179,9 +179,9 @@ What the InputPlumber side can do today:
   filters *input* events. FF uploads go to every source device regardless
   [source].
 
-### 6b. Kernel side: magnitude scaling (draft patch 0014)
+### 6b. Kernel side: magnitude scaling (patch 0014)
 
-[`patches/kernel/drafts/0014-hid-asus-ally-scale-rumble-and-vibration-intensity-to-0-100.patch`](../patches/kernel/drafts/0014-hid-asus-ally-scale-rumble-and-vibration-intensity-to-0-100.patch)
+[`patches/kernel/0014-hid-asus-ally-scale-rumble-and-vibration-intensity-to-0-100.patch`](../patches/kernel/0014-hid-asus-ally-scale-rumble-and-vibration-intensity-to-0-100.patch)
 
 - `ally_x_play_effect()`: replace `/ 512` with
   `DIV_ROUND_CLOSEST(m * 100, 0xffff)` (0xffff → 100, 0x8000 → 50).
@@ -311,3 +311,21 @@ Please record the results in [hardware-data.md](hardware-data.md).
 - Web searches on 2026-10-31 for X20 / Ally X rumble, haptics and speaker
   noise found only ASUS forum threads about buzzing motors on the Ally X,
   for example `https://rog-forum.asus.com/t5/handheld-gaming/vibration-issue-sounding-like-a-bee/m-p/1036553`.
+
+## 7. Measured on the X20 (2026-10-31): root cause confirmed
+
+Raw reports written to the gamepad hidraw node with the speakers audible:
+
+| report | result |
+|---|---|
+| `0d 0f 00 00 7f 00 ff 00 eb` (strong 127) | no noise |
+| `0d 0f 00 00 00 64 ff 00 eb` (weak 100) | no noise |
+| `0d 0f 00 00 00 7f ff 00 eb` (weak 127) | **white noise from the speakers** |
+
+An out-of-range weak-motor magnitude (above the MCU's 0..100) makes the MCU
+emit noise through the speaker amps; in-range values are silent. The stock
+kernel path scales to 0..127, so every game that uses the weak motor above
+about 80 % triggers it. Patch 0014 (0..100 scaling) is therefore promoted
+from `drafts/` into the build. The earlier `rumble-test.py` never reproduced
+the noise because it packed `struct ff_effect` with the union at offset 14
+instead of 16, so the kernel only ever saw a strong-motor value.

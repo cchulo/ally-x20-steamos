@@ -17,100 +17,148 @@ local function check (name, got, want)
   end
 end
 
--- 1. Table-driven decide() cases from the fixture file.
-local function split (s)
+local function split (s, pattern)
   local t = {}
-  for w in s:gmatch ("%S+") do
+  for w in s:gmatch (pattern) do
     t[#t + 1] = w
   end
   return t
 end
+
+-- Route shorthands used in the fixture file.
+local ROUTES = {
+  hp = { name = "[Out] Headphones" },
+  spk = { name = "[Out] Speaker" },
+  acphp = { name = "analog-output-headphones", description = "Headphones" },
+  hdmi = { name = "hdmi-output-0", description = "HDMI / DisplayPort" },
+}
+
+-- name:priority:form-factor:route:available -> sink table
+local function parse_sink (spec)
+  local f = split (spec, "[^:]+")
+  assert (#f == 5, "bad sink spec: " .. spec)
+  local sink = { name = f[1], priority = tonumber (f[2]), routes = {} }
+  if f[3] ~= "-" then
+    sink.form_factor = f[3]
+  end
+  if f[4] ~= "-" then
+    local r = assert (ROUTES[f[4]], "unknown route shorthand " .. f[4])
+    sink.routes[1] = { name = r.name, description = r.description,
+      direction = "Output", available = f[5] }
+  end
+  return sink
+end
+
+-- 1. Table-driven decide () cases from the fixture file.
 local fixture = root .. "/tests/fixtures/audio_dsp/routing-cases.txt"
 local fh = assert (io.open (fixture, "r"))
+local cases = 0
 for line in fh:lines () do
   if line:match ("%S") and not line:match ("^%s*#") then
-    local f = split (line)
-    assert (#f == 13, "bad fixture line: " .. line)
-    local available = {}
-    for n in f[12]:gmatch ("[^,]+") do
-      available[n] = true
+    local f = split (line, "%S+")
+    assert (#f == 6, "bad fixture line: " .. line)
+    local sinks = {}
+    if f[5] ~= "-" then
+      for spec in f[5]:gmatch ("[^,]+") do
+        sinks[#sinks + 1] = parse_sink (spec)
+      end
     end
-    local stream = {
-      media_class = f[2],
-      node_name = f[3],
-      channels = (f[4] ~= "-") and f[4] or nil,
-      explicit_target = f[5] == "yes",
-      link_group = (f[6] ~= "-") and f[6] or nil,
-    }
-    local env = {
-      enabled = true,
-      output = f[7],
-      stereo_hrtf = f[8] == "yes",
-      speaker_surround = f[9] == "yes",
-      stereo_surround = f[10] == "yes",
-      default_is_x20 = f[11] == "yes",
-      hardware_sink = "alsa_output.hw",
-      available = available,
-    }
-    local got = core.decide (stream, env)
-    check ("decide/" .. f[1], tostring (got), f[13])
+    local got = core.decide (
+      { media_class = "Stream/Output/Audio", node_name = f[2], explicit_target = f[3] == "yes" },
+      { sinks = sinks, default_name = (f[4] ~= "-") and f[4] or nil })
+    if got == core.UNLINKED then
+      got = "unlinked"
+    end
+    check ("decide/" .. f[1], tostring (got), f[6])
+    cases = cases + 1
   end
 end
 fh:close ()
+check ("fixture has cases", cases > 10, true)
 
--- 2. Disabled and encoded streams are never touched.
-check ("decide/disabled", core.decide ({ media_class = "Stream/Output/Audio", channels = 8 },
-  { enabled = false, output = "headphones", available = { [core.SINK_71] = true } }), nil)
-check ("decide/encoded", core.decide ({ media_class = "Stream/Output/Audio", channels = 2, encoded = true },
-  { enabled = true, output = "speakers", available = { [core.SINK_SPEAKERS] = true } }), nil)
--- speaker_surround defaults to on when the setting is absent (nil).
-check ("decide/speaker-surround-default-on", core.decide ({ media_class = "Stream/Output/Audio", channels = 6 },
-  { enabled = true, output = "speakers", hardware_sink = "alsa_output.hw",
-    available = { [core.SINK_SPEAKERS] = true, [core.SINK_SPEAKERS_SURROUND] = true } }), core.SINK_SPEAKERS_SURROUND)
-check ("decide/no-hardware-known", core.decide ({ media_class = "Stream/Output/Audio", channels = 2 },
-  { enabled = true, output = "headphones", available = {} }), nil)
-
--- 3. Channel count normalisation (property strings and parsed SPA pods).
-check ("channels/string", core.channel_count ("6"), 6)
-check ("channels/number", core.channel_count (8), 8)
-check ("channels/choice", core.channel_count ({ 2, 1, 64 }), 2)
-check ("channels/choice-default", core.channel_count ({ default = 6 }), 6)
-check ("channels/zero", core.channel_count (0), nil)
-check ("channels/nil", core.channel_count (nil), nil)
-check ("channels/garbage", core.channel_count ("x"), nil)
-
--- 4. Output classification (jack detection through route availability).
-local hp = { name = "[Out] Headphones", direction = "Output", available = "yes" }
-local hp_unplugged = { name = "[Out] Headphones", direction = "Output", available = "no" }
-local spk = { name = "[Out] Speaker", direction = "Output", available = "unknown" }
-local acp_hp = { name = "analog-output-headphones", description = "Headphones", direction = "Output", available = "yes" }
-local hdmi = { name = "hdmi-output-0", description = "HDMI / DisplayPort", direction = "Output", available = "yes" }
-check ("classify/ucm-headphones", core.classify_output ({}, { hp }), "headphones")
-check ("classify/acp-headphones", core.classify_output ({}, { acp_hp }), "headphones")
-check ("classify/unplugged-then-speaker", core.classify_output ({}, { hp_unplugged, spk }), "speakers")
-check ("classify/speaker-only", core.classify_output ({}, { spk }), "speakers")
-check ("classify/hdmi", core.classify_output ({}, { hdmi }), "other")
-check ("classify/bt-headset", core.classify_output ({ form_factor = "headset" }, {}), "headphones")
-check ("classify/usb-headphone", core.classify_output ({ form_factor = "headphone" }, { hdmi }), "headphones")
-check ("classify/internal-no-routes", core.classify_output ({ form_factor = "internal" }, {}), "speakers")
-check ("classify/nothing", core.classify_output (nil, nil), "other")
-check ("classify/input-route-ignored", core.classify_output ({}, { { name = "[In] Headset Mic", direction = "Input", available = "yes" } }), "other")
-check ("classify/port-type", core.classify_output ({}, { { name = "out-1", port_type = "headphones", available = "yes" } }), "headphones")
-
--- 5. Hardware sink selection.
-local sinks = {
-  { name = "x20-virtual-surround-71", priority = 50 },
-  { name = "alsa_output.hdmi", priority = 600 },
-  { name = "alsa_output.internal", priority = 1000 },
+-- 2. Table-driven decide_default () cases (automatic default sink).
+local NAMES = {
+  spk = core.X20_SPEAKER_SINK,
+  jack = "alsa_output.pci-0000_64_00.5-platform-amd_sdw.HiFi__Headphones__sink",
 }
-check ("hw/default-hardware", core.pick_hardware_sink (sinks, "alsa_output.hdmi"), "alsa_output.hdmi")
-check ("hw/default-is-x20", core.pick_hardware_sink (sinks, "x20-speakers"), "alsa_output.internal")
-check ("hw/no-default", core.pick_hardware_sink (sinks, nil), "alsa_output.internal")
-check ("hw/only-x20", core.pick_hardware_sink ({ { name = "x20-speakers" } }, nil), nil)
+local ALL_X20 = { core.SINK_SPEAKERS, core.SINK_SPEAKERS_SURROUND, core.SINK_71, core.SINK_51 }
+fh = assert (io.open (root .. "/tests/fixtures/audio_dsp/default-cases.txt", "r"))
+local dcases = 0
+for line in fh:lines () do
+  if line:match ("%S") and not line:match ("^%s*#") then
+    local f = split (line, "%S+")
+    assert (#f == 12, "bad default fixture line: " .. line)
+    local name = NAMES[f[2]] or f[2]
+    local sink = { name = name, routes = {} }
+    if f[4] ~= "-" then
+      sink.form_factor = f[4]
+    end
+    if f[5] ~= "-" then
+      local r = assert (ROUTES[f[5]], "unknown route shorthand " .. f[5])
+      sink.routes[1] = { name = r.name, description = r.description,
+        direction = "Output", available = f[6] }
+    end
+    if f[7] ~= "-" then
+      sink.api = f[7]
+    end
+    local available = { [NAMES.spk] = true, [NAMES.jack] = true, [name] = true }
+    local present = (f[11] == "all") and ALL_X20 or split (f[11], "[^,]+")
+    for _, n in ipairs (present) do
+      available[n] = true
+    end
+    local got = core.decide_default (
+      { name = name, priority = tonumber (f[3]), sink = sink },
+      { speakers_precedence = f[8] == "yes", headphones_virtual_surround = f[9] == "yes",
+        stereo_surround = f[10] == "yes", available = available })
+    check ("default/" .. f[1], tostring (got), f[12])
+    dcases = dcases + 1
+  end
+end
+fh:close ()
+check ("default fixture has cases", dcases > 10, true)
+check ("default/nothing-selected", core.decide_default (nil, nil), nil)
+-- precedence and headphone settings default to on when absent (nil)
+check ("default/settings-absent-speakers", core.decide_default (
+  { name = core.X20_SPEAKER_SINK, priority = 712 },
+  { available = { [core.SINK_SPEAKERS] = true } }), core.SINK_SPEAKERS)
+check ("default/settings-absent-headphones", core.decide_default (
+  { name = "bluez_output.x", priority = 1010, sink = { name = "bluez_output.x", api = "bluez5" } },
+  { available = { [core.SINK_71] = true } }), core.SINK_71)
 
--- 6. Helpers.
+-- 3. Non-playback streams are never touched.
+check ("decide/capture", core.decide ({ media_class = "Stream/Input/Audio", node_name = "x20-virtual-surround-71.output" },
+  { sinks = { parse_sink ("jack:1000:-:hp:yes") } }), nil)
+check ("decide/empty", core.decide (nil, nil), nil)
+
+-- 4. Headphone and speaker sink classification (jack detection through availability).
+check ("hp/ucm-available", core.is_headphone_sink (parse_sink ("j:1:-:hp:yes")), true)
+check ("hp/ucm-unavailable", core.is_headphone_sink (parse_sink ("j:1:-:hp:no")), false)
+check ("hp/speaker", core.is_headphone_sink (parse_sink ("s:1:-:spk:yes")), false)
+check ("hp/hdmi", core.is_headphone_sink (parse_sink ("h:1:-:hdmi:yes")), false)
+check ("hp/acp", core.is_headphone_sink (parse_sink ("c:1:-:acphp:yes")), true)
+check ("hp/internal-ff", core.is_headphone_sink (parse_sink ("i:1:internal:-:-")), false)
+check ("hp/x20-name", core.is_headphone_sink (parse_sink ("x20-speakers:1:headset:hp:yes")), false)
+check ("hp/input-route-ignored", core.is_headphone_sink ({ name = "a",
+  routes = { { name = "[In] Headset Mic", direction = "Input", available = "yes" } } }), false)
+check ("hp/port-type", core.is_headphone_sink ({ name = "a",
+  routes = { { name = "out-1", port_type = "headphones", available = "yes" } } }), true)
+check ("hp/speaker-and-headphone-words", core.is_headphone_sink ({ name = "a",
+  routes = { { name = "Speaker + Headphones", available = "yes" } } }), false)
+check ("hp/nil", core.is_headphone_sink (nil), false)
+check ("hp/bluez5", core.is_headphone_sink ({ name = "bluez_output.a", api = "bluez5" }), true)
+check ("hp/bluez5-speaker", core.is_headphone_sink ({ name = "bluez_output.a", api = "bluez5", form_factor = "speaker" }), false)
+check ("spk/x20-speaker-sink", core.is_speaker_sink ({ name = core.X20_SPEAKER_SINK }), true)
+check ("spk/route", core.is_speaker_sink (parse_sink ("s:1:-:spk:unknown")), true)
+check ("spk/route-unavailable", core.is_speaker_sink (parse_sink ("s:1:-:spk:no")), false)
+check ("spk/headphone-route", core.is_speaker_sink (parse_sink ("j:1:-:hp:yes")), false)
+check ("spk/x20", core.is_speaker_sink ({ name = "x20-speakers" }), false)
+check ("spk/hdmi", core.is_speaker_sink (parse_sink ("h:1:-:hdmi:yes")), false)
+
+-- 5. Helpers.
 check ("x20-name", core.is_x20_name ("x20-speakers"), true)
 check ("x20-name/other", core.is_x20_name ("alsa_output.x20"), false)
+check ("hp-output-name/71", core.is_headphone_output_name ("x20-virtual-surround-71.output"), true)
+check ("hp-output-name/speakers", core.is_headphone_output_name ("x20-speakers.output"), false)
 check ("truthy/true-string", core.truthy ("true"), true)
 check ("truthy/zero", core.truthy ("0"), false)
 

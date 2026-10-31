@@ -179,7 +179,7 @@ spkconf="$H/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf"
     settings | grep -qx 'stereo_hrtf=1'
     wpset | grep -q 'x20.speaker_surround = false'
     wpset | grep -q 'x20.stereo_hrtf = true'
-    # the sink stays installed: the switch is routing-only
+    # the sink stays installed: the switch no longer changes routing
     [ -f "$AX20_ROOT$spkconf" ]
     run ax audio-dsp speaker-surround on
     assert_success
@@ -345,4 +345,88 @@ chainconf="$H/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf"
     run ax audio-dsp status
     assert_output_contains "x20-speakers:    lfe 120 Hz -6 dB"
     assert_output_contains "speaker surround: lfe 120 Hz -6 dB; worst case of the speaker path"
+}
+
+prio_of() { sed -n 's/^ *priority.session = //p' "$AX20_ROOT$1" | head -n1; }
+
+@test "speakers-precedence off|on re-renders the speaker sink priorities; status shows it" {
+    ax audio-dsp on
+    [ "$(prio_of "$chainconf")" = 750 ]
+    [ "$(prio_of "$spkconf")" = 740 ]
+    run ax audio-dsp status
+    assert_output_contains "speakers_precedence: 1 (priority.session x20-speakers 750, x20-speakers-surround 740)"
+    run ax audio-dsp speakers-precedence off
+    assert_success
+    settings | grep -qx 'speakers_precedence=0'
+    [ "$(prio_of "$chainconf")" = 50 ]
+    [ "$(prio_of "$spkconf")" = 50 ]
+    run ax audio-dsp status
+    assert_output_contains "speakers_precedence: 0 (priority.session x20-speakers 50, x20-speakers-surround 50)"
+    # survives a re-apply
+    ax audio-dsp on
+    [ "$(prio_of "$chainconf")" = 50 ]
+    run ax audio-dsp speakers-precedence on
+    assert_success
+    [ "$(prio_of "$chainconf")" = 750 ]
+    run ax audio-dsp speakers-precedence sometimes
+    assert_failure 2
+}
+
+@test "stereo-surround on swaps the priorities: the surround sink becomes the automatic default" {
+    ax audio-dsp on
+    run ax audio-dsp stereo-surround on
+    assert_success
+    [ "$(prio_of "$chainconf")" = 740 ]
+    [ "$(prio_of "$spkconf")" = 750 ]
+    run ax audio-dsp stereo-surround off
+    [ "$(prio_of "$chainconf")" = 750 ]
+    [ "$(prio_of "$spkconf")" = 740 ]
+}
+
+@test "speakers-precedence while off only records the choice" {
+    ax audio-dsp on
+    ax audio-dsp off
+    run ax audio-dsp speakers-precedence off
+    assert_success
+    [ ! -e "$AX20_ROOT$chainconf" ]
+    settings | grep -qx 'speakers_precedence=0'
+    ax audio-dsp on
+    [ "$(prio_of "$chainconf")" = 50 ]
+}
+
+@test "stereo-hrtf and speaker-surround are recorded but say they no longer route" {
+    ax audio-dsp on
+    run ax audio-dsp stereo-hrtf on
+    assert_success
+    assert_output_contains "no longer changes routing"
+    run ax audio-dsp speaker-surround off
+    assert_success
+    assert_output_contains "no longer changes routing"
+}
+
+@test "headphones-virtual-surround off|on: persisted and rendered for the default-sink hook" {
+    ax audio-dsp on
+    settings | grep -qx 'headphones_virtual_surround=1'
+    wpset | grep -q 'x20.headphones_virtual_surround = true'
+    run ax audio-dsp headphones-virtual-surround off
+    assert_success
+    settings | grep -qx 'headphones_virtual_surround=0'
+    wpset | grep -q 'x20.headphones_virtual_surround = false'
+    run ax audio-dsp status
+    assert_output_contains "headphones_virtual_surround: 0"
+    # survives a re-apply
+    ax audio-dsp on
+    wpset | grep -q 'x20.headphones_virtual_surround = false'
+    run ax audio-dsp headphones-virtual-surround on
+    assert_success
+    wpset | grep -q 'x20.headphones_virtual_surround = true'
+    run ax audio-dsp headphones-virtual-surround maybe
+    assert_failure 2
+}
+
+@test "speakers-precedence is rendered for the default-sink hook too" {
+    ax audio-dsp on
+    wpset | grep -q 'x20.speakers_precedence = true'
+    ax audio-dsp speakers-precedence off
+    wpset | grep -q 'x20.speakers_precedence = false'
 }

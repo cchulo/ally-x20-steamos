@@ -9,7 +9,7 @@
 #   measure-speaker-chain.sh [run] [--point hw|speakers|surround|NODE]
 #                            [--sink NODE] [--seconds N] [--out DIR]
 #                            [--method pw|parec]
-#       Generate the worst-case 7.1 test file, play it (through the router,
+#       Generate the worst-case 7.1 test file, play it (on the default sink,
 #       or into --sink), record the measurement point while it plays, print
 #       peak dBFS and the share of clipped samples.
 #   measure-speaker-chain.sh generate <out.wav> [seconds-per-segment]

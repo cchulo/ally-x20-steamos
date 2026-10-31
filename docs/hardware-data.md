@@ -25,6 +25,6 @@ marked `TODO(hw)`.
 | Both amps audible, left/right correct with the 0001 layout | `patches/kernel/0001` | pending |
 | No `SDW0-PIN4-CAPTURE-SmartAmp` PCM and no `Program transport params failed` in `journalctl -k`; `Amp Volume` change survives the sink suspending; card comes up with the tuning loaded synchronously | `patches/kernel/0003`–`0006` | pending |
 | `SND_SOC_ACPI_AMD_MATCH`, `SND_AMD_ACP_CONFIG`, `SND_SOC_ACPI_AMD_SDCA_QUIRKS` in `/proc/config.gz`; `snd-acp-config` in initramfs or not | module build / substitution | pending |
-| UCM route names for jack/speaker (`pw-dump` device `Route` params) and whether unplug sets `available = no` | audio DSP router (`x20-route-core.lua`) | pending |
+| UCM route names for jack/speaker (`pw-dump` device `Route` params) and whether unplug sets `available = no` | audio DSP headphone-output hook (`x20-route-core.lua`), speaker sink pin | **measured 2026-10-31**: `[Out] Headphones` (sink `...HiFi__Headphones__sink`, priority.session 1000, `not available` when unplugged) and `[Out] Speaker` (sink `...HiFi__Speaker__sink`, 712) |
 | WirePlumber profile in use (`systemctl --user cat wireplumber`) | audio DSP loader fragment | pending |
 | Speaker positions/orientation on the chassis | XTC stretch goal (`docs/xtc-notes.md`) | pending |

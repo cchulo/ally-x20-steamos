@@ -1,65 +1,34 @@
 -- SPDX-License-Identifier: GPL-2.0-only
--- ally-x20-steamos: per-stream routing by channel count (WirePlumber 0.5).
+-- ally-x20-steamos: link target for the headphone surround outputs
+-- (WirePlumber 0.5).
 --
 -- Installed into ~/.local/share/wireplumber/scripts/ (WirePlumber 0.5 looks
 -- for scripts under $XDG_DATA_HOME/wireplumber/scripts, not ~/.config) and
 -- loaded by ~/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf.
+-- The file name is historical: the script no longer routes application
+-- streams by channel count. They follow the default sink the user picks in
+-- Steam.
 --
 -- This file is thin glue: it collects facts from the graph and hands them to
 -- the pure decision function in lib/x20-route-core.lua (unit-tested without
--- WirePlumber, see tests/lua/).
+-- WirePlumber, see tests/lua/), which has the policy.
 --
 -- Mechanism: WirePlumber 0.5 picks a link target for every stream through a
 -- chain of hooks on the "select-target" event (linking/find-*-target.lua).
 -- Each hook returns early when an earlier one already chose a target. This
--- hook runs after the hooks that honour explicit targets (target.object /
--- node.target properties and the "default" metadata used by pavucontrol,
--- Steam and `wpctl`), smart filters and role-based policy, and before the
--- default-sink fallback. It therefore never overrides a user or application
--- choice. Re-routing on headphone plug/unplug needs no code here: the
--- standard linking/rescan-trigger hook rescans on device Route changes, which
--- re-runs select-target for every stream.
+-- hook runs after the hooks that honour explicit targets (target.object in
+-- our confs, the "default" metadata used by pavucontrol, Steam and `wpctl`),
+-- smart filters and role-based policy, and before the default-sink and
+-- best-sink fallbacks. Re-evaluation on headphone plug/unplug needs no code
+-- here: the standard linking/rescan-trigger hook rescans on device Route
+-- changes and on nodes being added or removed, which re-runs select-target
+-- for every stream.
 
 local core = require ("x20-route-core")
+local facts = require ("x20-sink-facts")
 local lutils = require ("linking-utils")
 local cutils = require ("common-utils")
 local log = Log.open_topic ("s-linking.x20")
-
-local function setting_bool (key, default)
-  local ok, value = pcall (Settings.get_boolean, key)
-  if ok and value ~= nil then
-    return value
-  end
-  return default
-end
-
--- Channel count of a stream: the audio.channels property when present
--- (rare for clients), otherwise the widest raw EnumFormat the client offers,
--- the same rule si-audio-adapter uses to configure the stream.
-local function stream_channels (si, si_props)
-  local n = core.channel_count (si_props ["audio.channels"])
-  if n then
-    return n
-  end
-  local node = si:get_associated_proxy ("node")
-  if not node then
-    return nil
-  end
-  local best = nil
-  pcall (function ()
-    for p in node:iterate_params ("EnumFormat") do
-      local parsed = p:parse ()
-      local props = parsed and parsed.properties
-      if props and props.mediaType == "audio" and props.mediaSubtype == "raw" then
-        local c = core.channel_count (props.channels)
-        if c and (best == nil or c > best) then
-          best = c
-        end
-      end
-    end
-  end)
-  return best
-end
 
 local function has_explicit_target (si_props)
   if si_props ["target.object"] ~= nil or si_props ["node.target"] ~= nil then
@@ -75,17 +44,14 @@ local function has_explicit_target (si_props)
   return false
 end
 
--- Sink media classes we route to. x20-speakers-surround uses
--- "Audio/Sink/Internal" so that pipewire-pulse (which only lists nodes whose
--- class is exactly "Audio/Sink") keeps it out of every device picker;
--- WirePlumber still creates a linkable item for any "Audio/*" node.
+-- Sink media classes we consider. Every x20 sink is a plain Audio/Sink
+-- (WirePlumber 0.5 cannot link streams into Audio/Sink/Internal).
 local SINK_CLASSES = "Audio/Sink*"
 
--- All audio sinks known to the session, plus the default sink's name.
-local function sinks_and_default (om, si_props)
-  local sinks = {}
-  local by_id = {}
-  local available = {}
+-- Every audio sink as a plain table for the core, the linkable items by
+-- name, and the default sink's name.
+local function collect_sinks (om, si_props)
+  local sinks, by_name, by_id = {}, {}, {}
   for item in om:iterate {
     type = "SiLinkable",
     Constraint { "media.class", "#", SINK_CLASSES },
@@ -93,9 +59,9 @@ local function sinks_and_default (om, si_props)
     local p = item.properties
     local name = p ["node.name"]
     if name then
-      table.insert (sinks, { name = name, priority = tonumber (p ["priority.session"]) or 0 })
+      table.insert (sinks, facts.sink (p))
+      by_name [name] = item
       by_id [tostring (p ["node.id"])] = item
-      available [name] = true
     end
   end
   local default_name = nil
@@ -103,57 +69,7 @@ local function sinks_and_default (om, si_props)
   if ok and def_id and by_id [tostring (def_id)] then
     default_name = by_id [tostring (def_id)].properties ["node.name"]
   end
-  return sinks, available, default_name
-end
-
--- Active output routes of the device behind a sink node.
-local function active_routes (target)
-  local routes = {}
-  local p = target.properties
-  local device_id = p ["device.id"]
-  if not device_id then
-    return routes
-  end
-  local device = cutils.get_object_manager ("device"):lookup {
-    Constraint { "bound-id", "=", device_id, type = "gobject" },
-  }
-  if not device then
-    return routes
-  end
-  local card_dev = tonumber (p ["card.profile.device"])
-  for param in device:iterate_params ("Route") do
-    local r = cutils.parseParam (param, "Route")
-    if r and (card_dev == nil or r.device == nil or r.device == card_dev) then
-      local port_type = nil
-      if type (r.info) == "table" then
-        -- info is a flat key/value list: { n, k1, v1, k2, v2, ... }
-        for i = 1, #r.info - 1 do
-          if r.info [i] == "port.type" then
-            port_type = r.info [i + 1]
-          end
-        end
-      end
-      table.insert (routes, {
-        name = r.name,
-        description = r.description,
-        available = r.available,
-        direction = r.direction,
-        port_type = port_type,
-      })
-    end
-  end
-  return routes
-end
-
-local function lookup_sink (om, name)
-  if not name then
-    return nil
-  end
-  return om:lookup {
-    type = "SiLinkable",
-    Constraint { "node.name", "=", name },
-    Constraint { "media.class", "#", SINK_CLASSES },
-  }
+  return sinks, by_name, default_name
 end
 
 SimpleEventHook {
@@ -179,41 +95,20 @@ SimpleEventHook {
       return
     end
 
-    local sinks, available, default_name = sinks_and_default (om, si_props)
-    local hardware_name = core.pick_hardware_sink (sinks, default_name)
-    local hardware = lookup_sink (om, hardware_name)
-
-    local output = "other"
-    if hardware then
-      local hp = hardware.properties
-      output = core.classify_output ({
-        form_factor = hp ["device.form-factor"],
-        bus = hp ["device.bus"],
-        name = hp ["node.name"],
-      }, active_routes (hardware))
-    end
-
     local stream = {
       media_class = si_props ["media.class"],
       node_name = si_props ["node.name"],
-      channels = nil,
       explicit_target = has_explicit_target (si_props),
-      link_group = si_props ["node.link-group"],
-      encoded = cutils.parseBool (si_props ["item.node.encoded-only"]),
     }
-    if stream.media_class == "Stream/Output/Audio" then
-      stream.channels = stream_channels (si, si_props)
+    -- Cheap exit for everything that is not one of our filter outputs.
+    if not core.is_x20_name (stream.node_name) then
+      return
     end
 
+    local sinks, by_name, default_name = collect_sinks (om, si_props)
     local name, reason = core.decide (stream, {
-      enabled = true,
-      stereo_hrtf = setting_bool ("x20.stereo_hrtf", false),
-      speaker_surround = setting_bool ("x20.speaker_surround", true),
-      stereo_surround = setting_bool ("x20.stereo_surround", false),
-      output = output,
-      hardware_sink = hardware_name,
-      default_is_x20 = core.is_x20_name (default_name),
-      available = available,
+      sinks = sinks,
+      default_name = default_name,
     })
 
     if not name then
@@ -222,14 +117,26 @@ SimpleEventHook {
       return
     end
 
-    local t = lookup_sink (om, name)
+    if name == core.UNLINKED then
+      -- Like node.dont-fallback with linger: wait unlinked instead of
+      -- letting find-default-target/find-best-target pick a sink. The next
+      -- rescan (headphones plugged in, a headset connecting) links it.
+      log:info (si, string.format ("x20: %s stays unlinked: %s",
+          tostring (si_props ["node.name"]), reason))
+      event:stop_processing ()
+      return
+    end
+
+    local t = by_name [name]
     if not t or not lutils.canLink (si_props, t) then
-      log:info (si, string.format ("x20: cannot link %s to %s",
+      log:info (si, string.format ("x20: cannot link %s to %s; staying unlinked",
           tostring (si_props ["node.name"]), name))
+      event:stop_processing ()
       return
     end
     local compatible, can_passthrough = lutils.checkPassthroughCompatibility (si, t)
     if not compatible then
+      event:stop_processing ()
       return
     end
 
@@ -239,17 +146,3 @@ SimpleEventHook {
     event:set_data ("target", t)
   end
 }:register ()
-
--- Re-evaluate every stream when a routing toggle changes at runtime
--- (`wpctl settings x20.speaker_surround false`, which is what
--- `ally-x20-steamos audio-dsp speaker-surround off` does on a live system):
--- playing streams move to the new sink without restarting anything.
-local function rescan ()
-  local source = Plugin.find ("standard-event-source")
-  if source then
-    source:call ("schedule-rescan", "linking")
-  end
-end
-for _, key in ipairs ({ "x20.stereo_hrtf", "x20.speaker_surround", "x20.stereo_surround" }) do
-  pcall (Settings.subscribe, key, rescan)
-end

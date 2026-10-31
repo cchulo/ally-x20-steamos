@@ -1,40 +1,45 @@
 # Routing decision fixtures for x20-route-core.decide().
 # Columns (whitespace separated, "-" = unset):
-#   case-name  media_class  node_name  channels  explicit  link_group  output  stereo_hrtf  speaker_surround  stereo_surround  default_is_x20  available(comma list)  expected-sink
-# hardware sink name is always "alsa_output.hw"; "nil" = leave to WirePlumber.
-stereo-headphones-passthrough              Stream/Output/Audio  game                            2  no   -    headphones  no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  alsa_output.hw
-mono-headphones-passthrough                Stream/Output/Audio  game                            1  no   -    headphones  no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  alsa_output.hw
-stereo-headphones-hrtf                     Stream/Output/Audio  game                            2  no   -    headphones  yes  yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-virtual-surround-71
-unknown-channels-is-stereo                 Stream/Output/Audio  game                            -  no   -    headphones  no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  alsa_output.hw
-three-zero-to-51                           Stream/Output/Audio  game                            3  no   -    headphones  no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-virtual-surround-51
-quad-to-51                                 Stream/Output/Audio  game                            4  no   -    headphones  no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-virtual-surround-51
-five-one-to-51                             Stream/Output/Audio  game                            6  no   -    headphones  no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-virtual-surround-51
-six-one-to-71                              Stream/Output/Audio  game                            7  no   -    headphones  no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-virtual-surround-71
-seven-one-to-71                            Stream/Output/Audio  game                            8  no   -    headphones  no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-virtual-surround-71
-seven-one-speakers                         Stream/Output/Audio  game                            8  no   -    speakers    no   no   no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-speakers
-stereo-speakers                            Stream/Output/Audio  game                            2  no   -    speakers    yes  yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-speakers
-seven-one-hdmi-direct                      Stream/Output/Audio  game                            8  no   -    other       no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  alsa_output.hw
-explicit-target-untouched                  Stream/Output/Audio  game                            8  yes  -    headphones  no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  nil
-explicit-target-speakers                   Stream/Output/Audio  game                            2  yes  -    speakers    no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  nil
-capture-stream-untouched                   Stream/Input/Audio   mic                             2  no   -    headphones  no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  nil
-other-filter-untouched                     Stream/Output/Audio  ee-out                          2  no   fx   speakers    no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  nil
-own-filter-follows-default                 Stream/Output/Audio  x20-virtual-surround-71.output  2  no   x20  headphones  no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  nil
-own-filter-escapes-x20-default             Stream/Output/Audio  x20-speakers.output             2  no   x20  speakers    no   yes  no   yes  x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  alsa_output.hw
-missing-71-falls-back                      Stream/Output/Audio  game                            8  no   -    headphones  no   yes  no   no   x20-virtual-surround-51,x20-speakers  alsa_output.hw
-missing-speakers-falls-back                Stream/Output/Audio  game                            2  no   -    speakers    no   yes  no   no   x20-virtual-surround-71  alsa_output.hw
-seven-one-speakers-surround                Stream/Output/Audio  game                            8  no   -    speakers    no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-speakers-surround
-five-one-speakers-surround                 Stream/Output/Audio  game                            6  no   -    speakers    no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-speakers-surround
-three-zero-speakers-surround               Stream/Output/Audio  game                            3  no   -    speakers    no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-speakers-surround
-five-one-speakers-surround-off             Stream/Output/Audio  game                            6  no   -    speakers    no   no   no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-speakers
-stereo-speakers-plain-default              Stream/Output/Audio  game                            2  no   -    speakers    no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-speakers
-mono-speakers-plain-default                Stream/Output/Audio  game                            1  no   -    speakers    no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-speakers
-stereo-speakers-stereo-surround            Stream/Output/Audio  game                            2  no   -    speakers    no   yes  yes  no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-speakers-surround
-stereo-surround-without-speaker-surround   Stream/Output/Audio  game                            2  no   -    speakers    no   no   yes  no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-speakers-surround
-unknown-channels-speakers-plain            Stream/Output/Audio  game                            -  no   -    speakers    no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-speakers
-speaker-surround-missing-falls-to-chain    Stream/Output/Audio  game                            8  no   -    speakers    no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers  x20-speakers
-speaker-surround-and-chain-missing         Stream/Output/Audio  game                            8  no   -    speakers    no   yes  no   no   x20-virtual-surround-71  alsa_output.hw
-headphones-ignore-speaker-surround         Stream/Output/Audio  game                            6  no   -    headphones  no   yes  yes  no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  x20-virtual-surround-51
-headphones-stereo-ignores-stereo-surround  Stream/Output/Audio  game                            2  no   -    headphones  no   yes  yes  no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  alsa_output.hw
-hdmi-ignores-speaker-surround              Stream/Output/Audio  game                            8  no   -    other       no   yes  yes  no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  alsa_output.hw
-explicit-target-speaker-surround           Stream/Output/Audio  game                            8  yes  -    speakers    no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  nil
-surround-output-follows-its-target         Stream/Output/Audio  x20-speakers-surround.output    2  yes  x20  speakers    no   yes  no   no   x20-virtual-surround-71,x20-virtual-surround-51,x20-speakers,x20-speakers-surround  nil
+#   case-name  node_name  explicit  default-sink  sinks  expected
+# sinks: comma list of name:priority:form-factor:route:available, where route
+# is a shorthand expanded by tests/lua/test_x20_route_core.lua:
+#   hp    "[Out] Headphones"         (UCM, the X20 jack)
+#   spk   "[Out] Speaker"            (UCM, the X20 speakers)
+#   acphp "analog-output-headphones" (ACP, description "Headphones")
+#   hdmi  "hdmi-output-0"
+#   -     no route (virtual sink, Bluetooth, USB without routes)
+# The X20 internal card: jack sink "jack" at 1000, speaker sink "spk" at 712
+# (measured); our sinks at 50 (headphone surround) and 750/740 (speakers).
+# Expected "nil" = leave to WirePlumber (the default sink), "unlinked" = stay
+# unlinked (no fallback).
+
+# --- application streams are never routed: they follow the default sink
+app-stream-follows-default               game                            no   x20-speakers             jack:1000:-:hp:no,spk:712:-:spk:unknown,x20-speakers:750:-:-:-                                   nil
+app-stream-default-hrtf-sink             game                            no   x20-virtual-surround-71  jack:1000:-:hp:yes,spk:712:-:spk:unknown,x20-virtual-surround-71:50:-:-:-                         nil
+app-surround-stream-on-speakers          game-7.1                        no   spk                      jack:1000:-:hp:no,spk:712:-:spk:unknown                                                          nil
+
+# --- the bug: jack unavailable, x20-speakers default. x20-speakers.output is
+# pinned in its conf (explicit target), so the hook leaves it alone, and it
+# never falls back to the highest-priority sink (the unplugged jack).
+speakers-output-pinned-jack-unavailable  x20-speakers.output             yes  x20-speakers             jack:1000:-:hp:no,spk:712:-:spk:unknown,x20-speakers:750:-:-:-                                   nil
+speakers-output-unpinned-no-rule         x20-speakers.output             no   x20-speakers             jack:1000:-:hp:no,spk:712:-:spk:unknown,x20-speakers:750:-:-:-                                   nil
+surround-output-follows-its-target       x20-speakers-surround.output    yes  x20-speakers-surround    jack:1000:-:hp:no,spk:712:-:spk:unknown,x20-speakers:740:-:-:-,x20-speakers-surround:750:-:-:-  nil
+
+# --- headphone surround outputs
+hrtf-jack-unavailable-stays-unlinked     x20-virtual-surround-71.output  no   x20-virtual-surround-71  jack:1000:-:hp:no,spk:712:-:spk:unknown,x20-speakers:750:-:-:-,x20-virtual-surround-71:50:-:-:-  unlinked
+hrtf-jack-available                      x20-virtual-surround-71.output  no   x20-virtual-surround-71  jack:1000:-:hp:yes,spk:712:-:spk:unknown,x20-virtual-surround-71:50:-:-:-                         jack
+hrtf-51-jack-available                   x20-virtual-surround-51.output  no   x20-virtual-surround-51  jack:1000:-:hp:yes,spk:712:-:spk:unknown,x20-virtual-surround-51:50:-:-:-                         jack
+hrtf-jack-route-unknown-counts           x20-virtual-surround-71.output  no   x20-virtual-surround-71  jack:1000:-:hp:unknown,spk:712:-:spk:unknown                                                         jack
+hrtf-acp-headphones                      x20-virtual-surround-71.output  no   x20-virtual-surround-71  card:1000:-:acphp:yes,hdmi0:600:-:hdmi:yes                                                           card
+hrtf-usb-headset-form-factor             x20-virtual-surround-71.output  no   x20-virtual-surround-71  jack:1000:-:hp:no,spk:712:-:spk:unknown,usb:1010:headset:-:-                                        usb
+hrtf-usb-headphone-form-factor           x20-virtual-surround-51.output  no   x20-virtual-surround-51  jack:1000:-:hp:no,spk:712:-:spk:unknown,usb:1010:headphone:-:-                                      usb
+hrtf-bluetooth-headset                   x20-virtual-surround-71.output  no   x20-virtual-surround-71  jack:1000:-:hp:no,spk:712:-:spk:unknown,bluez:1010:headset:-:-                                      bluez
+hrtf-bluetooth-hands-free                x20-virtual-surround-71.output  no   x20-virtual-surround-71  jack:1000:-:hp:no,spk:712:-:spk:unknown,bluez:1010:hands-free:-:-                                   bluez
+hrtf-jack-and-bluetooth-priority-wins    x20-virtual-surround-71.output  no   x20-virtual-surround-71  jack:1000:-:hp:yes,spk:712:-:spk:unknown,bluez:1010:headset:-:-                                     bluez
+hrtf-default-headphone-sink-wins         x20-virtual-surround-71.output  no   jack                     jack:1000:-:hp:yes,spk:712:-:spk:unknown,bluez:1010:headset:-:-                                     jack
+hrtf-nothing-qualifies                   x20-virtual-surround-71.output  no   x20-virtual-surround-71  spk:712:-:spk:unknown,hdmi0:600:-:hdmi:yes                                                           unlinked
+hrtf-no-sinks-at-all                     x20-virtual-surround-71.output  no   -                        -                                                                                                unlinked
+hrtf-never-speaker-even-if-default       x20-virtual-surround-71.output  no   spk                      jack:1000:-:hp:no,spk:712:-:spk:unknown                                                          unlinked
+hrtf-never-x20-sink-with-headset-ff      x20-virtual-surround-71.output  no   x20-speakers             x20-speakers:750:headset:hp:yes,x20-virtual-surround-51:50:headphone:-:-                       unlinked
+hrtf-never-x20-default                   x20-virtual-surround-51.output  no   x20-virtual-surround-71  x20-virtual-surround-71:2000:headphone:hp:yes,jack:1000:-:hp:yes                                     jack
+hrtf-moved-by-user                       x20-virtual-surround-71.output  yes  x20-virtual-surround-71  jack:1000:-:hp:no,spk:712:-:spk:unknown                                                          nil

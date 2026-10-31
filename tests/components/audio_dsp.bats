@@ -114,7 +114,7 @@ speaker_conf() { printf '%s\n' "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/52
     [ "$(grep -c '"Gain 2" = 0.630957 "Gain 3" = 0.398107 "Gain 4" = 0.251189 "Gain 5" = 0.158489 "Gain 6" = 0.5' "$f")" = 2 ]
     grep -q 'Rendered with: xtc_delay_us=117 (6 samples at 48 kHz = 125 us) xtc_attenuation_db=4 (g=0.6310) xtc_taps=4' "$f"
     grep -q 'node.name        = "x20-speakers-surround"' "$f"
-    grep -q 'media.class      = Audio/Sink/Internal' "$f"
+    grep -q 'media.class      = Audio/Sink' "$f"
     grep -q 'target.object    = "x20-speakers"' "$f"
 }
 
@@ -419,10 +419,10 @@ lua_bin() {
     done
 }
 
-@test "every x20 sink is hidden from pulse pickers (media.class Audio/Sink/Internal)" {
+@test "every x20 sink is a plain Audio/Sink (WirePlumber 0.5 cannot link streams into Audio/Sink/Internal)" {
     component_apply audio_dsp
     for f in "$AX20_ROOT$H"/.config/pipewire/pipewire.conf.d/5*-x20-*.conf; do
-        ! grep -qE 'media.class\s*=\s*Audio/Sink\s*$' "$f" || { echo "visible sink in $f"; false; }
+        ! grep -q 'Audio/Sink/Internal' "$f" || { echo "internal sink in $f"; false; }
     done
-    [ "$(grep -h 'media.class' "$AX20_ROOT$H"/.config/pipewire/pipewire.conf.d/5*-x20-*.conf | grep -c 'Audio/Sink/Internal')" -ge 4 ]
+    [ "$(grep -h 'media.class' "$AX20_ROOT$H"/.config/pipewire/pipewire.conf.d/5*-x20-*.conf | grep -cE 'Audio/Sink\s*$')" -ge 4 ]
 }

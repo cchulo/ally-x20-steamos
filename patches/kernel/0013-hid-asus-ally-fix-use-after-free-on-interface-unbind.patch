@@ -112,10 +112,10 @@ report.
  1 file changed, 86 insertions(+), 26 deletions(-)
 
 diff --git a/drivers/hid/hid-asus-ally.c b/drivers/hid/hid-asus-ally.c
-index f64861e..8d46330 100644
+index cd45ebc..e46962c 100644
 --- a/drivers/hid/hid-asus-ally.c
 +++ b/drivers/hid/hid-asus-ally.c
-@@ -534,6 +534,17 @@ static struct ally_drvdata {
+@@ -535,6 +535,17 @@ static struct ally_drvdata {
  	uint mcu_version;
  } drvdata;
  
@@ -133,7 +133,7 @@ index f64861e..8d46330 100644
  static void reverse_bytes_in_pairs(u8 *buf, size_t size) {
  	uint16_t *word_ptr;
  	size_t i;
-@@ -1640,10 +1651,11 @@ static struct input_dev *ally_x_alloc_input_dev(struct hid_device *hdev,
+@@ -1637,10 +1648,11 @@ static struct input_dev *ally_x_alloc_input_dev(struct hid_device *hdev,
  
  static int ally_x_play_effect(struct input_dev *idev, void *data, struct ff_effect *effect)
  {
@@ -147,7 +147,7 @@ index f64861e..8d46330 100644
  		return 0;
  
  	spin_lock_irqsave(&ally_x->lock, flags);
-@@ -2632,8 +2644,14 @@ static void ally_rgb_remove(struct hid_device *hdev)
+@@ -2630,8 +2642,14 @@ static void ally_rgb_remove(struct hid_device *hdev)
  static int ally_raw_event(struct hid_device *hdev, struct hid_report *report, u8 *data,
  			  int size)
  {
@@ -164,7 +164,7 @@ index f64861e..8d46330 100644
  
  	if (ally_x) {
  		if ((hdev->bus == BUS_USB && report->id == ALLY_X_INPUT_REPORT_USB &&
-@@ -2641,11 +2659,9 @@ static int ally_raw_event(struct hid_device *hdev, struct hid_report *report, u8
+@@ -2639,11 +2657,9 @@ static int ally_raw_event(struct hid_device *hdev, struct hid_report *report, u8
  		    (data[0] == 0x5A)) {
  			ally_x_raw_event(ally_x, report, data, size);
  		} else {
@@ -176,9 +176,9 @@ index f64861e..8d46330 100644
 -	if (cfg && !ally_x) {
 +	} else if (cfg && cfg->input) {
  		input_report_key(cfg->input, KEY_PROG1, data[1] == 0x38);
- 		input_report_key(cfg->input, KEY_F16,
- 				 data[1] == ALLY_KEY_QAM || data[1] == ALLY_X20_KEY_QAM);
-@@ -2653,8 +2669,9 @@ static int ally_raw_event(struct hid_device *hdev, struct hid_report *report, u8
+ 		input_report_key(cfg->input, KEY_PROG2, data[1] == ALLY_X20_KEY_RIGHT);
+ 		input_report_key(cfg->input, KEY_F16, data[1] == 0xA6);
+@@ -2651,8 +2667,9 @@ static int ally_raw_event(struct hid_device *hdev, struct hid_report *report, u8
  		input_report_key(cfg->input, KEY_F18, data[1] == 0xA8);
  		input_sync(cfg->input);
  	}
@@ -189,7 +189,7 @@ index f64861e..8d46330 100644
  }
  
  static int ally_hid_init(struct hid_device *hdev)
-@@ -2696,6 +2713,10 @@ static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_
+@@ -2694,6 +2711,10 @@ static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_
  	struct usb_interface *intf = to_usb_interface(hdev->dev.parent);
  	struct usb_device *udev = interface_to_usbdev(intf);
  	u16 idProduct = le16_to_cpu(udev->descriptor.idProduct);
@@ -200,7 +200,7 @@ index f64861e..8d46330 100644
  	int ret, ep;
  
  	ep = get_endpoint_address(hdev);
-@@ -2737,35 +2758,56 @@ static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_
+@@ -2735,35 +2756,56 @@ static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_
  		validate_mcu_fw_version(hdev, idProduct);
  		ally_disable_nkey_wakeup(hdev);
  
@@ -268,7 +268,7 @@ index f64861e..8d46330 100644
  			hid_info(hdev, "Ally X removed unrequired input dev.\n");
  		}
  	}
-@@ -2779,16 +2821,34 @@ static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_
+@@ -2777,16 +2819,34 @@ err_stop:
  	return ret;
  }
  

@@ -284,6 +284,43 @@ yaml_check() {
     grep -qx 'id: ally_x20_steamos_aly2' "$y"
 }
 
+capmap_targets() {
+    # "<source key> <target button>" per mapping of the X20 capability map
+    awk '/^      - keyboard: / { k = $3 } /^        button: / { print k, $2 }' \
+        "$OVL/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml"
+}
+
+@test "X20 map: Armoury Crate -> QuickAccess, capture -> Screenshot, no Steam chords" {
+    run capmap_targets
+    assert_success
+    printf '%s\n' "$output" | grep -qx 'KeyF16 QuickAccess'
+    printf '%s\n' "$output" | grep -qx 'KeyProg1 QuickAccess'
+    printf '%s\n' "$output" | grep -qx 'KeyF21 QuickAccess'
+    printf '%s\n' "$output" | grep -qx 'KeyProg2 Screenshot'
+    printf '%s\n' "$output" | grep -qx 'KeyF22 Screenshot'
+    printf '%s\n' "$output" | grep -qx 'KeyF14 LeftPaddle1'
+    printf '%s\n' "$output" | grep -qx 'KeyF15 RightPaddle1'
+    # Keyboard (Steam+X via the default profile), Guide and QuickAccess2 leak
+    # Steam chords or a bare Steam press
+    run grep -E '^        button: (Keyboard|Guide|QuickAccess2|South|North)$' \
+        "$OVL/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml"
+    assert_failure
+}
+
+@test "X20 stock profile: every mapped key is in the evdev include list, KeyProg2 matches patch 0012" {
+    y="$OVL/inputplumber/devices.d/50-rog_xbox_ally_x20.stock.yaml"
+    for k in $(capmap_targets | awk '{ print $1 }'); do
+        grep -qx "        - Keyboard:$k" "$y" || {
+            echo "not included: $k"
+            false
+        }
+    done
+    grep -q 'KEY_PROG2, data\[1\] == ALLY_X20_KEY_RIGHT' "$REPO_ROOT"/patches/kernel/0012-*.patch
+    # hidraw sources stay (they set qam_mode=0); one evdev source only
+    [ "$(grep -c '^    hidraw:$' "$y")" -eq 2 ]
+    [ "$(grep -c '^    evdev:$' "$y")" -eq 1 ]
+}
+
 @test "upstream profile is byte-identical to InputPlumber v0.83.0 after our header" {
     y="$OVL/inputplumber/devices.d/50-rog_xbox_ally_x20.yaml"
     body=$(awk 'f { print; next } /^$/ { f = 1 }' "$y" | git hash-object --stdin)

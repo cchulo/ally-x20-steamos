@@ -11,12 +11,20 @@ does with a button before and after our patches. Stdlib only, Python 3.9+.
     sudo python3 vm/guest/watch-buttons.py --no-raw   # input events only
     sudo python3 vm/guest/watch-buttons.py --filter asus,xbox,ally
 
-What to expect on a stock X20 (kernel 7.2.7-valve2):
-  Xbox button      -> BTN_MODE press/release from "ASUS ROG Ally X Gamepad"
-  A button         -> BTN_SOUTH
-  Quick Access     -> raw report "5a a0 00 ..." on an N-KEY hidraw node and NO
-                      input event (the driver only knows 0xa6). After the
-                      hid-asus-ally patch it also yields a key/chord event.
+What to expect on an X20 with the patched hid-asus-ally (kernel 7.2.7-valve2)
+and qam_mode=0 (InputPlumber sets it; docs/inputplumber.md section 6):
+  Xbox button          -> BTN_MODE from "ASUS ROG Ally X Gamepad"
+  Armoury Crate (TL)   -> raw "5a a6 ..." then "5a 00 ...", KEY_F16
+  Capture (TR)         -> raw "5a a0 ..." then "5a 00 ...", KEY_PROG2
+  A button             -> BTN_SOUTH
+Stock driver: the top-right button gives the raw report and no input event.
+
+InputPlumber grabs (EVIOCGRAB) the ASUS evdev nodes it uses, so they print
+nothing while it runs; the device list marks them "GRABBED". hidraw reports
+still reach every reader. To see what InputPlumber sends on, watch its
+virtual device (in Desktop Mode an Xbox pad: QuickAccess shows as BTN_MODE
+then BTN_SOUTH 160 ms later, Screenshot as KEY_RECORD), or stop the daemon
+to see the kernel's keys.
 Ctrl-C to quit. Needs root (input and hidraw nodes are root:input / root).
 """
 from __future__ import annotations
@@ -38,8 +46,10 @@ KEY_NAMES = {
     1: "KEY_ESC", 28: "KEY_ENTER", 29: "KEY_LEFTCTRL", 42: "KEY_LEFTSHIFT", 56: "KEY_LEFTALT",
     57: "KEY_SPACE", 102: "KEY_HOME", 103: "KEY_UP", 105: "KEY_LEFT", 106: "KEY_RIGHT",
     108: "KEY_DOWN", 113: "KEY_MUTE", 114: "KEY_VOLUMEDOWN", 115: "KEY_VOLUMEUP",
-    116: "KEY_POWER", 125: "KEY_LEFTMETA", 139: "KEY_MENU", 148: "KEY_PROG1", 149: "KEY_PROG2",
-    186: "KEY_F16", 187: "KEY_F17", 188: "KEY_F18", 202: "KEY_PROG3", 203: "KEY_PROG4",
+    116: "KEY_POWER", 125: "KEY_LEFTMETA", 139: "KEY_MENU", 148: "KEY_PROG1",
+    149: "KEY_PROG2 (X20 capture)", 167: "KEY_RECORD", 184: "KEY_F14", 185: "KEY_F15",
+    186: "KEY_F16", 187: "KEY_F17", 188: "KEY_F18", 191: "KEY_F21", 192: "KEY_F22",
+    202: "KEY_PROG3", 203: "KEY_PROG4",
     224: "KEY_BRIGHTNESSDOWN", 225: "KEY_BRIGHTNESSUP", 240: "KEY_UNKNOWN",
     0x100: "BTN_0", 0x101: "BTN_1", 0x102: "BTN_2",
     0x110: "BTN_LEFT", 0x111: "BTN_RIGHT", 0x112: "BTN_MIDDLE",
@@ -54,6 +64,7 @@ ABS_NAMES = {0x10: "ABS_HAT0X (dpad)", 0x11: "ABS_HAT0Y (dpad)"}
 
 ASUS_VID = 0x0B05
 EVIOCGNAME = lambda length: (2 << 30) | (ord("E") << 8) | 0x06 | (length << 16)  # noqa: E731
+EVIOCGRAB = (1 << 30) | (ord("E") << 8) | 0x90 | (4 << 16)  # _IOW('E', 0x90, int)
 
 
 def dev_name(fd: int) -> str:
@@ -63,6 +74,22 @@ def dev_name(fd: int) -> str:
         return buf.split(b"\x00", 1)[0].decode(errors="replace")
     except OSError:
         return "?"
+
+
+def grabbed_elsewhere(fd: int) -> bool:
+    """True if another process (InputPlumber) holds EVIOCGRAB on the device.
+
+    Tries to grab it and releases at once; EBUSY means someone else has it.
+    """
+    try:
+        fcntl.ioctl(fd, EVIOCGRAB, 1)
+    except OSError:
+        return True
+    try:
+        fcntl.ioctl(fd, EVIOCGRAB, 0)
+    except OSError:
+        pass
+    return False
 
 
 def hidraw_info(path: str) -> tuple[str, int]:
@@ -106,7 +133,10 @@ def main() -> int:
         if wanted and not any(w in name.lower() for w in wanted):
             os.close(fd)
             continue
-        fds[fd] = ("ev", "%s %s" % (os.path.basename(path), name))
+        label = "%s %s" % (os.path.basename(path), name)
+        if grabbed_elsewhere(fd):
+            label += " (GRABBED by another process: prints nothing)"
+        fds[fd] = ("ev", label)
     if not args.no_raw:
         for path in sorted(glob.glob("/dev/hidraw*"), key=lambda p: int(p.rsplit("hidraw", 1)[1])):
             name, vid = hidraw_info(path)

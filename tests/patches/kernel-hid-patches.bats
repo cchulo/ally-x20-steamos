@@ -128,9 +128,16 @@ hid_patches() {
     done
 }
 
-@test "0012 maps 0xa0" {
+@test "0012 reports 0xa0 as one plain KEY_PROG2, with no Steam chord" {
     p="$(ls "$PATCH_DIR"/0012-*.patch)"
-    grep -q '^+#define ALLY_X20_KEY_QAM 0xa0' "$p"
+    grep -q '^+#define ALLY_X20_KEY_RIGHT 0xa0' "$p"
+    # reported on the Ally X gamepad input and on the config input
+    grep -q '^+		input_report_key(ally_x->input, KEY_PROG2, data\[1\] == ALLY_X20_KEY_RIGHT);' "$p"
+    grep -q '^+		input_report_key(cfg->input, KEY_PROG2, data\[1\] == ALLY_X20_KEY_RIGHT);' "$p"
+    [ "$(grep -c '^+	input_set_capability(input\(_dev\)\?, EV_KEY, KEY_PROG2);' "$p")" -eq 2 ]
+    # InputPlumber owns the mapping: no chord, no qam_mode path, 0xa6 untouched
+    run grep -E '^\+.*(update_qam_btn|BTN_MODE|BTN_A|KEY_F16)' "$p"
+    assert_failure
 }
 
 @test "0011 sends Solid through the Aura report by default, rgb_static_mode selects the rest" {

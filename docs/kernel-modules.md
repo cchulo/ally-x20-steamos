@@ -11,7 +11,7 @@ listed in `patches/kernel/modules*.list`. Today that is:
 |---|---|---|
 | `snd-soc-acpi-amd-match` | X20 (`RC74XA`) speaker link layout | `make M=sound/soc/amd/acp` |
 | `snd-acp-config` | ACP config quirk (alternative to the ACPI override) | `make M=sound/soc/amd` |
-| `hid-asus-ally` | joystick ring LEDs visible to Steam, effects, Quick Access button | `make M=drivers/hid` |
+| `hid-asus-ally` | joystick ring LEDs visible to Steam, effects, X20 top-right (capture) key `0xa0` | `make M=drivers/hid` |
 
 Nothing else in the kernel is touched. The rest of the system keeps
 Valve's stock modules.

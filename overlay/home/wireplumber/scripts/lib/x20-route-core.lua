@@ -7,24 +7,37 @@
 -- which loads it with require ("x20-route-core") from
 -- ~/.local/share/wireplumber/scripts/lib/.
 --
--- Policy (X20-STEAMOS-PLAN.md section 1.5, item 3):
---   headphones  7..8 channels -> x20-virtual-surround-71
---               3..6 channels -> x20-virtual-surround-51
---               1..2 channels -> hardware sink, untouched (bit-exact), or
---                                x20-virtual-surround-71 when the
---                                x20.stereo_hrtf setting is true
---   speakers    3..8 channels -> x20-speakers-surround (binaural render +
---                                crosstalk cancellation) when the
---                                x20.speaker_surround setting is true
---                                (default), otherwise x20-speakers
---               1..2 channels -> x20-speakers (downmix/width/EQ), or
---                                x20-speakers-surround when the
---                                x20.stereo_surround setting is true
---               x20-speakers-surround missing -> x20-speakers
---   other       everything    -> hardware sink (HDMI, line out, USB DAC:
---                                a receiver decodes surround itself)
+-- Policy. The user picks the output (the default sink) by hand in Steam:
+-- the hardware speakers or headphones, "X20 Speakers", the speaker virtual
+-- surround or one of the headphone surround sinks. Application streams are
+-- never routed here; they follow that choice. Only the outputs of our own
+-- filter chains need a target, because their sink is the hardware behind
+-- the virtual one:
+--   x20-virtual-surround-71.output, x20-virtual-surround-51.output
+--       (binaural audio, only correct on headphones)
+--       -> the best headphone-class hardware sink: not an x20 sink, and
+--          either its active ALSA route is a headphone/headset route that
+--          is not "available = no" (UCM "[Out] Headphones", ACP
+--          "analog-output-headphones"), or the device says it is a
+--          headphone/headset (device.form-factor, USB and Bluetooth).
+--          The default sink when it qualifies, otherwise the one with the
+--          highest priority.session.
+--       -> nothing qualifies: stay unlinked (M.UNLINKED). Never the speaker
+--          sink, never an x20 sink, never a jack whose route is
+--          unavailable, never a blind fallback to the default sink.
+--   x20-speakers.output, x20-speakers-surround.output
+--       pinned in their PipeWire confs (target.object: the hardware speaker
+--       sink, x20-speakers); WirePlumber's find-defined-target hook links
+--       them before this hook runs. Left alone here.
 -- Never touched: streams with an explicit target (set by the application or
--- moved by the user), encoded passthrough, capture streams, other filters.
+-- moved by the user), capture streams, other filters, application streams.
+--
+-- History: the earlier version also routed every application stream by its
+-- channel count and sent our filter outputs to "the non-x20 sink with the
+-- highest priority.session" whenever the default was one of ours. On the X20
+-- that is the headphone jack sink (priority.session 1000 against 712 for
+-- the speaker sink) even with nothing plugged in (route "not available"),
+-- so x20-speakers played into an unplugged jack: silence.
 
 local M = {}
 
@@ -33,10 +46,20 @@ M.SINK_51 = "x20-virtual-surround-51"
 M.SINK_SPEAKERS = "x20-speakers"
 M.SINK_SPEAKERS_SURROUND = "x20-speakers-surround"
 
+-- Returned by decide () when the stream must stay unlinked: the glue stops
+-- the select-target event so the default-sink hooks do not link it either.
+M.UNLINKED = "<unlinked>"
+
 -- is_x20_name (name) : true for nodes created by our filter chains
 -- ("x20-..." sinks and their "x20-....output" playback streams).
 function M.is_x20_name (name)
   return type (name) == "string" and name:sub (1, 4) == "x20-"
+end
+
+-- is_headphone_output_name (name) : the playback stream of one of the
+-- headphone surround sinks.
+function M.is_headphone_output_name (name)
+  return name == M.SINK_71 .. ".output" or name == M.SINK_51 .. ".output"
 end
 
 -- truthy (v) : WirePlumber property values are strings ("true", "1").
@@ -54,29 +77,6 @@ function M.truthy (v)
   return false
 end
 
--- channel_count (v) : normalise a channel count from a property string, a
--- number or a parsed SPA pod. EnumFormat params of flexible streams carry a
--- Choice (e.g. { 2, 1, 64 } = default 2, range 1..64); the default (first
--- value) is what the client asked for. Returns nil when unknown.
-function M.channel_count (v)
-  if type (v) == "number" then
-    if v > 0 then
-      return math.floor (v)
-    end
-    return nil
-  end
-  if type (v) == "string" then
-    return M.channel_count (tonumber (v))
-  end
-  if type (v) == "table" then
-    if v.default ~= nil then
-      return M.channel_count (v.default)
-    end
-    return M.channel_count (v[1])
-  end
-  return nil
-end
-
 local function lower (s)
   if type (s) ~= "string" then
     return ""
@@ -90,59 +90,48 @@ local function mentions (route, word)
       or lower (route.port_type):find (word, 1, true) ~= nil
 end
 
--- classify_output (sink, routes) : "headphones" | "speakers" | "other"
---   sink   = { form_factor = "headphone"|"headset"|"internal"|..., bus = ...,
---              name = node.name }
---   routes = list of the device's active output routes for this sink:
---            { name = "analog-output-headphones" | "[Out] Headphones" | ...,
---              description = ..., port_type = ..., available = "yes"|"no"|
---              "unknown", direction = "Output" }
--- Bluetooth/USB headsets announce themselves through device.form-factor.
--- The internal card exposes the jack as a route: ALSA jack detection flips
--- route.available to "no" when the plug is out, and WirePlumber then
--- switches the active route to the speaker. TODO(hw): the X20's UCM route
--- names (expected "[Out] Headphones" / "[Out] Speaker").
-function M.classify_output (sink, routes)
-  sink = sink or {}
+-- is_headphone_sink (sink) : true when the sink is a hardware headphone
+-- output that can play right now.
+--   sink = { name = node.name,
+--            form_factor = device.form-factor ("headphone", "headset",
+--                          "hands-free", "internal", ...),
+--            routes = the device's active output routes for this sink:
+--                     { name = "[Out] Headphones" | "analog-output-..." ...,
+--                       description = ..., port_type = ...,
+--                       available = "yes" | "no" | "unknown",
+--                       direction = "Output" } }
+-- ALSA jack detection sets route.available to "no" while the plug is out;
+-- the jack sink node itself stays, which is why availability matters.
+function M.is_headphone_sink (sink)
+  if type (sink) ~= "table" or M.is_x20_name (sink.name) then
+    return false
+  end
   local ff = lower (sink.form_factor)
   if ff == "headphone" or ff == "headset" or ff == "hands-free" then
-    return "headphones"
+    return true
   end
-  local saw_speaker = false
-  for _, r in ipairs (routes or {}) do
+  for _, r in ipairs (sink.routes or {}) do
     local dir = lower (r.direction)
-    if dir == "" or dir == "output" then
-      if lower (r.available) ~= "no" then
-        if mentions (r, "headphone") or mentions (r, "headset") then
-          return "headphones"
-        end
-        if mentions (r, "speaker") then
-          saw_speaker = true
-        end
-      end
+    if (dir == "" or dir == "output") and lower (r.available) ~= "no"
+        and not mentions (r, "speaker")
+        and (mentions (r, "headphone") or mentions (r, "headset")) then
+      return true
     end
   end
-  if saw_speaker then
-    return "speakers"
-  end
-  if ff == "speaker" or ff == "internal" then
-    -- No route information but the device says it is built in.
-    return "speakers"
-  end
-  return "other"
+  return false
 end
 
--- pick_hardware_sink (sinks, default_name) : the sink that represents "the
--- hardware". The default sink when it is not one of ours, otherwise the
--- non-x20 sink with the highest priority.session. sinks is a list of
--- { name = node.name, priority = number }. Returns a name or nil.
-function M.pick_hardware_sink (sinks, default_name)
-  if default_name and not M.is_x20_name (default_name) then
-    return default_name
-  end
+-- pick_headphone_sink (sinks, default_name) : name of the best headphone
+-- sink, or nil. sinks is a list of is_headphone_sink () tables plus
+-- priority = priority.session. The default sink wins when it qualifies
+-- (the user's own choice), then the highest priority, then list order.
+function M.pick_headphone_sink (sinks, default_name)
   local best, best_prio = nil, nil
   for _, s in ipairs (sinks or {}) do
-    if s.name and not M.is_x20_name (s.name) then
+    if M.is_headphone_sink (s) then
+      if default_name ~= nil and s.name == default_name then
+        return s.name
+      end
       local p = tonumber (s.priority) or 0
       if best == nil or p > best_prio then
         best, best_prio = s.name, p
@@ -152,87 +141,34 @@ function M.pick_hardware_sink (sinks, default_name)
   return best
 end
 
--- decide (stream, env) -> sink-name|nil, reason
---   stream = { media_class, node_name, channels, explicit_target (bool),
---              link_group (string|nil), encoded (bool) }
---   env    = { enabled (bool), stereo_hrtf (bool),
---              speaker_surround (bool, nil = true), stereo_surround (bool),
---              output = "headphones"|"speakers"|"other",
---              hardware_sink = name|nil, default_is_x20 (bool),
---              available = { [sink-name] = true, ... } }
--- nil means "do not interfere": WirePlumber's remaining hooks decide.
+-- decide (stream, env) -> sink-name | M.UNLINKED | nil, reason
+--   stream = { media_class, node_name, explicit_target (bool) }
+--   env    = { sinks = { sink tables, see pick_headphone_sink },
+--              default_name = default sink node.name or nil }
+-- nil means "do not interfere": WirePlumber's remaining hooks decide (for
+-- an application stream: the default sink).
 function M.decide (stream, env)
   stream = stream or {}
   env = env or {}
-  local available = env.available or {}
 
-  if env.enabled == false then
-    return nil, "audio-dsp disabled"
-  end
   if stream.media_class ~= "Stream/Output/Audio" then
     return nil, "not an audio playback stream"
   end
   if stream.explicit_target then
-    return nil, "explicit target set by the application or user"
+    return nil, "explicit target (conf, application or user)"
   end
-  if stream.encoded then
-    return nil, "encoded passthrough stream"
+  if not M.is_x20_name (stream.node_name) then
+    return nil, "application stream follows the default sink"
   end
-
-  local function hardware (why)
-    if env.hardware_sink then
-      return env.hardware_sink, why
-    end
-    return nil, why .. " (no hardware sink known; default linking)"
+  if not M.is_headphone_output_name (stream.node_name) then
+    return nil, "x20 filter output without a rule (pinned in its conf)"
   end
 
-  if M.is_x20_name (stream.node_name) then
-    -- Our own filter output: it must reach the hardware. Only intervene
-    -- when the default sink is one of ours (that would loop or double-
-    -- process); otherwise default linking already does the right thing.
-    if env.default_is_x20 then
-      return hardware ("x20 filter output, default sink is virtual")
-    end
-    return nil, "x20 filter output follows the default sink"
+  local name = M.pick_headphone_sink (env.sinks, env.default_name)
+  if name then
+    return name, "headphone surround output to the headphone sink"
   end
-  if stream.link_group then
-    return nil, "filter node (node.link-group), not ours"
-  end
-
-  local ch = M.channel_count (stream.channels) or 2
-  local want, why
-  if env.output == "headphones" then
-    if ch >= 7 then
-      want, why = M.SINK_71, ch .. " channels on headphones"
-    elseif ch >= 3 then
-      want, why = M.SINK_51, ch .. " channels on headphones"
-    elseif env.stereo_hrtf then
-      want, why = M.SINK_71, ch .. " channels on headphones, stereo_hrtf on"
-    else
-      return hardware (ch .. " channels on headphones: bit-exact passthrough")
-    end
-  elseif env.output == "speakers" then
-    local surround = env.speaker_surround ~= false
-    if ch >= 3 and surround then
-      want, why = M.SINK_SPEAKERS_SURROUND, ch .. " channels on speakers, speaker_surround on"
-    elseif ch <= 2 and env.stereo_surround then
-      want, why = M.SINK_SPEAKERS_SURROUND, ch .. " channels on speakers, stereo_surround on"
-    else
-      want, why = M.SINK_SPEAKERS, ch .. " channels on speakers"
-    end
-    if want == M.SINK_SPEAKERS_SURROUND and not available[want] then
-      -- No HRTF or no sofa plugin: the plain speaker chain is still better
-      -- than the raw hardware sink.
-      want, why = M.SINK_SPEAKERS, why .. ", but " .. M.SINK_SPEAKERS_SURROUND .. " is not loaded"
-    end
-  else
-    return hardware ("output is neither headphones nor speakers")
-  end
-
-  if not available[want] then
-    return hardware (why .. ", but " .. want .. " is not loaded")
-  end
-  return want, why
+  return M.UNLINKED, "headphone surround output, but no headphones are available"
 end
 
 return M

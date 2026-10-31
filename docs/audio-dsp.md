@@ -342,20 +342,18 @@ defaults.
 
 ### Device pickers
 
-PipeWire and WirePlumber 0.5 have no "hidden" node property. pipewire-pulse,
-which feeds KDE, Steam and pavucontrol, lists exactly the nodes whose
-`media.class` is `Audio/Sink`. **Every `x20-*` sink therefore uses
-`media.class = Audio/Sink/Internal`**: none of them appears in an output
-picker, so the only choices are the hardware "Speakers" and "Headphones".
-(Measured on the X20: Steam Game Mode listed `x20-speakers` and the two HRTF
-sinks next to "Speakers", and picking one sent binaural audio to the
-speakers.) WirePlumber still creates a linkable item for every `Audio/*`
-node, so the router and `pw-play --target` reach them by name. Side effect:
-pavucontrol shows a stream playing on an unknown device while it is routed
-through one of them; moving the stream to a listed device works as usual.
-Manual control is through settings, not the picker: `audio-dsp stereo-hrtf
-on` (stereo through the headphone HRTF), `speaker-surround on|off`,
-`stereo-surround on|off`.
+All `x20-*` sinks are plain `media.class = Audio/Sink`, so they DO appear in
+output pickers (KDE, Steam Game Mode, pavucontrol). Leave the output on the
+hardware "Speakers"/"Headphones": the WirePlumber router moves each stream
+to the right `x20-*` sink by channel count and jack state, and manual control
+is through settings (`audio-dsp stereo-hrtf`, `speaker-surround`,
+`stereo-surround`), not the picker.
+
+Measured on the X20 (SteamOS 3.9.5, WirePlumber 0.5.18): `Audio/Sink/Internal`
+is not a usable hiding trick. WirePlumber then logs "No input node for
+filter-chain-… found" and "8 of 8 PipeWire links failed to activate", no
+client stream gets linked, and the device goes silent. A real hiding
+mechanism (per-client permissions, or a pulse-side filter) is future work.
 
 ## LFE
 

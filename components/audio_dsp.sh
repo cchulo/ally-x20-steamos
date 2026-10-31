@@ -3,6 +3,13 @@
 # speaker virtual surround (binaural render + crosstalk cancellation)
 # (X20-STEAMOS-PLAN.md section 1.5). Required component, on by default.
 #
+# Streams follow the default sink. WirePlumber's automatic default is
+# x20-speakers (or x20-speakers-surround) through their priority while no
+# headphones are available; the user can pick any x20 sink by hand in Steam.
+# x20-speakers.output is pinned to the hardware speaker sink in its conf; the
+# WirePlumber hook only links the headphone surround outputs to an available
+# headphone sink (docs/audio-dsp.md, "Routing").
+#
 # Everything lives in the user's home (manifest slot "home"), so it survives
 # SteamOS updates untouched and never needs the read-only root:
 #   ~/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf  (rendered)
@@ -25,10 +32,16 @@
 # Settings file (key=value), the single source of truth for the user's choice:
 #   enabled=1|0       0 = `audio-dsp off`: config files removed, HRTF data kept
 #   hrtf=<set>        set name from overlay/home/hrtf/hrtf.lock
-#   stereo_hrtf=0|1   stereo streams through the HRTF on headphones
-#   speaker_surround=1|0  surround streams on the speakers through
-#                     x20-speakers-surround (default 1)
-#   stereo_surround=0|1   stereo streams on the speakers through it too
+#   stereo_hrtf=0|1   kept for compatibility; no effect since streams follow
+#                     the default sink (pick a headphone surround sink in Steam)
+#   speaker_surround=1|0  kept for compatibility; no effect (same reason)
+#   speakers_precedence=1|0  1 (default): x20-speakers and
+#                     x20-speakers-surround get priority 750/740, above the
+#                     hardware Speaker sink (712), so WirePlumber's automatic
+#                     default is the DSP chain; 0: both at 50 (manual only)
+#   stereo_surround=0|1   1 swaps the two priorities (surround 750, speakers
+#                     740): the automatic default is the speaker virtual
+#                     surround
 #   xtc_delay_us=<int>    crosstalk cancellation delay per tap (10..1000)
 #   xtc_attenuation_db=<num>  attenuation per tap in dB (0.5..30)
 #   xtc_taps=1..4         number of RACE taps
@@ -57,7 +70,18 @@ COMPONENT_DESCRIPTION="headphone virtual surround (HRTF) + speaker chain + speak
 AUDIO_DSP_COMPONENT=audio_dsp
 
 # Settings keys, in the order they are written to audio-dsp.conf.
-AUDIO_DSP_KEYS="enabled hrtf stereo_hrtf speaker_surround stereo_surround xtc_delay_us xtc_attenuation_db xtc_taps lfe_cutoff_hz lfe_gain_db master_gain_db speakers_master_gain_db"
+AUDIO_DSP_KEYS="enabled hrtf stereo_hrtf speaker_surround speakers_precedence stereo_surround xtc_delay_us xtc_attenuation_db xtc_taps lfe_cutoff_hz lfe_gain_db master_gain_db speakers_master_gain_db"
+
+# priority.session of the two speaker sinks. Measured on the X20 (SteamOS
+# 3.9.5): hardware Speaker sink 712, headphone jack sink 1000; USB and
+# Bluetooth headsets get >= 1000. WirePlumber makes the available sink with
+# the highest priority the default unless the user picked one, so 750 puts
+# our chain above the bare speakers and below every headphone output: auto
+# mode plays through the DSP, switches to headphones while they are
+# available (jack plugged, headset connected) and comes back afterwards.
+AUDIO_DSP_PRIO_FIRST=750
+AUDIO_DSP_PRIO_SECOND=740
+AUDIO_DSP_PRIO_MANUAL=50
 
 # Crosstalk cancellation defaults, derived in docs/xtc-notes.md for the X20:
 # speakers ~22 cm apart, listener at ~40 cm, 15 cm head -> 117 us
@@ -173,7 +197,7 @@ audio_dsp_setting_value() {
             audio_dsp_hrtf_current
             return 0
             ;;
-        enabled | speaker_surround)
+        enabled | speaker_surround | speakers_precedence)
             v=$(audio_dsp_setting "$1" 1)
             case "$v" in 0 | 1) ;; *) v=1 ;; esac
             ;;
@@ -315,7 +339,7 @@ audio_dsp_probe_libmysofa() {
 # build/build-libmysofa.sh and stage it in /var/lib/ally-x20-steamos/lib,
 # which the hdr component's ld.so.conf.d drop-in puts on the loader path.
 # Without the plugin itself there is no sofa support to rescue; the virtual
-# surround sinks then fail to load (nofail) and the router uses the hardware.
+# surround sinks then fail to load (nofail) and are simply absent.
 audio_dsp_probe_sofa_support() {
     local rc=0
     audio_dsp_probe_sofa_plugin || rc=$?
@@ -548,8 +572,20 @@ audio_dsp_gain_describe() {
     fi
 }
 
+# audio_dsp_priorities : "<x20-speakers> <x20-speakers-surround>"
+# priority.session from speakers_precedence and stereo_surround.
+audio_dsp_priorities() {
+    if [ "$(audio_dsp_setting_value speakers_precedence)" != 1 ]; then
+        printf '%s %s\n' "$AUDIO_DSP_PRIO_MANUAL" "$AUDIO_DSP_PRIO_MANUAL"
+    elif [ "$(audio_dsp_setting_value stereo_surround)" = 1 ]; then
+        printf '%s %s\n' "$AUDIO_DSP_PRIO_SECOND" "$AUDIO_DSP_PRIO_FIRST"
+    else
+        printf '%s %s\n' "$AUDIO_DSP_PRIO_FIRST" "$AUDIO_DSP_PRIO_SECOND"
+    fi
+}
+
 # audio_dsp_render_speaker_chain : x20-speakers (or its LSP variant) with
-# the LFE and master gain settings.
+# the LFE, master gain and priority settings.
 audio_dsp_render_speaker_chain() {
     local src=51-x20-speaker-chain.conf p
     audio_dsp_have_lsp && src=51-x20-speaker-chain-lsp.conf
@@ -559,6 +595,7 @@ audio_dsp_render_speaker_chain() {
     sed -e "s#@X20_LFE_CUTOFF@#$(audio_dsp_setting_value lfe_cutoff_hz).0#g" \
         -e "s#@X20_LFE_GAIN@#$(audio_dsp_lfe_gain_lin)#g" \
         -e "s#@X20_SPK_MASTER@#$7#g" \
+        -e "s#@X20_SPK_PRIORITY@#$(audio_dsp_priorities | cut -d' ' -f1)#g" \
         -e "s#@X20_GAIN_SUMMARY@#$(AX20_GAIN_CHAIN=speakers audio_dsp_gain_describe)#g" \
         "$AX20_SRC/overlay/home/pipewire/pipewire.conf.d/$src" \
         | _audio_dsp_install_rendered "$(audio_dsp_speaker_chain_rel)"
@@ -582,6 +619,7 @@ audio_dsp_render_speaker_surround() {
         -e "s#@X20_LFE_CUTOFF@#$(audio_dsp_setting_value lfe_cutoff_hz).0#g" \
         -e "s#@X20_LFE_GAIN@#$(audio_dsp_lfe_gain_lin)#g" \
         -e "s#@X20_MASTER@#$ms#g" \
+        -e "s#@X20_SUR_PRIORITY@#$(audio_dsp_priorities | cut -d' ' -f2)#g" \
         -e "s#@X20_GAIN_SUMMARY@#$(audio_dsp_gain_describe)#g" \
         "$AX20_SRC/overlay/home/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf" \
         | _audio_dsp_install_rendered "$(audio_dsp_speaker_surround_rel)"

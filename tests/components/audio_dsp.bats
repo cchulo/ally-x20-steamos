@@ -86,6 +86,7 @@ setup() {
     grep -qx 'stereo_hrtf=0' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     grep -qx 'speaker_surround=1' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     grep -qx 'stereo_surround=0' "$r/.config/ally-x20-steamos/audio-dsp.conf"
+    grep -qx 'speakers_precedence=1' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     grep -qx 'xtc_delay_us=117' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     grep -qx 'xtc_attenuation_db=4' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     grep -qx 'xtc_taps=4' "$r/.config/ally-x20-steamos/audio-dsp.conf"
@@ -102,6 +103,71 @@ setup() {
     [ "$(grep -c "filename = \"$H/.config/ally-x20-steamos/hrtf/current.sofa\"" "$f")" = 12 ]
     f="$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf"
     [ "$(grep -c "filename = \"$H/.config/ally-x20-steamos/hrtf/current.sofa\"" "$f")" = 7 ]
+}
+
+# pinned_output <file> : x20-speakers.output goes to the hardware speaker
+# sink by name, never falls back, waits (linger) instead of being destroyed.
+pinned_output() {
+    local f=$1 pb
+    pb=$(sed -n '/playback.props = {/,/}/p' "$f")
+    printf '%s\n' "$pb" | grep -q 'node.name        = "x20-speakers.output"'
+    printf '%s\n' "$pb" | grep -qx '                target.object    = "alsa_output.pci-0000_64_00.5-platform-amd_sdw.HiFi__Speaker__sink"'
+    printf '%s\n' "$pb" | grep -qx '                node.dont-fallback = true'
+    printf '%s\n' "$pb" | grep -qx '                node.linger      = true'
+    printf '%s\n' "$pb" | grep -qx '                node.passive     = true'
+}
+
+@test "speaker chain: output pinned to the hardware Speaker sink (builtin and LSP variant)" {
+    local f="$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf"
+    component_apply audio_dsp
+    pinned_output "$f"
+    mkdir -p "$AX20_ROOT/usr/lib/lv2/lsp-plugins.lv2"
+    component_apply audio_dsp
+    grep -q 'lsp-plug.in' "$f"
+    pinned_output "$f"
+    # the templates themselves, so neither variant can drift
+    pinned_output "$REPO_ROOT/overlay/home/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf"
+    pinned_output "$REPO_ROOT/overlay/home/pipewire/pipewire.conf.d/51-x20-speaker-chain-lsp.conf"
+    # the speaker surround output stays pinned to x20-speakers
+    grep -q 'target.object    = "x20-speakers"' "$REPO_ROOT/overlay/home/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf"
+}
+
+# prio <conf> : the priority.session and priority.driver values of a rendered
+# conf, one line ("<session> <driver>" per sink, space separated).
+prio() {
+    local f="$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/$1"
+    printf '%s %s\n' "$(sed -n 's/^ *priority.session = //p' "$f" | tr '\n' ' ' | sed 's/ $//')" \
+        "$(sed -n 's/^ *priority.driver  = //p' "$f" | tr '\n' ' ' | sed 's/ $//')"
+}
+
+@test "priorities: speakers 750, surround 740 by default; headphone surround 50" {
+    component_apply audio_dsp
+    [ "$(prio 51-x20-speaker-chain.conf)" = "750 750" ]
+    [ "$(prio 52-x20-speaker-surround.conf)" = "740 740" ]
+    [ "$(prio 50-x20-virtual-surround.conf)" = "50 50 " ]
+    [ "$(audio_dsp_priorities)" = "750 740" ]
+}
+
+@test "priorities: stereo_surround=1 swaps them (surround 750, speakers 740)" {
+    component_apply audio_dsp
+    audio_dsp_write_settings stereo_surround=1
+    component_apply audio_dsp
+    [ "$(prio 51-x20-speaker-chain.conf)" = "740 740" ]
+    [ "$(prio 52-x20-speaker-surround.conf)" = "750 750" ]
+    [ "$(prio 50-x20-virtual-surround.conf)" = "50 50 " ]
+}
+
+@test "priorities: speakers_precedence=0 puts both speaker sinks at 50 (also with the LSP variant)" {
+    component_apply audio_dsp
+    audio_dsp_write_settings speakers_precedence=0 stereo_surround=1
+    mkdir -p "$AX20_ROOT/usr/lib/lv2/lsp-plugins.lv2"
+    component_apply audio_dsp
+    [ "$(prio 51-x20-speaker-chain.conf)" = "50 50" ]
+    [ "$(prio 52-x20-speaker-surround.conf)" = "50 50" ]
+    grep -qx 'speakers_precedence=0' "$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf"
+    # invalid values fall back to the default (on)
+    audio_dsp_write_settings speakers_precedence=maybe
+    [ "$(audio_dsp_setting_value speakers_precedence)" = 1 ]
 }
 
 # speaker_conf : the rendered speaker surround conf.
@@ -507,7 +573,7 @@ lua_bin() {
     assert_output_contains " 0 failures"
 }
 
-@test "lua: router glue and core parse" {
+@test "lua: hook glue and core parse" {
     local lua f
     lua=$(lua_bin) || skip "no Lua interpreter (lua, lua5.4, lua5.3, luajit) installed; syntax check not run"
     for f in "$REPO_ROOT"/overlay/home/wireplumber/scripts/x20-route-by-channels.lua \

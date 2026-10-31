@@ -544,10 +544,10 @@ def _info(out: Path) -> Dict[str, str]:
 @needs_bash
 def test_build_override_from_file(tmp_path: Path) -> None:
     out = tmp_path / "out"
-    r = _bo(["--out", str(out), "--dsdt", str(COMMITTED_FIXTURE)])
+    r = _bo(["--out", str(out), "--table", str(COMMITTED_FIXTURE)])
     assert r.returncode == 0, r.stderr
     img = out / "ally-x20-steamos-acpi.img"
-    for name in ("ally-x20-steamos-acpi.img", "DSDT.patched.aml", "DSDT.orig.aml", "BUILD-INFO"):
+    for name in ("ally-x20-steamos-acpi.img", "TABLE.patched.aml", "TABLE.orig.aml", "BUILD-INFO"):
         assert (out / name).is_file()
     info = _info(out)
     assert info["flag_value_before"] == "0x10" and info["flag_value_after"] == "0x0"
@@ -558,8 +558,8 @@ def test_build_override_from_file(tmp_path: Path) -> None:
     last = r.stdout.strip().splitlines()[-1]
     assert last == "%s  %s" % (info["output_sha256"], img)
     entries = tool.read_newc(img.read_bytes())
-    assert entries[-1].data == (out / "DSDT.patched.aml").read_bytes()
-    assert (out / "DSDT.orig.aml").read_bytes() == COMMITTED_FIXTURE.read_bytes()
+    assert entries[-1].data == (out / "TABLE.patched.aml").read_bytes()
+    assert (out / "TABLE.orig.aml").read_bytes() == COMMITTED_FIXTURE.read_bytes()
     assert not [p for p in out.iterdir() if p.name.startswith(".build-override")]
 
 
@@ -600,11 +600,12 @@ def test_build_override_dumps_from_sysfs_and_survives_active_override(tmp_path: 
     first = _info(out)
     assert first["bios_version"] == "RC74XA.301"
     assert first["input"].endswith("/sys/firmware/acpi/tables/DSDT")
+    assert first["table_signature"] == "DSDT" and first["table_source"] == "DSDT"
     img1 = (out / "ally-x20-steamos-acpi.img").read_bytes()
 
     # Reboot with the override active: sysfs now shows our patched table.
     sysfs = root / "sys" / "firmware" / "acpi" / "tables" / "DSDT"
-    sysfs.write_bytes((out / "DSDT.patched.aml").read_bytes())
+    sysfs.write_bytes((out / "TABLE.patched.aml").read_bytes())
     r = _bo(["--out", str(out)], root=root)
     assert r.returncode == 0, r.stderr
     assert "override active" in r.stderr
@@ -630,3 +631,34 @@ def test_build_override_unreadable_sysfs(tmp_path: Path) -> None:
     root.mkdir()
     r = _bo(["--out", str(tmp_path / "out")], root=root)
     assert r.returncode == 4 and "cannot read" in r.stderr
+
+
+@needs_bash
+def test_build_override_finds_flag_in_an_ssdt(tmp_path: Path) -> None:
+    """Real X20: the DSDT carries no flag; SSDT8 (AMD/OEMACP) does."""
+    dsdt_without = synth.build_dsdt().replace(b"acp-audio-config-flag\x00", b"acp-audio-config-flaZ\x00")
+    root = _fake_root(tmp_path, dsdt_without)
+    tables = root / "sys" / "firmware" / "acpi" / "tables"
+    (tables / "SSDT1").write_bytes(synth.build_dsdt(signature=b"SSDT").replace(
+        b"acp-audio-config-flag\x00", b"acp-audio-config-flaZ\x00"))
+    (tables / "SSDT8").write_bytes(synth.build_dsdt(signature=b"SSDT", value=0x10))
+    out = tmp_path / "out"
+    r = _bo(["--out", str(out)], root=root)
+    assert r.returncode == 0, r.stderr
+    assert "lives in SSDT8" in r.stderr
+    info = _info(out)
+    assert info["table_signature"] == "SSDT" and info["table_source"] == "SSDT8"
+    assert info["flag_value_before"] == "0x10" and info["flag_value_after"] == "0x0"
+    entries = tool.read_newc((out / "ally-x20-steamos-acpi.img").read_bytes())
+    assert entries[-1].name == "kernel/firmware/acpi/SSDT.aml"
+    # Override active: sysfs SSDT8 is now our table -> rebuilt from the saved original.
+    (tables / "SSDT8").write_bytes((out / "TABLE.patched.aml").read_bytes())
+    r = _bo(["--out", str(out)], root=root)
+    assert r.returncode == 0 and "override active" in r.stderr
+
+
+@needs_bash
+def test_build_override_no_table_carries_flag(tmp_path: Path) -> None:
+    root = _fake_root(tmp_path, synth.build_dsdt().replace(b"acp-audio-config-flag\x00", b"acp-audio-config-flaZ\x00"))
+    r = _bo(["--out", str(tmp_path / "out")], root=root)
+    assert r.returncode == 3 and "not found in any table" in r.stderr

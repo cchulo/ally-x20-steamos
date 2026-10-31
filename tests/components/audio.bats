@@ -162,10 +162,10 @@ tree_listing() { (cd "$AX20_ROOT" && find . | LC_ALL=C sort); }
     [ "$status" -eq 2 ]
     fixture_file /proc/asound/cards " 1 [amdsoundwire   ]: amd-soundwire"
     mkdir -p "$AX20_ROOT/var/lib/ally-x20-steamos/acpi"
-    cp "$AX20_ROOT/sys/firmware/acpi/tables/DSDT" "$AX20_ROOT/var/lib/ally-x20-steamos/acpi/DSDT.patched.aml"
+    cp "$AX20_ROOT/sys/firmware/acpi/tables/DSDT" "$AX20_ROOT/var/lib/ally-x20-steamos/acpi/TABLE.patched.aml"
     run audio_probe_acpi
     [ "$status" -eq 2 ]
-    rm "$AX20_ROOT/var/lib/ally-x20-steamos/acpi/DSDT.patched.aml"
+    rm "$AX20_ROOT/var/lib/ally-x20-steamos/acpi/TABLE.patched.aml"
     fake_dsdt /sys/firmware/acpi/tables/DSDT '\000'
     fixture_file /proc/asound/cards " 0 [Generic ]: HDA"
     run audio_probe_acpi
@@ -469,8 +469,9 @@ while [ \$# -gt 0 ]; do
 done
 [ "$1" = 0 ] || exit $1
 printf 'cpio' >"\$out/ally-x20-steamos-acpi.img"
-printf 'aml' >"\$out/DSDT.patched.aml"
-printf 'orig' >"\$out/DSDT.orig.aml"
+# a realistic patched table: still carries the property, now with value 0
+printf 'SSDT\001\002junk\015acp-audio-config-flag\000\012\000\244patched' >"\$out/TABLE.patched.aml"
+printf 'orig' >"\$out/TABLE.orig.aml"
 printf 'tool=fake\n' >"\$out/BUILD-INFO"
 EOF
     chmod +x "$AX20_ACPI_BUILD_TOOL"
@@ -496,7 +497,7 @@ acpi_device() {
     [ -f "$AX20_ROOT/var/lib/ally-x20-steamos/acpi/BUILD-INFO" ]
     [ "$(manifest_entry_get "$(manifest_entry /efi/EFI/steamos/ally-x20-steamos-acpi.img)" slot)" = esp ]
     [ "$(cat "$BATS_TEST_TMPDIR/slot-call")" = "active /efi/EFI/steamos/ally-x20-steamos-acpi.img" ]
-    # the live table is read by the tool itself (no --dsdt), so it can use its cache
+    # the live table is read by the tool itself (no --table), so it can use its cache
     ! [ -e "$BATS_TEST_TMPDIR/tool-args" ]
 }
 
@@ -510,17 +511,17 @@ acpi_device() {
     [ -f "$AX20_ROOT/efi/EFI/steamos/ally-x20-steamos-acpi.img" ]
 }
 
-@test "ACPI: fixture DSDT is used only on fixture roots without a live table" {
+@test "ACPI: fixture table is used only on fixture roots without a live table" {
     stock_lacks_everything
     acpi_device
     rm "$AX20_ROOT/sys/firmware/acpi/tables/DSDT"
     fake_acpi_tool 0
-    printf 'fixture dsdt' >"$BATS_TEST_TMPDIR/x20-dsdt.aml"
-    AUDIO_ACPI_FIXTURE_DSDT="$BATS_TEST_TMPDIR/x20-dsdt.aml"
+    printf 'fixture table' >"$BATS_TEST_TMPDIR/x20-table.aml"
+    AUDIO_ACPI_FIXTURE_TABLE="$BATS_TEST_TMPDIR/x20-table.aml"
     run component_apply audio
     assert_success
-    grep -qx -- --dsdt "$BATS_TEST_TMPDIR/tool-args"
-    grep -qx -- "$BATS_TEST_TMPDIR/x20-dsdt.aml" "$BATS_TEST_TMPDIR/tool-args"
+    grep -qx -- --table "$BATS_TEST_TMPDIR/tool-args"
+    grep -qx -- "$BATS_TEST_TMPDIR/x20-table.aml" "$BATS_TEST_TMPDIR/tool-args"
 }
 
 @test "ACPI: 'no override needed' and failures install nothing and do not fail apply" {
@@ -557,9 +558,45 @@ acpi_device() {
     acpi_device
     fake_acpi_tool 0
     component_apply audio
-    cp "$AX20_ROOT/var/lib/ally-x20-steamos/acpi/DSDT.patched.aml" "$AX20_ROOT/sys/firmware/acpi/tables/DSDT"
+    cp "$AX20_ROOT/var/lib/ally-x20-steamos/acpi/TABLE.patched.aml" "$AX20_ROOT/sys/firmware/acpi/tables/DSDT"
     fake_acpi_tool 2 # would fail if called
     run component_apply audio
     assert_success
     assert_output_contains "override active and installed"
+}
+
+@test "ACPI: the flag in an SSDT (as on the real X20: SSDT8 'OEMACP') is found like in the DSDT" {
+    stock_lacks_everything
+    acpi_device
+    # Real X20: DSDT has no flag, SSDT8 does. Keep a flag-less DSDT around.
+    printf 'DSDT\001\002no flag here' >"$AX20_ROOT/sys/firmware/acpi/tables/DSDT"
+    printf 'SSDT\001\002unrelated' >"$AX20_ROOT/sys/firmware/acpi/tables/SSDT3"
+    fake_dsdt /sys/firmware/acpi/tables/SSDT8 '\020'
+    [ "$(_audio_acpi_live_table)" = "$AX20_ROOT/sys/firmware/acpi/tables/SSDT8" ]
+    fixture_file /proc/asound/cards " 0 [Generic ]: HD-Audio Generic"
+    run audio_probe_acpi
+    [ "$status" -eq 1 ] # flag 0x10 and no SoundWire card: still needed
+    fake_acpi_tool 0
+    run component_apply audio
+    assert_success
+    [ -f "$AX20_ROOT/efi/EFI/steamos/ally-x20-steamos-acpi.img" ]
+    # override active: the live SSDT8 is now our patched table -> unknown, nothing rebuilt
+    cp "$AX20_ROOT/var/lib/ally-x20-steamos/acpi/TABLE.patched.aml" "$AX20_ROOT/sys/firmware/acpi/tables/SSDT8"
+    run audio_probe_acpi
+    [ "$status" -eq 2 ]
+    fake_acpi_tool 2
+    run component_apply audio
+    assert_success
+    assert_output_contains "override active and installed"
+}
+
+@test "ACPI: unreadable tables (not root) defer the step instead of failing" {
+    stock_lacks_everything
+    acpi_device
+    rm "$AX20_ROOT/sys/firmware/acpi/tables/DSDT"
+    fake_acpi_tool 0
+    AUDIO_ACPI_FIXTURE_TABLE="$BATS_TEST_TMPDIR/does-not-exist"
+    run component_apply audio
+    assert_success
+    assert_output_contains "ACPI step pending"
 }

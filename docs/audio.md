@@ -33,7 +33,7 @@ Everything is recorded in the manifest and removed by `uninstall`.
 | `/var/lib/ally-x20-steamos/firmware/` | pinned, SHA-256-verified TAS2783 tunings plus links under the names the driver requests |
 | `/var/lib/ally-x20-steamos/ucm2/` | UCM overlay (see below) |
 | `/etc/environment.d/90-ally-x20-steamos-ucm.conf` | `ALSA_CONFIG_UCM2=/var/lib/ally-x20-steamos/ucm2`; written only after the overlay is complete |
-| `/var/lib/ally-x20-steamos/acpi/` | `ally-x20-steamos-acpi.img`, `DSDT.patched.aml`, `DSDT.orig.aml`, `BUILD-INFO` from the ACPI tool |
+| `/var/lib/ally-x20-steamos/acpi/` | `ally-x20-steamos-acpi.img`, `TABLE.patched.aml`, `TABLE.orig.aml`, `BUILD-INFO` from the ACPI tool |
 | `/efi/EFI/steamos/ally-x20-steamos-acpi.img` | the early initrd on the active slot's ESP (manifest slot `esp`) |
 | active slot's boot entry | early initrd added by `slot_set_early_initrd` from `lib/slots.sh` (the plan's documented exception; original saved by that library) |
 
@@ -42,7 +42,7 @@ and is skipped (logged, never fatal) when anything is missing. It uses the
 live `/sys/firmware/acpi/tables/DSDT`; the repository's
 `acpi/fixtures/x20-dsdt.aml` is only used against a fixture or VM root, never
 on hardware. While our override is active the tool rebuilds from the saved
-`DSDT.orig.aml`; if the BIOS changed since (tool exit 5), apply asks you to
+`TABLE.orig.aml`; if the BIOS changed since (tool exit 5), apply asks you to
 boot once without the override.
 
 ### Why the UCM overlay is a symlink tree
@@ -146,3 +146,13 @@ for a test, unset the variable for the session (commands above with
   differently from `acp70_tas2783x2_l0u8b_rt721_l1u0`.
 - The amps' feedback capture stream (`SDW0-PIN4-CAPTURE-SmartAmp`) fails to
   start per hungarianhc; no application uses it.
+
+## Measured on the X20 (2026-10-31)
+
+- The `acp-audio-config-flag` property is **not in the DSDT**. It lives in an
+  SSDT (OEM `AMD`, table ID `OEMACP`, `SSDT8` on BIOS RC74XA.303) as one
+  `ByteConst 0x10`. The tool scans all tables and the override ships that SSDT.
+- Stock SteamOS 3.9.5 shows only the HDMI audio card; no TAS2783 UCM or
+  firmware is present; `SPEAKER_ID` is 1 (LS supplier).
+- `snd-acp-config` and `snd-soc-acpi-amd-match` are not in the initramfs, so
+  the modprobe `install` hooks take effect on the first load.

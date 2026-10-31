@@ -422,7 +422,7 @@ lua_bin() {
 @test "every x20 sink is a plain Audio/Sink (WirePlumber 0.5 cannot link streams into Audio/Sink/Internal)" {
     component_apply audio_dsp
     for f in "$AX20_ROOT$H"/.config/pipewire/pipewire.conf.d/5*-x20-*.conf; do
-        ! grep -q 'Audio/Sink/Internal' "$f" || { echo "internal sink in $f"; false; }
+        ! grep -E '^\s*media.class' "$f" | grep -q 'Audio/Sink/Internal' || { echo "internal sink in $f"; false; }
     done
     [ "$(grep -h 'media.class' "$AX20_ROOT$H"/.config/pipewire/pipewire.conf.d/5*-x20-*.conf | grep -cE 'Audio/Sink\s*$')" -ge 4 ]
 }

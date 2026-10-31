@@ -1,0 +1,9 @@
+# Known SteamOS kernel versions the CI builds release artifacts for.
+# Format: <uname -r> <package repo>
+# The full `uname -r` includes Valve's -g<commit> suffix (CONFIG_LOCALVERSION_AUTO);
+# find it in the headers package of the repo (build/kernel-sources.md).
+7.2.7-valve2-2-neptune-72-g31504582a073 jupiter-main
+# 7.2.7-valve2-1-neptune-72-g31504582a073 jupiter-main
+#   headers for pkgrel 1 are no longer in the repo database (superseded by -2);
+#   building it needs the Valve source path (step 3). TODO(hw): confirm which
+#   release the X20 ships with and enable it here if it is still -1.

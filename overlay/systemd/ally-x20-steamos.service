@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Boot-time half of SteamOS update survival (plan §4.2 step 2).
+# Re-applies whatever an update dropped on this slot, re-registers the RAUC
+# handlers, reconciles the boot entry, starts a detached module build when
+# the running kernel has none, runs the probes and writes status.json.
+# Bounded: a stuck run is killed after TimeoutStartSec and boot continues
+# (nothing Requires= this unit). Builds run detached and take effect on the
+# next boot.
+[Unit]
+Description=ally-x20-steamos: re-apply ROG Xbox Ally X20 fixes after SteamOS updates
+Documentation=file:///var/lib/ally-x20-steamos/src/docs/update-survival.md
+After=local-fs.target
+Before=display-manager.service graphical.target
+ConditionPathExists=/var/lib/ally-x20-steamos/src/ally-x20-steamos.sh
+
+[Service]
+Type=oneshot
+ExecStart=/var/lib/ally-x20-steamos/src/ally-x20-steamos.sh boot
+TimeoutStartSec=15s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

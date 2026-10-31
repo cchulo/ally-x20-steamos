@@ -190,32 +190,41 @@ manifest_verify() {
 # directory when needed and records that fact. Idempotent.
 manifest_install_file() {
     local src=$1 dest=$2 component=$3 mode=${4:-0644} slot=${5:-shared}
-    local real created parent_state
+    local real created made
     real=$(ax20_path "$dest")
-    parent_state=$(ax20_mkdir_p "$(dirname "$real")")
-    created=false
-    [ "$parent_state" = created ] && created=true
     if [ -f "$real" ] && ! manifest_has "$dest"; then
         # Something is already there that we did not write. Never clobber a
         # stock file: the drop-in rule means every path we own is ours alone.
         die "refusing to overwrite $dest: it exists and is not in the manifest (not created by $AX20_NAME)"
     fi
+    made=$(ax20_mkdir_p_list "$(dirname "$real")")
+    created=false
+    [ -n "$made" ] && created=true
     ax20_copy_atomic "$src" "$real" "$mode"
     manifest_record "$dest" "$component" file "$(ax20_sha256 "$src")" "$slot" "$created"
-    # Record the parent dir too, so uninstall can remove it if empty.
-    if [ "$created" = true ]; then
-        manifest_record "$(dirname "$dest")" "$component" dir "" "$slot" false
-    fi
+    _manifest_record_made_dirs "$made" "$component" "$slot"
+}
+
+# _manifest_record_made_dirs <newline-list-of-real-dirs> <component> <slot>
+# Record every directory we had to create so uninstall can remove them again
+# (deepest first, only while empty).
+_manifest_record_made_dirs() {
+    local d
+    [ -n "$1" ] || return 0
+    printf '%s\n' "$1" | while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        manifest_record "${d#"$AX20_ROOT"}" "$2" dir "" "$3" false
+    done
 }
 
 # manifest_install_symlink <target> <linkpath> <component> [slot]
 manifest_install_symlink() {
     local target=$1 link=$2 component=$3 slot=${4:-shared}
-    local real created parent_state
+    local real created made
     real=$(ax20_path "$link")
-    parent_state=$(ax20_mkdir_p "$(dirname "$real")")
+    made=$(ax20_mkdir_p_list "$(dirname "$real")")
     created=false
-    [ "$parent_state" = created ] && created=true
+    [ -n "$made" ] && created=true
     if [ -e "$real" ] && ! [ -L "$real" ]; then
         die "refusing to replace $link: a non-symlink exists there"
     fi
@@ -228,7 +237,5 @@ manifest_install_symlink() {
         ln -sfn "$target" "$real"
     fi
     manifest_record "$link" "$component" symlink "$target" "$slot" "$created"
-    if [ "$created" = true ]; then
-        manifest_record "$(dirname "$link")" "$component" dir "" "$slot" false
-    fi
+    _manifest_record_made_dirs "$made" "$component" "$slot"
 }

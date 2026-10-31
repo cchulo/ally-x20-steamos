@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# SPEAKER_ID UEFI variable value -> speaker supplier (supplier names as used in
+# firmware/tas2783.lock). One "<value> <supplier>" pair per line.
+#
+# TODO(hw): unverified by this project. Source: hungarianhc/rog-ally-x20-steamos-speakers
+# (ally-audio-fix.sh @528d4da, tested on BIOS RC74XA.301: 0 = JGX, 1 = LS).
+# stoneharborent/aquarius-os PR #40 uses the same value as the supplier digit
+# of the linux-firmware file name and reports only value 1 as bench-proven.
+# Confirm on a real X20 with: efivar -l | grep -i speaker ; od -An -tx1 <file>
+0 JGX
+1 LS

@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Matthew Schwartz <matthew.schwartz@linux.dev>
+Date: Fri, 16 Oct 2026 00:11:11 -0700
+Subject: [PATCH 3/3] HACK: scripts: use the software backlight on the ASUS ROG
+ Xbox Ally X20
+
+This is definitely not going to be feasible to keep up, but alas...
+add another one to the software backlight list.
+---
+SPDX-License-Identifier: BSD-2-Clause
+Copyright (c) 2013-2022, Valve Corporation; Copyright (c) 2022, NVIDIA CORPORATION
+Upstream: https://github.com/ValveSoftware/gamescope/commit/9c179af58c3ffcad0205b5196df2290fd20d9018
+(PR #2493, merged 2026-10-18)
+Applied unmodified to gamescope 3.16.30.1 by ally-x20-steamos. The full
+BSD-2-Clause text is in patches/gamescope/LICENSE.
+
+ scripts/00-gamescope/displays/asus.rogallyx20.oled.lua | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/scripts/00-gamescope/displays/asus.rogallyx20.oled.lua b/scripts/00-gamescope/displays/asus.rogallyx20.oled.lua
+index e9ee34d..286e426 100644
+--- a/scripts/00-gamescope/displays/asus.rogallyx20.oled.lua
++++ b/scripts/00-gamescope/displays/asus.rogallyx20.oled.lua
+@@ -18,6 +18,8 @@ gamescope.config.known_displays.rogallyx20_oled = {
+         force_enabled = false,
+         eotf = gamescope.eotf.pq,
+         content_driven = true,
++        -- The panel ignores hardware backlight control while in PQ mode.
++        software_backlight = true,
+         -- From the EDID's DisplayID 2 HDR block, which libdisplay-info before 0.4.0 cannot find.
+         max_content_light_level = 1405,
+         max_frame_average_luminance = 800,

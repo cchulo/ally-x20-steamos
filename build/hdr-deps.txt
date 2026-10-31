@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Arch packages build/build-hdr.sh needs inside the build container, on top of
+# an archlinux base with base-devel, git, meson and ninja. One per line;
+# '#' starts a comment. Derived from Valve's gamescope 3.16.30.1-2 package
+# (jupiter-3.9 .PKGINFO depends/makedepends) and the bundled wlroots,
+# libliftoff, vkroots and libdisplay-info subprojects.
+
+# libdisplay-info
+hwdata
+python
+# readelf / nm for the soname and ABI checks
+binutils
+
+# gamescope toolchain
+cmake
+glslang
+pkgconf
+# gamescope headers and libraries
+glm
+vulkan-headers
+vulkan-icd-loader
+wayland
+wayland-protocols
+libxkbcommon
+libdrm
+libinput
+seatd
+systemd-libs
+mesa
+pixman
+lcms2
+libcap
+libavif
+libdecor
+libei
+luajit
+pipewire
+sdl2-compat
+libx11
+libxcb
+libxext
+libxfixes
+libxdamage
+libxcomposite
+libxrender
+libxxf86vm
+libxres
+libxtst
+libxmu
+libxi
+libxcursor
+xcb-util-wm
+xcb-util-errors
+xcb-util-renderutil
+xorg-xwayland

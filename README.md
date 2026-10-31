@@ -5,79 +5,97 @@ Out-of-tree support for the **ASUS ROG Xbox Ally X20** (board `RC74XA`) on
 built from source, survives SteamOS A/B updates, is fully reversible, and is
 testable in a VM before it ever touches the device.
 
-> Status: **pre-release, under active development.** Nothing here has run on
-> an X20 yet; the first milestones are validated in QEMU. See
-> [`X20-STEAMOS-PLAN.md`](X20-STEAMOS-PLAN.md) for the full design and the
-> [milestones](X20-STEAMOS-PLAN.md#8-milestones).
+> **Status: pre-release.** Every piece below is implemented and unit-tested
+> against fixture roots, but nothing has yet run on an X20 or in the SteamOS
+> VM. [`docs/hardware-data.md`](docs/hardware-data.md) lists every fact that
+> still needs a real device, and each component's doc has a "needs the VM"
+> section. The design is in [`X20-STEAMOS-PLAN.md`](X20-STEAMOS-PLAN.md).
 
 ## What it fixes
 
-| Gap on stock SteamOS | Fix | Where it lives |
+| Gap on stock SteamOS | Fix | Component / docs |
 |---|---|---|
-| Speakers silent (two TI TAS2783 amps on AMD SoundWire; BIOS flags the machine as DMIC-only, kernel has no link layout, wrong firmware name, no UCM profile) | ACPI table override via early initrd, one rebuilt kernel module (`snd-soc-acpi-amd-match`), firmware download keyed on the `SPEAKER_ID` UEFI variable, UCM overlay | `acpi/`, `patches/kernel/0001*`, `firmware/`, `overlay/ucm2/` |
-| Controller not matched by the bundled InputPlumber; Quick Access button dead | Upstream X20 device profile as a `devices.d` drop-in + hwdb entry; `0xa0` mapping in the rebuilt `hid-asus-ally` | `overlay/inputplumber/`, `patches/kernel/0012*` |
-| Joystick ring RGB missing from Steam's Customization menu | `hid-asus-ally` registers the LED under a name Steam knows, with fixed channel layout and effect/speed attributes | `patches/kernel/0010*`, `0011*` |
-| HDR not detected (panel metadata lives in a DisplayID 2 block) | `libdisplay-info` ≥ 0.4.0 overlay for Desktop Mode; gamescope with upstream PR #2493 behind a wrapper that falls back to stock | `build/build-hdr.sh`, `overlay/ld.so.conf.d/`, `overlay/bin/gamescope` |
-| No headphone virtual surround / speaker DSP | PipeWire `filter-chain` HRTF sink chosen per stream by channel count, no-upmix, separate speaker chain; all in `~/.config` | `overlay/home/` |
+| **Speakers silent.** Two TI TAS2783 amps on AMD SoundWire; the BIOS flags the machine as DMIC-only, the kernel has no link layout, the driver asks for a firmware name linux-firmware does not ship, and there is no UCM profile. | ACPI table override as an early initrd (pure-Python tool, no `iasl`), one rebuilt module (`snd-soc-acpi-amd-match`), firmware download keyed on the `SPEAKER_ID` UEFI variable, UCM overlay | `audio`, `modules` · [docs/audio.md](docs/audio.md) |
+| **Controller not matched** by the bundled InputPlumber 0.78; Quick Access button dead. | Upstream X20 profile as a `devices.d` drop-in (adapted to the stock daemon's schema) + hwdb autostart; `0xa0` mapping in the rebuilt `hid-asus-ally` | `inputplumber`, `modules` · [docs/inputplumber.md](docs/inputplumber.md) |
+| **Joystick ring RGB** missing from Steam's Customization menu. | `hid-asus-ally` registers the LED under a name Steam knows, with a fixed R/G/B channel layout and effect/speed attributes | `modules` · [docs/rgb.md](docs/rgb.md) |
+| **HDR not detected** (panel metadata lives in a DisplayID 2 block). | libdisplay-info 0.3.0 + DisplayID 2 backport via `ld.so.conf.d` (Desktop Mode); gamescope Lua display profile for the panel, loaded by stock gamescope (Game Mode); optional custom gamescope behind a stock-fallback wrapper | `hdr` · [docs/hdr.md](docs/hdr.md) |
+| **No headphone virtual surround / speaker DSP.** | PipeWire `filter-chain` HRTF sinks (5.1 and 7.1), per-stream routing by channel count in WirePlumber, stereo passes through untouched, separate speaker chain; all in `~/.config` | `audio_dsp` · [docs/audio-dsp.md](docs/audio-dsp.md) |
+| **SteamOS updates wipe out-of-tree changes.** | RAUC pre/post-install handlers, boot service, user notifier; `block`/`degrade` policy when modules cannot be built for an incoming kernel | `update` · [docs/update-survival.md](docs/update-survival.md) |
 
 ## Principles
 
 - **Only add files, never edit stock ones.** Everything goes through drop-in
-  directories with an `ally-x20-steamos` prefix and is recorded in a manifest.
-  Two documented exceptions (boot entry, RAUC handler registration) are
-  saved and restored byte-for-byte.
+  directories with an `ally-x20-steamos`/`x20` marker in the name and is
+  recorded in a manifest. Two documented exceptions (the slot's GRUB boot
+  entry and the RAUC handler registration) are saved first and restored
+  byte-for-byte.
 - **Nothing under `/usr`, ever.** `steamos-readonly` is never toggled; a
   policy test fails the build if the string appears.
-- **Survives updates.** State lives in `/var/lib/ally-x20-steamos`; a RAUC
-  hook and a boot service re-derive `/etc` and boot entries for a freshly
-  staged slot and rebuild kernel modules for a new kernel.
+- **Survives updates.** State lives in `/var/lib/ally-x20-steamos`, a symlink
+  into the shared `/home` partition (SteamOS has a separate 256 MiB `var`
+  per slot). A RAUC hook and a boot service re-derive `/etc` drop-ins, the
+  boot entry and the kernel modules for a freshly staged slot.
 - **Never a broken boot.** Patched modules load only when the running kernel
   matches the build; otherwise stock behaviour. A custom gamescope that does
   not accept the session's flags execs the stock one.
-- **Reversible from any state.** `uninstall` works from a partial manifest,
-  mid-update, from the other slot, or from recovery media.
+- **Reversible from any state.** The standalone POSIX uninstaller works from
+  a partial manifest, mid-update, from the other slot, or from recovery
+  media, and refuses a deny-list of paths even if the manifest is crafted.
+- **Probes, never auto-removal.** When a SteamOS update ships a fix natively
+  the component is reported `superseded` and you choose to run
+  `uninstall --superseded`.
 
-## Quick start (not yet; the installer is work in progress)
+## Install (once v0.1 is tagged; untested on hardware so far)
 
 ```sh
-# Desktop Mode terminal on the X20, once v0.1 is tagged:
+# Desktop Mode terminal on the X20
 git clone https://github.com/cchulo/ally-x20-steamos.git
-sudo ./ally-x20-steamos/ally-x20-steamos.sh install
+cd ally-x20-steamos
+sudo ./ally-x20-steamos.sh install      # clones into the state dir, pins keys, applies, prints status
 ```
 
-CLI overview (`ally-x20-steamos.sh help` lists what is implemented):
+See [docs/install.md](docs/install.md). There is also a `bootstrap.sh` for a
+one-liner; the docs explain why cloning and reading first is preferred.
+
+## CLI
+
+```
+ally-x20-steamos.sh [--root <dir>] [--dry-run] [--verbose] [--yes] [--i-know] <command>
+```
 
 | Command | Purpose |
 |---|---|
-| `install` | bootstrap: clone to `/var/lib/ally-x20-steamos/src`, then `apply` |
-| `apply [--slot <mount>]` | (re)install every component onto a root; idempotent |
-| `status` | per component: `active`, `stock`, `superseded`, `n/a` |
-| `probe` | ask "has SteamOS caught up?" for each component |
-| `rebuild` | rebuild kernel modules for the running (or staged) kernel |
-| `self-update [--rollback]` | fetch, verify signed tag, migrate, apply |
-| `audio-dsp on\|off` | toggle the PipeWire virtual-surround/speaker chain |
-| `update-policy block\|degrade [--once]` | what to do when modules cannot be built for an incoming kernel |
-| `audit` | compare the manifest with the filesystem |
-| `uninstall [--superseded] [--dry-run]` | remove what we added, restore saved originals |
+| `install` | bootstrap: clone to `/var/lib/ally-x20-steamos/src`, pin keys, `apply`, `status` |
+| `apply [--slot <mount>] [--only <c>] [--missing-only] [--verify-only]` | (re)install components here or into a mounted slot; idempotent |
+| `status [--json] [--verbose]` | per component `active` / `stock` / `superseded` / `n/a`, kernel, policy, DSP state |
+| `probe [--notify]` | "has SteamOS caught up?" per component |
+| `rebuild [--kver <v>]` | fetch or build the patched kernel modules (cache → release asset → container build) |
+| `self-update [--channel stable\|beta] [--check] [--rollback]` | signed-tag update of the checkout, migrations, re-apply |
+| `audio-dsp on\|off\|status\|hrtf <set>\|stereo-hrtf on\|off\|test` | the PipeWire chain |
+| `update-policy show\|block\|degrade [--once]` | what an update does if modules cannot be built |
+| `boot-entry show\|set\|clear\|apply\|restore` | the boot-entry exception (early initrd, cmdline args) |
+| `audit [--json]` | manifest vs filesystem: modified, missing, unexpected |
+| `uninstall [--superseded] [--component <c>] [--force] [--keep-state] [--reboot]` | remove what we added, restore saved originals |
+| `components`, `version`, `help` | introspection |
 
-Global options: `--root <dir>` (operate on a fixture or mounted slot),
-`--dry-run`, `--verbose`, `--yes`, `--i-know`.
+`boot`, `notify` and `rauc-handler` are internal entry points for the systemd
+units and RAUC. Every command accepts `--root <dir>` and runs unchanged
+against a fixture tree, which is how the test suite works.
 
 ## Repository layout
 
-See [`docs/architecture.md`](docs/architecture.md) for the component model and
-[`X20-STEAMOS-PLAN.md` §2](X20-STEAMOS-PLAN.md#2-repository-layout) for the
-full tree. In short:
-
 ```
-ally-x20-steamos.sh   CLI dispatcher          lib/        shell library (manifest, probes, components, slots, modules)
-cmd/                  one file per command    components/ one file per fix (audio, inputplumber, hdr, rgb, audio_dsp, ...)
-overlay/              files installed onto the device (tracked by the manifest)
-patches/kernel/       kernel patches          build/      container build scripts for modules, InputPlumber, HDR stack
-acpi/                 DSDT dump + ACP flag patch tool (Python)
-firmware/             pinned linux-firmware blobs (lock file only)
-vm/                   QEMU/KVM harness        tests/      bats (shell) and pytest (Python)
-docs/                 user and developer documentation
+ally-x20-steamos.sh   CLI dispatcher            lib/          common, manifest, probes, component, slots, rauc, modules, selfupdate, status, notify
+cmd/                  one file per command      components/   audio, audio_dsp, hdr, inputplumber, modules, update
+overlay/              files installed on the device (manifest-tracked)   uninstall/   standalone POSIX uninstaller
+patches/kernel/       0001-0002 ASoC (audio), 0010-0012 hid-asus-ally     patches/{gamescope,libdisplay-info}/
+build/                Containerfile, build-modules.sh, build-hdr.sh, build-inputplumber.sh, build-libmysofa.sh, kernel-sources.md
+acpi/                 patch-acp-flag.py (DSDT flag patch + early initrd), dump-dsdt.md, fixtures/, tests/
+firmware/             tas2783.lock, fetch-tas2783.sh, speaker-id.map       keys/        release signing key placeholders
+vm/                   run-steamos-vm.sh, setup-fedora-host.sh, guest/ scripts, test LED module, ci/
+migrations/           idempotent self-update migrations                     tests/       bats suites (shell), fixtures
+docs/                 user and developer documentation (index: docs/README.md)
+.github/workflows/    test.yml (lint + unit, Ubuntu + macOS bash 3.2), build-modules.yml, vm-tests.yml
 ```
 
 ## Developing
@@ -89,9 +107,18 @@ make test       # tests only
 ```
 
 Requirements on a dev host: bash (3.2 is enough; SteamOS has 5), `bats-core`,
-`shellcheck`, `shfmt`, `jq`, `python3` + `pytest`. VM work needs an x86 host
-with KVM (see [`vm/README.md`](vm/README.md)). Read
-[`docs/contributing.md`](docs/contributing.md) before opening a PR.
+`shellcheck`, `shfmt`, `jq`, `python3` + `pytest`. Compiling kernel modules,
+the HDR stack and the VM runs need an x86 Linux host with KVM and podman
+(see [docs/vm-testing.md](docs/vm-testing.md) and `vm/setup-fedora-host.sh`).
+Read [docs/contributing.md](docs/contributing.md) before opening a PR.
+
+## Roadmap
+
+Milestones 1 to 8 of the plan exist as code; what remains is validation:
+first the SteamOS VM (install/uninstall round-trip, update survival, module
+build), then the first boot on an X20 to collect the hardware facts, adjust
+what the dumps disagree with, and tag v0.1 with CI-built module artifacts.
+Milestone 9 and the optional Decky plugin come after that.
 
 ## License
 

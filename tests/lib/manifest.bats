@@ -55,6 +55,16 @@ setup() {
     manifest_verify /etc/modprobe.d/ally-x20-steamos.conf
 }
 
+@test "manifest_install_file records every created ancestor directory" {
+    manifest_install_file "$SRC" /home/deck/.config/wireplumber/scripts/x20-route.lua audio_dsp 0644 home
+    manifest_has /home
+    manifest_has /home/deck
+    manifest_has /home/deck/.config
+    manifest_has /home/deck/.config/wireplumber
+    manifest_has /home/deck/.config/wireplumber/scripts
+    [ "$(manifest_paths | wc -l | tr -d ' ')" = 6 ]
+}
+
 @test "manifest_install_file does not record created_dir for existing parent" {
     mkdir -p "$AX20_ROOT/etc/modprobe.d"
     manifest_install_file "$SRC" /etc/modprobe.d/x.conf audio

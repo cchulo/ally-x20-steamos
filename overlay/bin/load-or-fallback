@@ -1,0 +1,136 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# load-or-fallback — modprobe.d `install` helper of ally-x20-steamos.
+#
+# Installed to /var/lib/ally-x20-steamos/bin/load-or-fallback and referenced
+# from /etc/modprobe.d/ally-x20-steamos-modules.conf:
+#   install <module> /var/lib/ally-x20-steamos/bin/load-or-fallback <module> $CMDLINE_OPTS
+#
+# Loads /var/lib/ally-x20-steamos/modules/$(uname -r)/<module>.ko.zst when it
+# exists and its vermagic matches the running kernel; otherwise, or when any
+# step fails, loads the stock module with `modprobe --ignore-install`.
+# It must never break boot: every failure falls back to stock behaviour and
+# is logged to the journal (logger) or the kernel log.
+#
+# POSIX sh only (runs from udev/modprobe context). AX20_ROOT is honoured only
+# so tests can point it at a fixture tree; it is empty on a real system.
+set -eu
+
+AX20_NAME=ally-x20-steamos
+ROOT=${AX20_ROOT:-}
+STATE_DIR="$ROOT/var/lib/$AX20_NAME"
+TMP_KO=""
+
+log() {
+    if command -v logger >/dev/null 2>&1; then
+        logger -t "$AX20_NAME" -- "load-or-fallback: $*" 2>/dev/null && return 0
+    fi
+    if [ -w /dev/kmsg ]; then
+        printf '<5>%s: load-or-fallback: %s\n' "$AX20_NAME" "$*" >/dev/kmsg 2>/dev/null || true
+    fi
+    return 0
+}
+
+cleanup() {
+    if [ -n "$TMP_KO" ]; then
+        rm -f "$TMP_KO" 2>/dev/null || true
+    fi
+}
+
+# stock <module> [opts...] : the unpatched module, bypassing our install hook.
+stock() {
+    cleanup
+    exec modprobe --ignore-install "$@"
+}
+
+# vermagic_kver <ko> : first word of the module's vermagic.
+vermagic_kver() {
+    modinfo -F vermagic "$1" 2>/dev/null | awk 'NR == 1 { print $1 }'
+}
+
+# decompress <ko.zst> : decompressed temp copy in TMP_KO (call directly,
+# not in a command substitution, so cleanup sees the path).
+decompress() {
+    command -v zstd >/dev/null 2>&1 || return 1
+    cleanup
+    TMP_KO=$(mktemp "${TMPDIR:-/tmp}/$AX20_NAME-ko.XXXXXX") || return 1
+    zstd -q -f -dc "$1" >"$TMP_KO" 2>/dev/null
+}
+
+# load_deps <ko> : load the module's dependencies through modprobe, so they
+# get the same treatment (their own install hooks, or stock).
+load_deps() {
+    deps=$(modinfo -F depends "$1" 2>/dev/null | tr ',' ' ')
+    for d in $deps; do
+        [ -n "$d" ] || continue
+        modprobe "$d" 2>/dev/null || log "dependency $d of $mod failed to load"
+    done
+    return 0
+}
+
+# try_patched <module> [opts...] : 0 if our build was loaded.
+try_patched() {
+    mod=$1
+    shift
+    kver=$(uname -r 2>/dev/null) || return 1
+    ko="$STATE_DIR/modules/$kver/$mod.ko.zst"
+    if [ ! -f "$ko" ]; then
+        # Common after a SteamOS update until the rebuild lands: not an error.
+        log "no patched $mod for $kver; using stock"
+        return 1
+    fi
+    file=$ko
+    vm=$(vermagic_kver "$file" || true)
+    if [ -z "$vm" ]; then
+        # modinfo without zstd support: inspect a decompressed copy instead.
+        decompress "$ko" || {
+            log "cannot read $ko; using stock $mod"
+            return 1
+        }
+        file=$TMP_KO
+        vm=$(vermagic_kver "$file" || true)
+    fi
+    if [ "$vm" != "$kver" ]; then
+        log "patched $mod has vermagic '$vm', running kernel is '$kver'; using stock"
+        return 1
+    fi
+    load_deps "$file"
+    if insmod "$file" "$@" 2>/dev/null; then
+        log "loaded patched $mod for $kver"
+        return 0
+    fi
+    # insmod built without zstd (or the kernel refused the compressed image):
+    # retry once with a decompressed copy before giving up.
+    if [ "$file" = "$ko" ]; then
+        decompress "$ko" || {
+            log "insmod of $ko failed and it cannot be decompressed; using stock $mod"
+            return 1
+        }
+        file=$TMP_KO
+        if insmod "$file" "$@" 2>/dev/null; then
+            log "loaded patched $mod for $kver (decompressed)"
+            return 0
+        fi
+    fi
+    log "insmod of patched $mod failed; using stock"
+    return 1
+}
+
+main() {
+    if [ $# -lt 1 ] || [ -z "$1" ]; then
+        log "called without a module name"
+        exit 0
+    fi
+    mod=$1
+    # Already loaded (e.g. by the initramfs): nothing to do.
+    if [ -d "$ROOT/sys/module/$(printf '%s' "$mod" | tr '-' '_')" ]; then
+        exit 0
+    fi
+    if try_patched "$@"; then
+        cleanup
+        exit 0
+    fi
+    stock "$@"
+}
+
+main "$@"

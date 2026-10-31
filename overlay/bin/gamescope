@@ -1,0 +1,286 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+# ally-x20-steamos gamescope wrapper (component: hdr, plan §5 "Special case").
+#
+# Installed as /var/lib/ally-x20-steamos/bin/gamescope and put first on PATH
+# for gamescope-session.service only (systemd user drop-in), so the stock
+# session's `exec gamescope ...` lands here. It runs our build from
+# /opt/ally-x20-steamos/gamescope when that build exists and accepts every
+# flag the session passed; otherwise it execs stock gamescope and records
+# why in /var/lib/ally-x20-steamos/state/gamescope-status.txt.
+#
+# Rules: never fail (every problem ends in exec of stock gamescope), no
+# network, no forks on the normal path (bash builtins only; `--help` of our
+# build is run once per build and cached).
+#
+# Environment (tests and debugging only):
+#   AX20_ROOT                      fixture root prefix (empty on a real system)
+#   AX20_GAMESCOPE_PREFIX          our build (default /opt/ally-x20-steamos/gamescope)
+#   AX20_GAMESCOPE_DISABLE=1       always run stock
+#   AX20_GAMESCOPE_WRAPPER_MODE=refresh-cache   rebuild the flag cache and exit
+#   AX20_GAMESCOPE_WRAPPER_FAULT=1 simulate an internal error (tests)
+
+shopt -s execfail 2>/dev/null
+set -E
+
+ax20_gs_root=${AX20_ROOT:-}
+ax20_gs_root=${ax20_gs_root%/}
+ax20_gs_prefix=${AX20_GAMESCOPE_PREFIX:-/opt/ally-x20-steamos/gamescope}
+ax20_gs_state="$ax20_gs_root/var/lib/ally-x20-steamos/state"
+ax20_gs_status_file="$ax20_gs_state/gamescope-status.txt"
+ax20_gs_cache_file="$ax20_gs_state/gamescope-flags.cache"
+ax20_gs_ours="$ax20_gs_root$ax20_gs_prefix/bin/gamescope"
+ax20_gs_build_info="$ax20_gs_root$ax20_gs_prefix/BUILD-INFO"
+ax20_gs_flags_file="$ax20_gs_root$ax20_gs_prefix/share/ally-x20-steamos/accepted-flags"
+ax20_gs_libdir="$ax20_gs_root/var/lib/ally-x20-steamos/lib"
+ax20_gs_stock_profile="$ax20_gs_root/usr/share/gamescope/scripts/00-gamescope/displays/asus.rogallyx20.oled.lua"
+ax20_gs_self=$0
+ax20_gs_self_dir=${0%/*}
+[ "$ax20_gs_self_dir" = "$0" ] && ax20_gs_self_dir=.
+ax20_gs_build_id=""
+ax20_gs_ldi_mode=""
+ax20_gs_flags="|"
+ax20_gs_bad=""
+ax20_gs_stock_bin="$ax20_gs_root/usr/bin/gamescope"
+
+# ax20_gs_write_status <selection> <reason> : best effort; the canonical file
+# is pre-created writable by `apply`, else fall back to the runtime dir.
+ax20_gs_write_status() {
+    local f=$ax20_gs_status_file usable=0
+    if [ -e "$f" ]; then
+        [ -f "$f" ] && [ -w "$f" ] && usable=1
+    elif [ -d "$ax20_gs_state" ] && [ -w "$ax20_gs_state" ]; then
+        usable=1
+    fi
+    if [ "$usable" = 0 ]; then
+        [ -n "${XDG_RUNTIME_DIR:-}" ] || return 0
+        f="$XDG_RUNTIME_DIR/ally-x20-steamos"
+        [ -d "$f" ] || mkdir -p "$f" 2>/dev/null || return 0
+        f="$f/gamescope-status.txt"
+    fi
+    printf 'selection=%s\nreason=%s\nbuild_id=%s\nargs=%s\n' \
+        "$1" "$2" "$ax20_gs_build_id" "$ax20_gs_args" >"$f" 2>/dev/null
+    return 0
+}
+
+# ax20_gs_strip_path : drop our own directory from PATH so children (Steam,
+# nested gamescope) see the stock PATH and nothing loops back here.
+ax20_gs_strip_path() {
+    local out="" entry rest="${PATH:-}:"
+    while [ -n "$rest" ]; do
+        entry=${rest%%:*}
+        rest=${rest#*:}
+        [ -n "$entry" ] || continue
+        [ "$entry" = "$ax20_gs_self_dir" ] && continue
+        if [ -e "$entry/gamescope" ] && [ "$entry/gamescope" -ef "$ax20_gs_self" ]; then
+            continue
+        fi
+        out="${out:+$out:}$entry"
+    done
+    PATH=$out
+    export PATH
+}
+
+# ax20_gs_find_stock : sets ax20_gs_stock_bin to the first gamescope on the
+# (stripped) PATH that is not us; /usr/bin/gamescope if there is none.
+ax20_gs_find_stock() {
+    local entry rest="${PATH:-}:"
+    ax20_gs_stock_bin="$ax20_gs_root/usr/bin/gamescope"
+    while [ -n "$rest" ]; do
+        entry=${rest%%:*}
+        rest=${rest#*:}
+        [ -n "$entry" ] || continue
+        if [ -x "$entry/gamescope" ] && ! [ "$entry/gamescope" -ef "$ax20_gs_self" ]; then
+            ax20_gs_stock_bin="$entry/gamescope"
+            return 0
+        fi
+    done
+    return 0
+}
+
+ax20_gs_fallback() {
+    local stock
+    trap - ERR
+    ax20_gs_write_status stock "$1"
+    ax20_gs_strip_path
+    ax20_gs_find_stock
+    stock=$ax20_gs_stock_bin
+    exec "$stock" "${ax20_gs_argv[@]}"
+    # exec failed: nothing else we can try.
+    printf 'ally-x20-steamos: cannot exec stock gamescope (%s)\n' "$stock" >&2
+    exit 127
+}
+
+# ax20_gs_read_build_info : sets ax20_gs_build_id / ax20_gs_ldi_mode.
+ax20_gs_read_build_info() {
+    local line
+    [ -r "$ax20_gs_build_info" ] || return 1
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            build_id=*) ax20_gs_build_id=${line#build_id=} ;;
+            gamescope_libdisplay_info=*) ax20_gs_ldi_mode=${line#gamescope_libdisplay_info=} ;;
+        esac
+    done <"$ax20_gs_build_info"
+    [ -n "$ax20_gs_build_id" ]
+}
+
+# ax20_gs_load_cache <file> : fills ax20_gs_flags if the file belongs to the
+# current build (first line "build_id=<id>").
+ax20_gs_load_cache() {
+    local line first=1 flags="|"
+    [ -r "$1" ] || return 1
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [ "$first" = 1 ]; then
+            [ "$line" = "build_id=$ax20_gs_build_id" ] || return 1
+            first=0
+            continue
+        fi
+        case "$line" in -*) flags="$flags$line|" ;; esac
+    done <"$1"
+    [ "$first" = 0 ] || return 1
+    [ "$flags" != "|" ] || return 1
+    ax20_gs_flags=$flags
+}
+
+# ax20_gs_help_flags : parse `ours --help` (option names at the start of
+# each option line, e.g. "  -W, --output-width   output width").
+ax20_gs_help_flags() {
+    local out line word rc=0
+    if command -v timeout >/dev/null 2>&1; then
+        out=$(timeout 10 "$ax20_gs_ours" --help 2>&1) || rc=$?
+    else
+        out=$("$ax20_gs_ours" --help 2>&1) || rc=$?
+    fi
+    [ "$rc" = 0 ] || return 1
+    while IFS= read -r line; do
+        set -f
+        # shellcheck disable=SC2086 # word splitting is the point here
+        set -- $line
+        set +f
+        for word in "$@"; do
+            word=${word%,}
+            case "$word" in
+                --?*) printf '%s\n' "${word%%=*}" ;;
+                -[A-Za-z0-9]) printf '%s\n' "$word" ;;
+                *) break ;;
+            esac
+        done
+    done <<EOF
+$out
+EOF
+}
+
+# ax20_gs_refresh_cache : write a new cache for the current build into the
+# first writable place (state dir, else $XDG_RUNTIME_DIR). Returns 1 when
+# our build cannot even print its help.
+ax20_gs_refresh_cache() {
+    local help dest tmp line flags="|"
+    help=$(ax20_gs_help_flags) || return 1
+    [ -n "$help" ] || return 1
+    while IFS= read -r line; do
+        case "$line" in -*) flags="$flags$line|" ;; esac
+    done <<EOF
+$help
+EOF
+    if [ -r "$ax20_gs_flags_file" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in -*) flags="$flags$line|" ;; esac
+        done <"$ax20_gs_flags_file"
+    fi
+    ax20_gs_flags=$flags
+    dest=$ax20_gs_cache_file
+    if ! [ -w "$ax20_gs_state" ]; then
+        [ -n "${XDG_RUNTIME_DIR:-}" ] || return 0
+        dest="$XDG_RUNTIME_DIR/ally-x20-steamos/gamescope-flags.cache"
+        mkdir -p "${dest%/*}" 2>/dev/null || return 0
+    fi
+    tmp="$dest.$$"
+    {
+        printf 'build_id=%s\n' "$ax20_gs_build_id"
+        printf '%s\n' "$help"
+        [ -r "$ax20_gs_flags_file" ] && cat "$ax20_gs_flags_file"
+    } >"$tmp" 2>/dev/null && mv -f "$tmp" "$dest" 2>/dev/null
+    rm -f "$tmp" 2>/dev/null
+    return 0
+}
+
+# ax20_gs_check_args : 0 if every option in the session's argv is known to
+# our build; sets ax20_gs_bad to the first unknown one.
+ax20_gs_check_args() {
+    local a name rest c
+    ax20_gs_bad=""
+    for a in "${ax20_gs_argv[@]}"; do
+        case "$a" in
+            --) return 0 ;;
+            --*)
+                name=${a%%=*}
+                case "$ax20_gs_flags" in *"|$name|"*) ;; *)
+                    ax20_gs_bad=$name
+                    return 1
+                    ;;
+                esac
+                ;;
+            -?*)
+                rest=${a#-}
+                while [ -n "$rest" ]; do
+                    c=${rest%"${rest#?}"}
+                    rest=${rest#?}
+                    case "$ax20_gs_flags" in *"|-$c|"*) ;; *)
+                        ax20_gs_bad="-$c"
+                        return 1
+                        ;;
+                    esac
+                done
+                ;;
+        esac
+    done
+    return 0
+}
+
+ax20_gs_main() {
+    if [ "${AX20_GAMESCOPE_WRAPPER_FAULT:-0}" = 1 ]; then
+        false # simulated internal error: the ERR trap must take over
+    fi
+    if [ "${AX20_GAMESCOPE_WRAPPER_MODE:-}" = refresh-cache ]; then
+        ax20_gs_read_build_info || return 0
+        [ -x "$ax20_gs_ours" ] || return 0
+        ax20_gs_refresh_cache
+        return $?
+    fi
+    if [ "${AX20_GAMESCOPE_DISABLE:-0}" = 1 ]; then
+        ax20_gs_fallback "disabled by AX20_GAMESCOPE_DISABLE=1"
+    fi
+    if [ -f "$ax20_gs_stock_profile" ]; then
+        ax20_gs_fallback "stock gamescope ships the X20 display profile (superseded)"
+    fi
+    [ -x "$ax20_gs_ours" ] || ax20_gs_fallback "no custom build at $ax20_gs_prefix"
+    ax20_gs_read_build_info || ax20_gs_fallback "custom build has no valid BUILD-INFO"
+    if ! ax20_gs_load_cache "$ax20_gs_cache_file"; then
+        if [ -z "${XDG_RUNTIME_DIR:-}" ] \
+            || ! ax20_gs_load_cache "$XDG_RUNTIME_DIR/ally-x20-steamos/gamescope-flags.cache"; then
+            ax20_gs_refresh_cache || ax20_gs_fallback "custom gamescope failed to run --help"
+        fi
+    fi
+    ax20_gs_check_args || ax20_gs_fallback "custom build does not accept session flag $ax20_gs_bad"
+
+    trap - ERR
+    ax20_gs_write_status ours "custom build accepts all session flags"
+    ax20_gs_strip_path
+    if [ "$ax20_gs_ldi_mode" = shared ]; then
+        LD_LIBRARY_PATH="$ax20_gs_libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        export LD_LIBRARY_PATH
+    fi
+    # shellcheck disable=SC2093  # exec only returns when it fails; then fall back
+    exec "$ax20_gs_ours" "${ax20_gs_argv[@]}"
+    ax20_gs_fallback "exec of custom build failed"
+}
+
+ax20_gs_argv=("$@")
+ax20_gs_args="$*"
+trap 'ax20_gs_fallback "wrapper error (line $LINENO)"' ERR
+ax20_gs_main
+rc=$?
+if [ "${AX20_GAMESCOPE_WRAPPER_MODE:-}" = refresh-cache ]; then
+    exit "$rc"
+fi
+ax20_gs_fallback "wrapper returned without exec"

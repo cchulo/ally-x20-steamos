@@ -1,0 +1,43 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+# RAUC pre-install handler of ally-x20-steamos (registered in
+# /etc/rauc/system.conf by lib/rauc.sh, installed as
+# /var/lib/ally-x20-steamos/libexec/rauc-pre-install.hook).
+#
+# RAUC runs it after the bundle is verified and mounted, before anything is
+# written; a non-zero exit aborts the update. Order:
+#   1. ours: `ally-x20-steamos.sh rauc-handler pre-install` (self-update,
+#      make sure modules exist for the incoming kernel, apply update-policy);
+#   2. the stock pre-install handler, if system.conf had one (chained).
+# Self-contained on purpose: if the checkout is gone or broken we only run
+# the chained handler, so ally-x20-steamos can never be the reason an
+# update fails — except by the explicit "block" policy.
+set -u
+
+AX20_STATE_DIR=${AX20_STATE_DIR:-${AX20_ROOT:-}/var/lib/ally-x20-steamos}
+AX20_SRC=${AX20_SRC:-$AX20_STATE_DIR/src}
+export AX20_SRC
+cli=$AX20_SRC/ally-x20-steamos.sh
+
+say() { printf 'ally-x20-steamos rauc pre-install: %s\n' "$*" >&2; }
+chained() { sed -n "s/^$1=//p" "$AX20_STATE_DIR/state/rauc-chain" 2>/dev/null | head -n1; }
+
+rc=0
+if [ -x "$cli" ] && [ -f "$AX20_SRC/cmd/rauc-handler.sh" ]; then
+    "$cli" rauc-handler pre-install || rc=$?
+else
+    say "checkout not found at $AX20_SRC; skipping our checks"
+fi
+if [ "$rc" -ne 0 ]; then
+    say "update blocked by ally-x20-steamos (see: ally-x20-steamos.sh update-policy)"
+    exit "$rc"
+fi
+
+stock=$(chained pre-install)
+if [ -n "$stock" ]; then
+    if [ -x "${AX20_ROOT:-}$stock" ]; then
+        exec "${AX20_ROOT:-}$stock" "$@"
+    fi
+    say "chained handler $stock is not executable; skipping it"
+fi
+exit 0

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Trusted SSH signing keys for ally-x20-steamos release tags (git "allowed
+# signers" format, see ssh-keygen(1) ALLOWED SIGNERS). One line per key:
+#   <principal> namespaces="git" <key-type> <base64-key> [comment]
+# TODO(owner): add the release signing key, e.g.
+#   owner@example.invalid namespaces="git" ssh-ed25519 AAAA... ally-x20-steamos release key
+# While this file has no entry (and no *.asc holds a key), self-update
+# refuses every release unless --insecure-skip-verify is given.

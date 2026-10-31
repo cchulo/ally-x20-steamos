@@ -63,6 +63,39 @@ ax20_path() {
 }
 
 ax20_state_dir() { ax20_path "$AX20_STATE_REL"; }
+
+# Where the state really lives. SteamOS has a separate var-A/var-B partition
+# per slot (256 MiB, rsynced across on update), so /var/lib/ally-x20-steamos
+# is a symlink into the shared /home partition, like SteamOS's own
+# /home/.steamos/offload. AX20_STATE_REL stays the canonical path everywhere.
+AX20_STATE_REAL_REL="/home/.${AX20_NAME}"
+export AX20_STATE_REAL_REL
+
+# ax20_state_dir_ensure : make sure the state dir exists on this root. If
+# /var/lib/ally-x20-steamos is absent and the root has a /home, create the
+# real directory under /home and the symlink; if a real directory is already
+# there (older install, fixture roots) it is kept as is. Prints the path.
+ax20_state_dir_ensure() {
+    local link real
+    link=$(ax20_state_dir)
+    real=$(ax20_path "$AX20_STATE_REAL_REL")
+    if [ -L "$link" ] || [ -d "$link" ]; then
+        printf '%s\n' "$link"
+        return 0
+    fi
+    if [ -d "$(ax20_path /home)" ]; then
+        if [ "$AX20_DRY_RUN" = 1 ]; then
+            printf '[dry-run] mkdir -p %s; ln -s ../..%s %s\n' "$real" "$AX20_STATE_REAL_REL" "$link" >&2
+        else
+            mkdir -p "$real" "$(dirname "$link")" || die "cannot create $real"
+            # Relative, so it resolves inside a mounted slot or a fixture root too.
+            ln -s "../..$AX20_STATE_REAL_REL" "$link" || die "cannot create symlink $link"
+        fi
+    else
+        ax20_mkdir_p "$link" >/dev/null
+    fi
+    printf '%s\n' "$link"
+}
 ax20_manifest_file() { ax20_path "$AX20_MANIFEST_REL"; }
 
 # ---------------------------------------------------------------- logging --
@@ -111,11 +144,13 @@ die() {
 ax20_have() { command -v "$1" >/dev/null 2>&1; }
 
 # ax20_sha256 <file> : hex digest only. Works with coreutils and macOS.
+# Reads via stdin: GNU sha256sum escapes file names containing a backslash
+# or newline and prefixes the digest line with "\".
 ax20_sha256() {
     if ax20_have sha256sum; then
-        sha256sum "$1" | cut -d' ' -f1
+        sha256sum <"$1" | cut -d' ' -f1
     elif ax20_have shasum; then
-        shasum -a 256 "$1" | cut -d' ' -f1
+        shasum -a 256 <"$1" | cut -d' ' -f1
     else
         die "no sha256 tool available"
     fi
@@ -172,6 +207,26 @@ ax20_mkdir_p() {
     fi
     mkdir -p "$1" || die "cannot create directory $1"
     printf 'created\n'
+}
+
+# ax20_mkdir_p_list <dir> : like ax20_mkdir_p, but prints every directory
+# that had to be created, top-most first, one per line (nothing if all
+# existed). Used by the manifest so uninstall can remove each of them again.
+ax20_mkdir_p_list() {
+    local d=$1 missing="" out
+    while [ -n "$d" ] && [ "$d" != / ] && [ ! -d "$d" ]; do
+        missing="$d
+$missing"
+        d=$(dirname "$d")
+    done
+    [ -n "$missing" ] || return 0
+    if [ "$AX20_DRY_RUN" = 1 ]; then
+        printf '[dry-run] mkdir -p %s\n' "$1" >&2
+    else
+        mkdir -p "$1" || die "cannot create directory $1"
+    fi
+    out=$(printf '%s' "$missing" | grep -v '^$')
+    printf '%s\n' "$out"
 }
 
 # ax20_atomic_write <dest> [mode] : write stdin to dest via temp+rename.

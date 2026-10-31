@@ -11,7 +11,9 @@ shell_files() {
 }
 if command -v shellcheck >/dev/null 2>&1; then
     # shellcheck disable=SC2046
-    shellcheck -x $(shell_files) || rc=1
+    # --severity=warning: info-level notes differ between shellcheck versions
+    # (CI has 0.9, dev hosts 0.11); warnings and errors must be clean on both.
+    shellcheck -x --severity=warning $(shell_files) || rc=1
     # bats files are bash too; shellcheck does not know the @test syntax, so
     # we run it with the bats shell dialect disabled checks only when asked.
 else

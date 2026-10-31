@@ -13,7 +13,14 @@
 --               1..2 channels -> hardware sink, untouched (bit-exact), or
 --                                x20-virtual-surround-71 when the
 --                                x20.stereo_hrtf setting is true
---   speakers    everything    -> x20-speakers
+--   speakers    3..8 channels -> x20-speakers-surround (binaural render +
+--                                crosstalk cancellation) when the
+--                                x20.speaker_surround setting is true
+--                                (default), otherwise x20-speakers
+--               1..2 channels -> x20-speakers (downmix/width/EQ), or
+--                                x20-speakers-surround when the
+--                                x20.stereo_surround setting is true
+--               x20-speakers-surround missing -> x20-speakers
 --   other       everything    -> hardware sink (HDMI, line out, USB DAC:
 --                                a receiver decodes surround itself)
 -- Never touched: streams with an explicit target (set by the application or
@@ -24,6 +31,7 @@ local M = {}
 M.SINK_71 = "x20-virtual-surround-71"
 M.SINK_51 = "x20-virtual-surround-51"
 M.SINK_SPEAKERS = "x20-speakers"
+M.SINK_SPEAKERS_SURROUND = "x20-speakers-surround"
 
 -- is_x20_name (name) : true for nodes created by our filter chains
 -- ("x20-..." sinks and their "x20-....output" playback streams).
@@ -148,6 +156,7 @@ end
 --   stream = { media_class, node_name, channels, explicit_target (bool),
 --              link_group (string|nil), encoded (bool) }
 --   env    = { enabled (bool), stereo_hrtf (bool),
+--              speaker_surround (bool, nil = true), stereo_surround (bool),
 --              output = "headphones"|"speakers"|"other",
 --              hardware_sink = name|nil, default_is_x20 (bool),
 --              available = { [sink-name] = true, ... } }
@@ -203,7 +212,19 @@ function M.decide (stream, env)
       return hardware (ch .. " channels on headphones: bit-exact passthrough")
     end
   elseif env.output == "speakers" then
-    want, why = M.SINK_SPEAKERS, "internal speakers"
+    local surround = env.speaker_surround ~= false
+    if ch >= 3 and surround then
+      want, why = M.SINK_SPEAKERS_SURROUND, ch .. " channels on speakers, speaker_surround on"
+    elseif ch <= 2 and env.stereo_surround then
+      want, why = M.SINK_SPEAKERS_SURROUND, ch .. " channels on speakers, stereo_surround on"
+    else
+      want, why = M.SINK_SPEAKERS, ch .. " channels on speakers"
+    end
+    if want == M.SINK_SPEAKERS_SURROUND and not available[want] then
+      -- No HRTF or no sofa plugin: the plain speaker chain is still better
+      -- than the raw hardware sink.
+      want, why = M.SINK_SPEAKERS, why .. ", but " .. M.SINK_SPEAKERS_SURROUND .. " is not loaded"
+    end
   else
     return hardware ("output is neither headphones nor speakers")
   end

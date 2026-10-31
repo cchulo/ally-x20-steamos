@@ -111,6 +111,7 @@ find_live_table() {
 out=""
 dsdt=""
 value=0
+prepatched=0
 all_flag=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -176,7 +177,15 @@ else
         || die 4 "cannot read $sysfs (run as root, or pass --table <file>)"
     info "acp-audio-config-flag lives in $(basename "$sysfs")"
     st=$(flag_state "$tmp/live.aml")
-    if [ "$st" = 0 ] && [ -f "$patched" ] && cmp -s "$tmp/live.aml" "$patched"; then
+    if [ "$st" = 0 ] && [ "$(json_field "$tmp/live.aml" 'r["our_override"]')" = True ] \
+        && ! { [ -f "$patched" ] && cmp -s "$tmp/live.aml" "$patched"; }; then
+        # The live table is our override (creator id AX20) but we have no
+        # saved original (fresh install after an uninstall): reuse it as-is.
+        info "override active (creator id AX20) and no saved original; reusing the live table"
+        cp "$tmp/live.aml" "$tmp/input.aml"
+        source_desc="$sysfs (our override, reused)"
+        prepatched=1
+    elif [ "$st" = 0 ] && [ -f "$patched" ] && cmp -s "$tmp/live.aml" "$patched"; then
         # Our override is active, so sysfs shows our own table. Rebuild from
         # the original we saved, unless the BIOS changed underneath it.
         [ -f "$orig" ] || die 4 "override active but $orig is missing; boot without the override and rebuild"
@@ -194,8 +203,12 @@ else
 fi
 
 st=$(flag_state "$tmp/input.aml")
+if [ "$st" = 0 ] && [ "$prepatched" = 0 ] && [ "$(json_field "$tmp/input.aml" 'r["our_override"]')" = True ]; then
+    # --table pointed at one of our patched tables: package it unchanged.
+    prepatched=1
+fi
 case "$st" in
-    0) die 3 "acp-audio-config-flag is already $value in $source_desc; no override needed" ;;
+    0) [ "$prepatched" = 1 ] || die 3 "acp-audio-config-flag is already $value in $source_desc; no override needed" ;;
     1) ;;
     2) die 2 "$source_desc is not a valid ACPI table" ;;
     *) die 3 "acp-audio-config-flag not found in $source_desc" ;;
@@ -203,12 +216,16 @@ esac
 
 # ----------------------------------------------------------------- build --
 before=$(flag_values "$tmp/input.aml")
-# shellcheck disable=SC2086
-tool patch $all_flag --value "$value" -o "$tmp/patched.aml" "$tmp/input.aml" >&2 \
-    || die "$?" "patch failed"
+if [ "$prepatched" = 1 ]; then
+    cp "$tmp/input.aml" "$tmp/patched.aml"
+else
+    # shellcheck disable=SC2086
+    tool patch $all_flag --value "$value" -o "$tmp/patched.aml" "$tmp/input.aml" >&2 \
+        || die "$?" "patch failed"
+    tool diff --check-expected "$tmp/input.aml" "$tmp/patched.aml" >&2 \
+        || die 2 "patched table differs outside the expected bytes"
+fi
 tool verify --value "$value" "$tmp/patched.aml" >&2 || die "$?" "patched table failed verification"
-tool diff --check-expected "$tmp/input.aml" "$tmp/patched.aml" >&2 \
-    || die 2 "patched table differs outside the expected bytes"
 tool mkinitrd -o "$tmp/image.img" "$tmp/patched.aml" >&2 || die "$?" "mkinitrd failed"
 tool list "$tmp/image.img" | grep -Eq ' kernel/firmware/acpi/(DSDT|SSDT)\.aml$' \
     || die 2 "image does not contain kernel/firmware/acpi/<DSDT|SSDT>.aml"
@@ -227,6 +244,7 @@ img_sha=$(sha256_of "$tmp/image.img")
     echo "output=$IMG_NAME"
     echo "output_sha256=$img_sha"
     echo "flag_value_before=$before"
+    echo "prepatched=$prepatched"
     echo "flag_value_after=$after"
     echo "table_signature=$(json_field "$tmp/input.aml" 'r["header"]["signature"]')"
     echo "table_source=$(basename "$source_desc" | cut -d' ' -f1)"

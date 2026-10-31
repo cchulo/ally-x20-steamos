@@ -61,6 +61,8 @@ EXIT_USAGE = 64
 HEADER_LEN = 36
 CHECKSUM_OFFSET = 9
 OEM_REVISION_OFFSET = 24
+CREATOR_ID_OFFSET = 28
+OUR_CREATOR_ID = b"AX20"  # marks a table patched by this tool (self-identifying override)
 PATCHABLE_SIGNATURES = (b"DSDT", b"SSDT")
 
 # AML integer opcodes (ACPI 6.5, section 20.2.3 "Data Objects Encoding").
@@ -377,6 +379,10 @@ def patch_table(
             out[lo:hi] = new
             changed = True
     struct.pack_into("<I", out, OEM_REVISION_OFFSET, new_rev)
+    # Creator ID "AX20": lets a later run (or a fresh install after an
+    # uninstall) recognise the live table as our override instead of
+    # mistaking the cleared flag for a BIOS fix. The kernel ignores this field.
+    out[CREATOR_ID_OFFSET:CREATOR_ID_OFFSET + 4] = OUR_CREATOR_ID
     out[CHECKSUM_OFFSET] = compute_checksum(bytes(out))
     if len(out) != len(data):  # cannot happen; we only overwrite in place
         raise ToolError("internal error: patched length changed", EXIT_INVALID)
@@ -385,6 +391,19 @@ def patch_table(
 
 
 def expected_regions(data: bytes) -> List[Tuple[int, int, str]]:
+    """Byte ranges a patch may change: flag sites, OEM revision, checksum and
+    the creator-ID marker."""
+    regions = list(_expected_regions_base(data))
+    regions.append((CREATOR_ID_OFFSET, CREATOR_ID_OFFSET + 4, "creator id (AX20 override marker)"))
+    return regions
+
+
+def is_our_override(data: bytes) -> bool:
+    """True when the table carries this tool's creator-ID marker."""
+    return len(data) >= CREATOR_ID_OFFSET + 4 and bytes(data[CREATOR_ID_OFFSET:CREATOR_ID_OFFSET + 4]) == OUR_CREATOR_ID
+
+
+def _expected_regions_base(data: bytes) -> List[Tuple[int, int, str]]:
     """Byte ranges a patch is allowed to change, with a label each."""
     regions = [
         (CHECKSUM_OFFSET, CHECKSUM_OFFSET + 1, "header checksum"),
@@ -582,6 +601,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
             "sha256": sha256(data),
             "file_size": len(data),
             "header": hdr.as_dict(),
+            "our_override": is_our_override(data),
             "length_matches": ok_len,
             "checksum_valid": ok_sum,
             "property": PROPERTY_NAME,
@@ -599,6 +619,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
         _out("OEM table ID:     %r" % _ascii(hdr.oem_table_id))
         _out("OEM revision:     0x%08x" % hdr.oem_revision)
         _out("creator:          %r rev 0x%08x" % (_ascii(hdr.creator_id), hdr.creator_revision))
+        _out("override marker:  %s" % ("yes (creator id AX20: patched by ally-x20-steamos)" if is_our_override(data) else "no"))
         _out("%s: %d occurrence(s)" % (PROPERTY_NAME, len(sites)))
         for s in sites:
             _out("  " + _describe_site(s))

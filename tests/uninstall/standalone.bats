@@ -325,3 +325,59 @@ post-install=/x
     [ -d "$AX20_ROOT/srv/elsewhere" ]
     [ ! -L "$STATE" ]
 }
+
+@test "lib/slots.sh backup layout (backup/<slot>/<file> + .sha256 + entry-path) is restored" {
+    orig='menuentry SteamOS {
+	steamenv_boot	linux /boot/vmlinuz console=tty1 quiet
+	initrd	/boot/amd-ucode.img /boot/initramfs.img
+}
+'
+    fixture_file /efi/EFI/steamos/grub.cfg "# ally-x20-steamos: boot entry modified by ally-x20-steamos
+menuentry SteamOS {
+	steamenv_boot	linux /boot/vmlinuz console=tty1 quiet firmware_class.path=/etc/ally-x20-steamos/firmware
+	initrd	\${cmdpath}/ally-x20-steamos-acpi.img /boot/amd-ucode.img /boot/initramfs.img
+}
+"
+    mkdir -p "$STATE/backup/B"
+    printf '%s' "$orig" >"$STATE/backup/B/grub.cfg"
+    ax20_sha256 "$STATE/backup/B/grub.cfg" >"$STATE/backup/B/grub.cfg.sha256"
+    printf '/efi/EFI/steamos/grub.cfg\n' >"$STATE/backup/B/entry-path"
+    run_uninstall
+    assert_success
+    assert_output_contains "restored byte-for-byte"
+    [ "$(cat "$AX20_ROOT/efi/EFI/steamos/grub.cfg")" = "$(printf '%s' "$orig")" ]
+}
+
+@test "slots layout: a regenerated stock entry without our marker is left alone" {
+    fixture_file /efi/EFI/steamos/grub.cfg "menuentry NewSteamOS { linux /boot/vmlinuz-new }"
+    mkdir -p "$STATE/backup/B"
+    printf 'old original\n' >"$STATE/backup/B/grub.cfg"
+    ax20_sha256 "$STATE/backup/B/grub.cfg" >"$STATE/backup/B/grub.cfg.sha256"
+    printf '/efi/EFI/steamos/grub.cfg\n' >"$STATE/backup/B/entry-path"
+    run_uninstall
+    assert_success
+    assert_output_contains "carries no ally-x20-steamos change; leaving it alone"
+    [ "$(cat "$AX20_ROOT/efi/EFI/steamos/grub.cfg")" = "menuentry NewSteamOS { linux /boot/vmlinuz-new }" ]
+}
+
+@test "lib/rauc.sh backup layout (backup/rauc/system.conf) strips the block" {
+    orig='[system]
+compatible=steamos-amd64
+
+[handlers]
+post-install=/usr/lib/rauc/post-install.sh
+'
+    fixture_file /etc/rauc/system.conf "${orig}# >>> ally-x20-steamos managed block (sep=0); original saved as ...
+[handlers]
+pre-install=/var/lib/ally-x20-steamos/libexec/rauc-pre-install.hook
+post-install=/var/lib/ally-x20-steamos/libexec/rauc-post-install.hook
+# <<< ally-x20-steamos
+"
+    mkdir -p "$STATE/backup/rauc"
+    printf '%s' "$orig" >"$STATE/backup/rauc/system.conf"
+    ax20_sha256 "$STATE/backup/rauc/system.conf" >"$STATE/backup/rauc/system.conf.sha256"
+    run_uninstall
+    assert_success
+    assert_output_contains "identical to saved original"
+    [ "$(cat "$AX20_ROOT/etc/rauc/system.conf")" = "$(printf '%s' "$orig")" ]
+}

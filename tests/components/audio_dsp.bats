@@ -36,7 +36,7 @@ setup() {
 @test "files: every destination is in the deck home, x20-prefixed, slot home" {
     run audio_dsp_files
     assert_success
-    [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" = 6 ]
+    [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" = 5 ]
     while IFS=$'\t' read -r src dest mode slot; do
         [ -f "$REPO_ROOT/overlay/$src" ]
         case "$dest" in "$H"/*) ;; *) false ;; esac
@@ -49,17 +49,19 @@ setup() {
 @test "files: AX20_HOME overrides the target home" {
     export AX20_HOME=/home/alice
     run audio_dsp_files
-    assert_output_contains "/home/alice/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf"
+    assert_output_contains "/home/alice/.config/pipewire/client.conf.d/50-x20-no-upmix.conf"
     assert_output_contains "/home/alice/.local/share/wireplumber/scripts/x20-route-by-channels.lua"
 }
 
-@test "files: LSP limiter variant only when the LV2 bundle exists" {
-    run audio_dsp_files
-    assert_output_contains "home/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf"
+@test "speaker chain: rendered from the LSP limiter variant only when the LV2 bundle exists" {
+    local f="$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf"
+    component_apply audio_dsp
+    ! grep -q 'lsp-plug.in' "$f"
     mkdir -p "$AX20_ROOT/usr/lib/lv2/lsp-plugins.lv2"
-    run audio_dsp_files
-    assert_output_contains "home/pipewire/pipewire.conf.d/51-x20-speaker-chain-lsp.conf"
-    assert_output_contains "$H/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf"
+    component_apply audio_dsp
+    grep -q 'plugin = "http://lsp-plug.in/plugins/lv2/limiter_stereo"' "$f"
+    grep -q '{ output = "mgL:Out" input = "lim:in_l" }' "$f"
+    ! grep -q '@X20_' "$f"
 }
 
 @test "apply installs config, HRTF sets, current.sofa and settings; status active" {
@@ -111,7 +113,7 @@ speaker_conf() { printf '%s\n' "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/52
     f=$(speaker_conf)
     ! grep -q '@X20_' "$f"
     [ "$(grep -c '"Delay (s)" = 0.00013542 }' "$f")" = 8 ]
-    [ "$(grep -c '"Gain 2" = 0.630957 "Gain 3" = 0.398107 "Gain 4" = 0.251189 "Gain 5" = 0.158489 "Gain 6" = 0.5' "$f")" = 2 ]
+    [ "$(grep -c '"Gain 2" = 0.630957 "Gain 3" = 0.398107 "Gain 4" = 0.251189 "Gain 5" = 0.158489 "Gain 6" = 0.501187' "$f")" = 2 ]
     grep -q 'Rendered with: xtc_delay_us=117 (6 samples at 48 kHz = 125 us) xtc_attenuation_db=4 (g=0.6310) xtc_taps=4' "$f"
     grep -q 'node.name        = "x20-speakers-surround"' "$f"
     grep -q 'media.class      = Audio/Sink/Internal' "$f"
@@ -142,6 +144,102 @@ speaker_conf() { printf '%s\n' "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/52
     grep -qx 'xtc_attenuation_db=4' "$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf"
     grep -qx 'xtc_taps=4' "$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf"
     grep -qx 'speaker_surround=1' "$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf"
+}
+
+# pwconf <name> : a rendered PipeWire conf in the deck home.
+pwconf() { printf '%s\n' "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/$1"; }
+
+@test "LFE: low-passed (2 cascaded biquads at 120 Hz) and folded at -6 dB in every chain" {
+    component_apply audio_dsp
+    local f
+    for f in 50-x20-virtual-surround.conf 51-x20-speaker-chain.conf 52-x20-speaker-surround.conf; do
+        ! grep -q '@X20_' "$(pwconf "$f")"
+        ! grep -q 'name = cpLFE' "$(pwconf "$f")"
+    done
+    # two graphs in the headphone conf, one each in the speaker confs
+    [ "$(grep -c 'label = bq_lowpass name = lfeLP[12]' "$(pwconf 50-x20-virtual-surround.conf)")" = 4 ]
+    [ "$(grep -c '"Freq" = 120.0 "Q" = 0.707' "$(pwconf 50-x20-virtual-surround.conf)")" = 4 ]
+    [ "$(grep -c '"Freq" = 120.0 "Q" = 0.707' "$(pwconf 51-x20-speaker-chain.conf)")" = 2 ]
+    [ "$(grep -c '"Freq" = 120.0 "Q" = 0.707' "$(pwconf 52-x20-speaker-surround.conf)")" = 2 ]
+    [ "$(grep -c '"Gain 5" = 0.501187' "$(pwconf 51-x20-speaker-chain.conf)")" = 2 ]
+    [ "$(grep -c '"Gain 8" = 0.501187' "$(pwconf 50-x20-virtual-surround.conf)")" = 2 ]
+    [ "$(grep -c '"Gain 6" = 0.501187' "$(pwconf 50-x20-virtual-surround.conf)")" = 2 ]
+    grep -q '{ output = "lfeLP1:Out" input = "lfeLP2:In" }' "$(pwconf 51-x20-speaker-chain.conf)"
+    grep -q 'inputs  = \[ "dmL:In 1" "dmR:In 1" "cpFC:In" "lfeLP1:In"' "$(pwconf 51-x20-speaker-chain.conf)"
+}
+
+@test "LFE: custom cutoff and level are rendered" {
+    component_apply audio_dsp
+    audio_dsp_write_settings lfe_cutoff_hz=80 lfe_gain_db=-10
+    component_apply audio_dsp
+    [ "$(grep -c '"Freq" = 80.0 "Q" = 0.707' "$(pwconf 52-x20-speaker-surround.conf)")" = 2 ]
+    [ "$(grep -c '"Gain 5" = 0.316228' "$(pwconf 51-x20-speaker-chain.conf)")" = 2 ]
+}
+
+@test "gain analysis: default numbers and rendered master gains" {
+    component_apply audio_dsp
+    # stereo, 7.1 downmix, surround uncorrelated, surround coherent (dB over
+    # full scale before master), speakers master, surround master
+    [ "$(audio_dsp_gain_numbers)" = "1.9 11.8 9.6 18.0 0.0 -9.6 1.000000 0.331504" ]
+    [ "$(grep -c '"Gain 1" = 1.000000 }' "$(pwconf 51-x20-speaker-chain.conf)")" = 2 ]
+    [ "$(grep -c '"Gain 1" = 0.331504 }' "$(pwconf 52-x20-speaker-surround.conf)")" = 2 ]
+    grep -q 'worst case before master: stereo +1.9 dB, 7.1 downmix +11.8 dB; speakers_master_gain_db=auto (+0.0 dB)' "$(pwconf 51-x20-speaker-chain.conf)"
+    grep -q 'uncorrelated +9.6 dB, coherent +18.0 dB; master_gain_db=auto (-9.6 dB)' "$(pwconf 52-x20-speaker-surround.conf)"
+}
+
+@test "gain analysis: strict and explicit master gains" {
+    component_apply audio_dsp
+    audio_dsp_write_settings master_gain_db=strict speakers_master_gain_db=strict
+    # strict surround is computed after the strict speakers master
+    [ "$(audio_dsp_gain_numbers)" = "1.9 11.8 9.6 18.0 -11.8 -6.2 0.256832 0.488084" ]
+    audio_dsp_write_settings master_gain_db=strict speakers_master_gain_db=auto
+    [ "$(audio_dsp_gain_numbers | cut -d' ' -f6)" = -18.0 ]
+    audio_dsp_write_settings master_gain_db=-3 speakers_master_gain_db=-1.5
+    component_apply audio_dsp
+    [ "$(audio_dsp_gain_numbers | cut -d' ' -f5-)" = "-1.5 -3.0 0.841395 0.707946" ]
+    [ "$(grep -c '"Gain 1" = 0.707946 }' "$(pwconf 52-x20-speaker-surround.conf)")" = 2 ]
+    # out-of-range values fall back to auto
+    audio_dsp_write_settings master_gain_db=99 speakers_master_gain_db=loud
+    [ "$(audio_dsp_setting_value master_gain_db)" = auto ]
+    [ "$(audio_dsp_setting_value speakers_master_gain_db)" = auto ]
+}
+
+@test "gain analysis matches an independent python implementation" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not installed"
+    component_apply audio_dsp
+    audio_dsp_write_settings xtc_delay_us=104 xtc_attenuation_db=5 xtc_taps=3 lfe_cutoff_hz=90 lfe_gain_db=-3
+    local want
+    want=$(python3 - <<'PY'
+import cmath, math
+fs = 48000.0
+def bq(kind, f0, Q, g=0.0):
+    w0 = 2 * math.pi * f0 / fs; al = math.sin(w0) / (2 * Q); k = math.cos(w0); A = 10 ** (g / 40)
+    if kind == 'lp': b = [(1 - k) / 2, 1 - k, (1 - k) / 2]; a = [1 + al, -2 * k, 1 - al]
+    if kind == 'hp': b = [(1 + k) / 2, -(1 + k), (1 + k) / 2]; a = [1 + al, -2 * k, 1 - al]
+    if kind == 'pk': b = [1 + al * A, -2 * k, 1 - al * A]; a = [1 + al / A, -2 * k, 1 - al / A]
+    if kind in ('ls', 'hs'):
+        k2 = 2 * math.sqrt(A) * al; s = 1 if kind == 'ls' else -1
+        b = [A * ((A + 1) - s * (A - 1) * k + k2), s * 2 * A * ((A - 1) - s * (A + 1) * k), A * ((A + 1) - s * (A - 1) * k - k2)]
+        a = [(A + 1) + s * (A - 1) * k + k2, -s * 2 * ((A - 1) + s * (A + 1) * k), (A + 1) + s * (A - 1) * k - k2]
+    def H(f):
+        z = cmath.exp(-2j * math.pi * f / fs)
+        return (b[0] + b[1] * z + b[2] * z * z) / (a[0] + a[1] * z + a[2] * z * z)
+    return H
+eq = [bq('hp', 150, .707), bq('ls', 250, .707, 3), bq('pk', 3500, 1, -2), bq('hs', 8000, .707, 2)]
+lp = bq('lp', 90, .707); hpb = bq('hp', 300, .707); lpb = bq('lp', 5000, .707)
+n = 5; g = 10 ** (-5 / 20); G = [g ** k if k <= 3 else 0 for k in range(1, 5)]; lfe = 10 ** (-3 / 20); W = 0.992
+m = [0, 0, 0, 0]
+for i in range(601):
+    f = 20 * 1000 ** (i / 600)
+    E = abs(eq[0](f) * eq[1](f) * eq[2](f) * eq[3](f)); L = abs(lp(f)) ** 2; B = hpb(f) * lpb(f)
+    z = lambda k: cmath.exp(-2j * math.pi * f * n * k / fs)
+    xt = abs(1 + B * (G[1] * z(2) + G[3] * z(4))) + abs(B * (G[0] * z(1) + G[2] * z(3)))
+    v = [W * E, W * E * (1 + 3 * .707 + L * lfe), W * E * (math.sqrt(7) * .5 * xt + L * lfe), W * E * (3.5 * xt + L * lfe)]
+    m = [max(x, y) for x, y in zip(m, v)]
+print(' '.join('%.1f' % (20 * math.log10(x)) for x in m))
+PY
+)
+    [ "$(audio_dsp_gain_numbers | cut -d' ' -f1-4)" = "$want" ]
 }
 
 @test "xtc validators and parameter maths" {
@@ -377,9 +475,9 @@ speaker_conf() { printf '%s\n' "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/52
     grep -q '{ output = "dR4:Out"  input = "xoR:In 5" }' "$f"
     # band-limited branch, LFE bypasses binaural render and XTC
     grep -q '{ output = "xlpL:Out" input = "dL1:In" }' "$f"
-    grep -q '{ output = "cpLFE:Out" input = "xoL:In 6" }' "$f"
-    ! grep -q 'cpLFE:Out" input = "bin' "$f"
-    grep -q 'outputs = \[ "xoL:Out" "xoR:Out" \]' "$f"
+    grep -q '{ output = "lfeLP2:Out" input = "xoL:In 6" }' "$f"
+    ! grep -q 'lfeLP2:Out" input = "bin' "$f"
+    grep -q 'outputs = \[ "mgL:Out" "mgR:Out" \]' "$f"
 }
 
 @test "headphone sinks are labelled headphones-only" {

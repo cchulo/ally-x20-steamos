@@ -6,7 +6,7 @@
 # Everything lives in the user's home (manifest slot "home"), so it survives
 # SteamOS updates untouched and never needs the read-only root:
 #   ~/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf  (rendered)
-#   ~/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf
+#   ~/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf      (rendered)
 #   ~/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf  (rendered)
 #   ~/.config/pipewire/pipewire-pulse.conf.d/50-x20-no-upmix.conf
 #   ~/.config/pipewire/client.conf.d/50-x20-no-upmix.conf
@@ -32,6 +32,12 @@
 #   xtc_delay_us=<int>    crosstalk cancellation delay per tap (10..1000)
 #   xtc_attenuation_db=<num>  attenuation per tap in dB (0.5..30)
 #   xtc_taps=1..4         number of RACE taps
+#   lfe_cutoff_hz=<int>   LFE low-pass in every chain (40..250, default 120)
+#   lfe_gain_db=<num>     LFE level folded into the outputs (-40..6, default -6)
+#   master_gain_db=auto|strict|<dB>
+#                         output gain of x20-speakers-surround (default auto)
+#   speakers_master_gain_db=auto|strict|<dB>
+#                         output gain of x20-speakers (default auto = 0 dB)
 # When enabled=0, audio_dsp_files lists nothing and audio_dsp_apply only
 # keeps the settings file, so the boot-time re-apply never undoes `off`.
 #
@@ -51,7 +57,7 @@ COMPONENT_DESCRIPTION="headphone virtual surround (HRTF) + speaker chain + speak
 AUDIO_DSP_COMPONENT=audio_dsp
 
 # Settings keys, in the order they are written to audio-dsp.conf.
-AUDIO_DSP_KEYS="enabled hrtf stereo_hrtf speaker_surround stereo_surround xtc_delay_us xtc_attenuation_db xtc_taps"
+AUDIO_DSP_KEYS="enabled hrtf stereo_hrtf speaker_surround stereo_surround xtc_delay_us xtc_attenuation_db xtc_taps lfe_cutoff_hz lfe_gain_db master_gain_db speakers_master_gain_db"
 
 # Crosstalk cancellation defaults, derived in docs/xtc-notes.md for the X20:
 # speakers ~22 cm apart, listener at ~40 cm, 15 cm head -> 117 us
@@ -62,6 +68,11 @@ AUDIO_DSP_XTC_TAPS_DEFAULT=4
 # The builtin delay node counts whole samples at the graph rate. SteamOS
 # runs PipeWire at 48 kHz; the delay is rendered for that rate.
 AUDIO_DSP_XTC_RATE=48000
+
+# LFE: real LFE is band-limited to 120 Hz by spec (Dolby, ITU-R BS.775); the
+# chains low-pass it there and fold it into the outputs at -6 dB.
+AUDIO_DSP_LFE_CUTOFF_DEFAULT=120
+AUDIO_DSP_LFE_GAIN_DB_DEFAULT=-6
 
 # ------------------------------------------------------------ user / paths --
 
@@ -105,6 +116,7 @@ audio_dsp_lock() { printf '%s\n' "${AX20_HRTF_LOCK:-$AX20_SRC/overlay/home/hrtf/
 
 # Destinations of the rendered (not copied) files.
 audio_dsp_surround_rel() { printf '%s/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf\n' "$(audio_dsp_home)"; }
+audio_dsp_speaker_chain_rel() { printf '%s/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf\n' "$(audio_dsp_home)"; }
 audio_dsp_speaker_surround_rel() { printf '%s/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf\n' "$(audio_dsp_home)"; }
 audio_dsp_wpsettings_rel() { printf '%s/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf\n' "$(audio_dsp_home)"; }
 
@@ -137,6 +149,21 @@ audio_dsp_xtc_valid_taps() {
     case "$1" in 1 | 2 | 3 | 4) return 0 ;; esac
     return 1
 }
+# _audio_dsp_number_in <value> <min> <max> : signed decimal within range.
+_audio_dsp_number_in() {
+    printf '%s\n' "$1" | grep -Eq '^-?[0-9]+(\.[0-9]+)?$' || return 1
+    LC_ALL=C awk -v v="$1" -v lo="$2" -v hi="$3" 'BEGIN { exit !(v >= lo && v <= hi) }'
+}
+audio_dsp_valid_lfe_cutoff() {
+    case "$1" in '' | *[!0-9]*) return 1 ;; esac
+    [ "$1" -ge 40 ] && [ "$1" -le 250 ]
+}
+audio_dsp_valid_lfe_gain() { _audio_dsp_number_in "$1" -40 6; }
+# master gains: auto, strict, or dB in -60..12 (see audio_dsp_gain_numbers).
+audio_dsp_valid_master() {
+    case "$1" in auto | strict) return 0 ;; esac
+    _audio_dsp_number_in "$1" -60 12
+}
 
 # audio_dsp_setting_value <key> : the stored value, validated, or the default.
 audio_dsp_setting_value() {
@@ -165,6 +192,18 @@ audio_dsp_setting_value() {
         xtc_taps)
             v=$(audio_dsp_setting "$1" "")
             audio_dsp_xtc_valid_taps "$v" || v=$AUDIO_DSP_XTC_TAPS_DEFAULT
+            ;;
+        lfe_cutoff_hz)
+            v=$(audio_dsp_setting "$1" "")
+            audio_dsp_valid_lfe_cutoff "$v" || v=$AUDIO_DSP_LFE_CUTOFF_DEFAULT
+            ;;
+        lfe_gain_db)
+            v=$(audio_dsp_setting "$1" "")
+            audio_dsp_valid_lfe_gain "$v" || v=$AUDIO_DSP_LFE_GAIN_DB_DEFAULT
+            ;;
+        master_gain_db | speakers_master_gain_db)
+            v=$(audio_dsp_setting "$1" "")
+            audio_dsp_valid_master "$v" || v=auto
             ;;
         *) return 1 ;;
     esac
@@ -295,10 +334,8 @@ audio_dsp_have_lsp() {
 
 # _audio_dsp_static_files : every copied file, regardless of the enabled flag.
 _audio_dsp_static_files() {
-    local h chain=51-x20-speaker-chain.conf
+    local h
     h=$(audio_dsp_home)
-    audio_dsp_have_lsp && chain=51-x20-speaker-chain-lsp.conf
-    printf 'home/pipewire/pipewire.conf.d/%s\t%s/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf\t0644\thome\n' "$chain" "$h"
     printf 'home/pipewire/pipewire-pulse.conf.d/50-x20-no-upmix.conf\t%s/.config/pipewire/pipewire-pulse.conf.d/50-x20-no-upmix.conf\t0644\thome\n' "$h"
     printf 'home/pipewire/client.conf.d/50-x20-no-upmix.conf\t%s/.config/pipewire/client.conf.d/50-x20-no-upmix.conf\t0644\thome\n' "$h"
     printf 'home/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf\t%s/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf\t0644\thome\n' "$h"
@@ -393,11 +430,146 @@ audio_dsp_xtc_describe() {
         "$a" "$7" "$t"
 }
 
+# audio_dsp_lfe_gain_lin : lfe_gain_db as a linear mixer gain.
+audio_dsp_lfe_gain_lin() {
+    LC_ALL=C awk -v db="$(audio_dsp_setting_value lfe_gain_db)" 'BEGIN { printf "%.6f\n", exp(db / 20 * log(10)) }'
+}
+
+# audio_dsp_gain_numbers : worst-case gain analysis of the speaker path,
+# prints "<stereo> <downmix71> <surround_unc> <surround_coh> <spk_master>
+# <master> <spk_master_lin> <master_lin>" (dB unless _lin).
+#
+# Model: steady-state sinusoids at full scale on every input, swept over
+# 20 Hz-20 kHz; at each frequency the magnitudes of all input->output paths
+# are added (coherent worst case), the maximum over frequency is reported.
+# Filters use the RBJ formulas PipeWire's builtin biquads use, at 48 kHz.
+# Constants mirror the templates: downmix 1 / 0.707 x3, width 0.85 + 0.142,
+# EQ high-pass 150, low shelf 250 +3, peak 3500 -2 (Q 1), high shelf 8000 +2;
+# HRTF sources at gain 0.5 with HRIRs taken as <= 0 dB (libmysofa normalises
+# them); the XTC taps on the 300 Hz-5 kHz band copy.
+#   stereo        x20-speakers, FL+FR only (what stereo streams and the
+#                 surround output feed it)
+#   downmix71     x20-speakers, all 8 channels (speaker_surround off)
+#   surround_unc  x20-speakers-surround -> x20-speakers, the 7 HRTF sources
+#                 uncorrelated (power sum: sqrt(7) x 0.5)
+#   surround_coh  same, the 7 sources coherent (sum: 7 x 0.5)
+# Master gains: speakers auto = 0 dB (stereo keeps unity), strict = safe for
+# downmix71; surround auto = safe for surround_unc, strict = safe for
+# surround_coh, both after the x20-speakers master. A number is used as is.
+audio_dsp_gain_numbers() {
+    local p
+    p=$(audio_dsp_xtc_params "$(audio_dsp_setting_value xtc_delay_us)" \
+        "$(audio_dsp_setting_value xtc_attenuation_db)" "$(audio_dsp_setting_value xtc_taps)")
+    # shellcheck disable=SC2086  # numbers only
+    set -- $p
+    LC_ALL=C awk -v n="$6" -v g="$7" -v taps="$(audio_dsp_setting_value xtc_taps)" \
+        -v fc="$(audio_dsp_setting_value lfe_cutoff_hz)" -v lfe="$(audio_dsp_lfe_gain_lin)" \
+        -v mpset="$(audio_dsp_setting_value speakers_master_gain_db)" \
+        -v msset="$(audio_dsp_setting_value master_gain_db)" '
+    function coef(kind, f0, Q, gdb,   w0, al, k, A, k2) {
+        w0 = 2 * PI * f0 / FS; al = sin(w0) / (2 * Q); k = cos(w0); A = exp(gdb / 40 * log(10))
+        if (kind == "lp") { b0 = (1 - k) / 2; b1 = 1 - k; b2 = b0; a0 = 1 + al; a1 = -2 * k; a2 = 1 - al }
+        if (kind == "hp") { b0 = (1 + k) / 2; b1 = -(1 + k); b2 = b0; a0 = 1 + al; a1 = -2 * k; a2 = 1 - al }
+        if (kind == "pk") { b0 = 1 + al * A; b1 = -2 * k; b2 = 1 - al * A; a0 = 1 + al / A; a1 = -2 * k; a2 = 1 - al / A }
+        if (kind == "ls" || kind == "hs") {
+            k2 = 2 * sqrt(A) * al
+            if (kind == "ls") {
+                b0 = A * ((A + 1) - (A - 1) * k + k2); b1 = 2 * A * ((A - 1) - (A + 1) * k); b2 = A * ((A + 1) - (A - 1) * k - k2)
+                a0 = (A + 1) + (A - 1) * k + k2; a1 = -2 * ((A - 1) + (A + 1) * k); a2 = (A + 1) + (A - 1) * k - k2
+            } else {
+                b0 = A * ((A + 1) + (A - 1) * k + k2); b1 = -2 * A * ((A - 1) + (A + 1) * k); b2 = A * ((A + 1) + (A - 1) * k - k2)
+                a0 = (A + 1) - (A - 1) * k + k2; a1 = 2 * ((A - 1) - (A + 1) * k); a2 = (A + 1) - (A - 1) * k - k2
+            }
+        }
+    }
+    # H(e^jw) of a biquad into HR, HI
+    function bq(kind, f0, Q, gdb, w,   nr, ni, dr, di, d) {
+        coef(kind, f0, Q, gdb)
+        nr = b0 + b1 * cos(w) + b2 * cos(2 * w); ni = -(b1 * sin(w) + b2 * sin(2 * w))
+        dr = a0 + a1 * cos(w) + a2 * cos(2 * w); di = -(a1 * sin(w) + a2 * sin(2 * w))
+        d = dr * dr + di * di
+        HR = (nr * dr + ni * di) / d; HI = (ni * dr - nr * di) / d
+    }
+    function mag(kind, f0, Q, gdb, w) { bq(kind, f0, Q, gdb, w); return sqrt(HR * HR + HI * HI) }
+    function db(x) { return 20 * log(x) / log(10) }
+    function gainof(set, safe) {
+        if (set == "auto" || set == "strict") return safe
+        return exp(set / 20 * log(10))
+    }
+    BEGIN {
+        PI = atan2(0, -1); FS = 48000; W = 0.85 + 0.142
+        for (k = 1; k <= 4; k++) G[k] = (k <= taps) ? g ^ k : 0
+        mps = m71 = msu = msc = 0
+        for (i = 0; i <= 600; i++) {
+            f = 20 * exp(i / 600 * log(1000)); w = 2 * PI * f / FS
+            E = mag("hp", 150, 0.707, 0, w) * mag("ls", 250, 0.707, 3, w) * mag("pk", 3500, 1, -2, w) * mag("hs", 8000, 0.707, 2, w)
+            L = mag("lp", fc, 0.707, 0, w) ^ 2
+            bq("hp", 300, 0.707, 0, w); r1 = HR; i1 = HI
+            bq("lp", 5000, 0.707, 0, w); Br = r1 * HR - i1 * HI; Bi = r1 * HI + i1 * HR
+            # z^-k n samples: e^(-j w n k)
+            sr = 0; si = 0; cr = 0; ci = 0
+            for (k = 1; k <= 4; k++) {
+                zr = cos(w * n * k); zi = -sin(w * n * k)
+                if (k % 2 == 0) { sr += G[k] * zr; si += G[k] * zi } else { cr += G[k] * zr; ci += G[k] * zi }
+            }
+            llr = 1 + Br * sr - Bi * si; lli = Br * si + Bi * sr
+            rlr = Br * cr - Bi * ci; rli = Br * ci + Bi * cr
+            xt = sqrt(llr * llr + lli * lli) + sqrt(rlr * rlr + rli * rli)
+            ps = W * E; p71 = W * E * (1 + 3 * 0.707 + L * lfe)
+            su = W * E * (sqrt(7) * 0.5 * xt + L * lfe); sc = W * E * (3.5 * xt + L * lfe)
+            if (ps > mps) mps = ps; if (p71 > m71) m71 = p71
+            if (su > msu) msu = su; if (sc > msc) msc = sc
+        }
+        mp = gainof(mpset, (mpset == "strict") ? 1 / m71 : 1)
+        ms = gainof(msset, (msset == "strict") ? 1 / (mp * msc) : 1 / (mp * msu))
+        if (mp > 10) mp = 10; if (ms > 10) ms = 10
+        printf "%.1f %.1f %.1f %.1f %.1f %.1f %.6f %.6f\n", db(mps), db(m71), db(msu), db(msc), db(mp), db(ms), mp, ms
+    }'
+}
+
+_audio_dsp_signed() { LC_ALL=C awk -v v="$1" 'BEGIN { printf "%+.1f", v }'; }
+
+# audio_dsp_gain_describe <chain> : one line for humans (speakers|surround).
+audio_dsp_gain_describe() {
+    local p
+    p=$(audio_dsp_gain_numbers)
+    # shellcheck disable=SC2086  # numbers only
+    set -- $p
+    if [ "${AX20_GAIN_CHAIN:-surround}" = speakers ]; then
+        printf 'lfe %s Hz %s dB; worst case before master: stereo %s dB, 7.1 downmix %s dB; speakers_master_gain_db=%s (%s dB)\n' \
+            "$(audio_dsp_setting_value lfe_cutoff_hz)" "$(audio_dsp_setting_value lfe_gain_db)" \
+            "$(_audio_dsp_signed "$1")" "$(_audio_dsp_signed "$2")" \
+            "$(audio_dsp_setting_value speakers_master_gain_db)" "$(_audio_dsp_signed "$5")"
+    else
+        printf 'lfe %s Hz %s dB; worst case of the speaker path before master: uncorrelated %s dB, coherent %s dB; master_gain_db=%s (%s dB)\n' \
+            "$(audio_dsp_setting_value lfe_cutoff_hz)" "$(audio_dsp_setting_value lfe_gain_db)" \
+            "$(_audio_dsp_signed "$3")" "$(_audio_dsp_signed "$4")" \
+            "$(audio_dsp_setting_value master_gain_db)" "$(_audio_dsp_signed "$6")"
+    fi
+}
+
+# audio_dsp_render_speaker_chain : x20-speakers (or its LSP variant) with
+# the LFE and master gain settings.
+audio_dsp_render_speaker_chain() {
+    local src=51-x20-speaker-chain.conf p
+    audio_dsp_have_lsp && src=51-x20-speaker-chain-lsp.conf
+    p=$(audio_dsp_gain_numbers)
+    # shellcheck disable=SC2086  # numbers only
+    set -- $p
+    sed -e "s#@X20_LFE_CUTOFF@#$(audio_dsp_setting_value lfe_cutoff_hz).0#g" \
+        -e "s#@X20_LFE_GAIN@#$(audio_dsp_lfe_gain_lin)#g" \
+        -e "s#@X20_SPK_MASTER@#$7#g" \
+        -e "s#@X20_GAIN_SUMMARY@#$(AX20_GAIN_CHAIN=speakers audio_dsp_gain_describe)#g" \
+        "$AX20_SRC/overlay/home/pipewire/pipewire.conf.d/$src" \
+        | _audio_dsp_install_rendered "$(audio_dsp_speaker_chain_rel)"
+}
+
 # audio_dsp_render_speaker_surround : the speaker virtual surround conf with
-# the HRTF path and the current XTC parameters.
+# the HRTF path, the XTC parameters, LFE and master gain.
 audio_dsp_render_speaker_surround() {
-    local hrtf_file p
+    local hrtf_file p ms
     hrtf_file="$(audio_dsp_hrtf_rel)/current.sofa"
+    ms=$(audio_dsp_gain_numbers | awk '{ print $8 }')
     p=$(audio_dsp_xtc_params "$(audio_dsp_setting_value xtc_delay_us)" \
         "$(audio_dsp_setting_value xtc_attenuation_db)" "$(audio_dsp_setting_value xtc_taps)")
     # shellcheck disable=SC2086  # numbers only
@@ -407,6 +579,10 @@ audio_dsp_render_speaker_surround() {
         -e "s#@X20_XTC_G1@#$2#g" -e "s#@X20_XTC_G2@#$3#g" \
         -e "s#@X20_XTC_G3@#$4#g" -e "s#@X20_XTC_G4@#$5#g" \
         -e "s#@X20_XTC_SUMMARY@#$(audio_dsp_xtc_describe)#g" \
+        -e "s#@X20_LFE_CUTOFF@#$(audio_dsp_setting_value lfe_cutoff_hz).0#g" \
+        -e "s#@X20_LFE_GAIN@#$(audio_dsp_lfe_gain_lin)#g" \
+        -e "s#@X20_MASTER@#$ms#g" \
+        -e "s#@X20_GAIN_SUMMARY@#$(audio_dsp_gain_describe)#g" \
         "$AX20_SRC/overlay/home/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf" \
         | _audio_dsp_install_rendered "$(audio_dsp_speaker_surround_rel)"
 }
@@ -417,7 +593,9 @@ audio_dsp_render_speaker_surround() {
 audio_dsp_render_surround() {
     local hrtf_file
     hrtf_file="$(audio_dsp_hrtf_rel)/current.sofa"
-    sed "s#@X20_HRTF_FILE@#$hrtf_file#g" \
+    sed -e "s#@X20_HRTF_FILE@#$hrtf_file#g" \
+        -e "s#@X20_LFE_CUTOFF@#$(audio_dsp_setting_value lfe_cutoff_hz).0#g" \
+        -e "s#@X20_LFE_GAIN@#$(audio_dsp_lfe_gain_lin)#g" \
         "$AX20_SRC/overlay/home/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf" \
         | _audio_dsp_install_rendered "$(audio_dsp_surround_rel)"
 }
@@ -490,6 +668,7 @@ audio_dsp_apply() {
         || log_warn "audio_dsp: some HRTF sets are missing; re-run apply when online"
     audio_dsp_link_hrtf "$name"
 
+    audio_dsp_render_speaker_chain
     if audio_dsp_hrtf_installed "$name" || [ "$AX20_DRY_RUN" = 1 ]; then
         audio_dsp_render_surround
         audio_dsp_render_speaker_surround
@@ -538,6 +717,7 @@ audio_dsp_disable() {
         _audio_dsp_unlink "$dest" || rc=1
     done <<EOF
 $(_audio_dsp_static_files)
+$(printf 'x\t%s\n' "$(audio_dsp_speaker_chain_rel)")
 $(printf 'x\t%s\n' "$(audio_dsp_surround_rel)")
 $(printf 'x\t%s\n' "$(audio_dsp_speaker_surround_rel)")
 $(printf 'x\t%s\n' "$(audio_dsp_wpsettings_rel)")
@@ -568,7 +748,8 @@ audio_dsp_status() {
     done
     if ! [ -f "$(ax20_path "$(audio_dsp_hrtf_rel)/current.sofa")" ] \
         || ! [ -f "$(ax20_path "$(audio_dsp_surround_rel)")" ] \
-        || ! [ -f "$(ax20_path "$(audio_dsp_speaker_surround_rel)")" ]; then
+        || ! [ -f "$(ax20_path "$(audio_dsp_speaker_surround_rel)")" ] \
+        || ! [ -f "$(ax20_path "$(audio_dsp_speaker_chain_rel)")" ]; then
         printf 'stock\n'
         return 0
     fi

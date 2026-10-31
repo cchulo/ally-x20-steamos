@@ -20,9 +20,9 @@ Valve's stock modules.
 
 | Path | What |
 |---|---|
-| `/var/lib/ally-x20-steamos/modules/<uname -r>/<module>.ko.zst` | patched modules for one kernel |
-| `/var/lib/ally-x20-steamos/modules/<uname -r>/BUILD-INFO` | how they were built: kernel, vermagic, header source, source commit, patch hashes |
-| `/var/lib/ally-x20-steamos/bin/load-or-fallback` | the loader used by the modprobe hooks |
+| `/etc/ally-x20-steamos/modules/<uname -r>/<module>.ko.zst` | patched modules for one kernel |
+| `/etc/ally-x20-steamos/modules/<uname -r>/BUILD-INFO` | how they were built: kernel, vermagic, header source, source commit, patch hashes |
+| `/etc/ally-x20-steamos/load-or-fallback` | the loader used by the modprobe hooks |
 | `/etc/modprobe.d/ally-x20-steamos-modules.conf` | one `install <module> ... load-or-fallback <module>` line per module, generated from the lists |
 | `/var/lib/ally-x20-steamos/cache/` | downloaded release artifacts and build caches |
 
@@ -33,7 +33,7 @@ under the read-only `/usr/lib/modules`). The hooks need neither.
 
 When the kernel or udev asks for one of these modules, modprobe runs
 `load-or-fallback <module>`. It loads the patched module only when
-`/var/lib/ally-x20-steamos/modules/$(uname -r)/<module>.ko.zst` exists and
+`/etc/ally-x20-steamos/modules/$(uname -r)/<module>.ko.zst` exists and
 its vermagic matches the running kernel. In every other case (no build for
 this kernel, mismatch, load failure) it loads Valve's module with
 `modprobe --ignore-install`. An unknown kernel therefore always boots with
@@ -109,3 +109,16 @@ so this is not expected on the X20.
   TODO(vm): confirm kmod runs install hooks for dependencies on SteamOS.
 - The modules must be built for the exact `uname -r`, including Valve's
   `-g<commit>` suffix.
+
+## Why the boot-time files live under `/etc/ally-x20-steamos`
+
+Measured on the X20: udev loads `hid-asus-ally` and `snd-acp-config` before
+`/var` and `/home` are mounted. The state directory
+(`/var/lib/ally-x20-steamos`, a symlink into `/home`) therefore does not
+exist yet, and a hook pointing there failed with exit 127, which left the
+device with **no** driver at all. The modprobe helper, the staged
+`<kver>/*.ko.zst` and the amplifier firmware are therefore installed under
+`/etc/ally-x20-steamos/`, which the initramfs sets up before systemd starts
+and whose upper directory is rsynced to the other slot on every update. In
+addition, every generated `install` line falls back to
+`modprobe --ignore-install` on its own if the helper is missing or fails.

@@ -2,9 +2,9 @@
 # lib/modules.sh — version-gated substitution of the patched kernel modules.
 #
 # Plan §3, §4.2c, §4.3, §4.5. The patched modules for kernel <kver> live in
-#   /var/lib/ally-x20-steamos/modules/<kver>/{<module>.ko.zst,BUILD-INFO}
+#   /etc/ally-x20-steamos/modules/<kver>/{<module>.ko.zst,BUILD-INFO}
 # and are loaded by the modprobe.d `install` hooks through
-#   /var/lib/ally-x20-steamos/bin/load-or-fallback
+#   /etc/ally-x20-steamos/load-or-fallback  (must exist at udev time: /etc, not /var)
 # only when `uname -r` has a matching directory; otherwise stock modules load.
 #
 # The module set is never hard-coded: it comes from the machine-readable
@@ -27,9 +27,9 @@
 # shellcheck source=lib/probes.sh
 . "$AX20_SRC/lib/probes.sh"
 
-AX20_MODULES_REL="${AX20_STATE_REL}/modules"
+AX20_MODULES_REL="${AX20_EARLY_REL}/modules"
 AX20_MODULES_CACHE_REL="${AX20_STATE_REL}/cache"
-AX20_HELPER_REL="${AX20_STATE_REL}/bin/load-or-fallback"
+AX20_HELPER_REL="${AX20_EARLY_REL}/load-or-fallback"
 AX20_MODPROBE_CONF_REL="/etc/modprobe.d/${AX20_NAME}-modules.conf"
 AX20_MODULES_COMPONENT=modules
 # Release assets: <base>/modules-<kver>.tar.zst and .sha256. CI attaches every
@@ -180,7 +180,7 @@ _modules_forget_under() {
     done
 }
 
-# modules_ensure_base_dir : create /var/lib/ally-x20-steamos/modules, recorded.
+# modules_ensure_base_dir : create /etc/ally-x20-steamos/modules, recorded.
 modules_ensure_base_dir() {
     local base state
     base=$(ax20_path "$AX20_MODULES_REL")
@@ -265,9 +265,12 @@ modules_render_modprobe_conf() {
     printf '# %s/<uname -r>/, otherwise the stock module.\n' "$AX20_MODULES_REL"
     printf '# Do not edit: re-run "%s apply" instead.\n' "$AX20_NAME"
     for n in $names; do
-        # $CMDLINE_OPTS is expanded by modprobe itself, not by us.
+        # $CMDLINE_OPTS is expanded by modprobe itself, not by us. The inner
+        # "|| exec modprobe --ignore-install" guarantees the stock module
+        # still loads if the helper is missing or fails for any reason
+        # (exit 127 at early boot must never leave the device driverless).
         # shellcheck disable=SC2016
-        printf 'install %s %s %s $CMDLINE_OPTS\n' "$n" "$helper" "$n"
+        printf 'install %s /bin/sh -c '"'"'%s %s "$@" || exec modprobe --ignore-install %s "$@"'"'"' -- $CMDLINE_OPTS\n' "$n" "$helper" "$n" "$n"
     done
 }
 

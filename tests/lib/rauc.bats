@@ -178,7 +178,7 @@ hook_env() {
 
 @test "pre-install hook: passes when modules exist or the kernel is unknown" {
     hook_env
-    mkdir -p "$AX20_ROOT/var/lib/ally-x20-steamos/modules/7.9.0-test"
+    mkdir -p "$AX20_ROOT/etc/ally-x20-steamos/modules/7.9.0-test"
     AX20_INCOMING_KVER=7.9.0-test run "$REPO_ROOT/overlay/rauc/pre-install.hook"
     assert_success
     run "$REPO_ROOT/overlay/rauc/pre-install.hook"
@@ -190,11 +190,11 @@ hook_env() {
     hook_env
     cat >"$AX20_SRC/cmd/rebuild.sh" <<'C'
 # summary: fake
-cmd_rebuild() { mkdir -p "$(ax20_state_dir)/modules/$2"; }
+cmd_rebuild() { mkdir -p "$(ax20_path "$AX20_MODULES_REL")/$2"; }
 C
     AX20_INCOMING_KVER=7.9.0-test run "$REPO_ROOT/overlay/rauc/pre-install.hook"
     assert_success
-    [ -d "$AX20_ROOT/var/lib/ally-x20-steamos/modules/7.9.0-test" ]
+    [ -d "$AX20_ROOT/etc/ally-x20-steamos/modules/7.9.0-test" ]
 }
 
 @test "pre-install hook: without a checkout it never blocks" {
@@ -208,8 +208,8 @@ C
     hook_env
     slot="$BATS_TEST_TMPDIR/slotB"
     mkdir -p "$slot/usr/lib/modules/7.9.0-test" "$slot/etc" "$slot/var/lib/ally-x20-steamos"
-    mkdir -p "$AX20_ROOT/var/lib/ally-x20-steamos/modules/7.9.0-test"
-    printf 'ko\n' >"$AX20_ROOT/var/lib/ally-x20-steamos/modules/7.9.0-test/x.ko"
+    mkdir -p "$AX20_ROOT/etc/ally-x20-steamos/modules/7.9.0-test"
+    printf 'ko\n' >"$AX20_ROOT/etc/ally-x20-steamos/modules/7.9.0-test/x.ko"
     # Fake components dir with nothing in it keeps this test about the flow.
     mkdir -p "$BATS_TEST_TMPDIR/nocomponents"
     AX20_COMPONENTS_DIR="$BATS_TEST_TMPDIR/nocomponents" AX20_SLOT=A \
@@ -223,7 +223,7 @@ C
     AX20_COMPONENTS_DIR="$BATS_TEST_TMPDIR/nocomponents" AX20_SLOT=A \
         run "$FAKE_CLI" --root "$AX20_ROOT" rauc-handler post-install --slot-root "$slot"
     assert_success
-    [ -f "$slot/var/lib/ally-x20-steamos/modules/7.9.0-test/x.ko" ]
+    [ -f "$slot/etc/ally-x20-steamos/modules/7.9.0-test/x.ko" ]
     grep -q '^to=B$' "$slot/var/lib/ally-x20-steamos/state/pending-reboot-check"
     grep -q '^kver=7.9.0-test$' "$slot/var/lib/ally-x20-steamos/state/pending-reboot-check"
     [ -f "$slot/var/lib/ally-x20-steamos/state/status.json" ]

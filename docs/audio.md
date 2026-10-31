@@ -30,7 +30,7 @@ Everything is recorded in the manifest and removed by `uninstall`.
 | Path | What |
 |---|---|
 | `/etc/modprobe.d/ally-x20-steamos-audio.conf` | `install snd_soc_tas2783_sdw` hook: sets `firmware_class.path` to our firmware dir right before the amp driver loads (never overrides an existing value) |
-| `/var/lib/ally-x20-steamos/firmware/` | pinned, SHA-256-verified TAS2783 tunings plus links under the names the driver requests |
+| `/etc/ally-x20-steamos/firmware/` | pinned, SHA-256-verified TAS2783 tunings plus links under the names the driver requests |
 | `/var/lib/ally-x20-steamos/ucm2/` | UCM overlay (see below) |
 | `/etc/environment.d/90-ally-x20-steamos-ucm.conf` | `ALSA_CONFIG_UCM2=/var/lib/ally-x20-steamos/ucm2`; written only after the overlay is complete |
 | `/var/lib/ally-x20-steamos/acpi/` | `ally-x20-steamos-acpi.img`, `TABLE.patched.aml`, `TABLE.orig.aml`, `BUILD-INFO` from the ACPI tool |
@@ -106,7 +106,7 @@ amixer -c amdsoundwire info | grep Components   # should include spk:tas2783
 journalctl -k | grep -iE 'acp|sof|soundwire|tas2783|Table Upgrade'
 #   "ACPI: Table Upgrade: override [DSDT-...]"      override loaded
 #   no "Failed to read ... fw binary"               tuning found
-cat /sys/module/firmware_class/parameters/path  # /var/lib/ally-x20-steamos/firmware
+cat /sys/module/firmware_class/parameters/path  # /etc/ally-x20-steamos/firmware
 systemctl --user show-environment | grep ALSA_CONFIG_UCM2
 alsaucm -c amdsoundwire dump text | grep -A3 Speaker
 wpctl status                  # a "Speaker" sink instead of Dummy Output

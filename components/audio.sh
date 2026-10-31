@@ -10,7 +10,7 @@
 #                                                 to every stock entry + the
 #                                                 upstream tas2783 profile
 #   /etc/environment.d/90-ally-x20-steamos-ucm.conf  ALSA_CONFIG_UCM2=<overlay>
-#   /var/lib/ally-x20-steamos/firmware/**         TAS2783 tuning (linux-firmware,
+#   /etc/ally-x20-steamos/firmware/**         TAS2783 tuning (linux-firmware,
 #                                                 pinned + sha256) and links
 #                                                 under the requested names
 #   /var/lib/ally-x20-steamos/acpi/*              ACPI override build outputs
@@ -45,7 +45,7 @@ AUDIO_ENV_SRC=environment.d/90-ally-x20-steamos-ucm.conf
 AUDIO_ENV_REL=/etc/environment.d/90-ally-x20-steamos-ucm.conf
 AUDIO_MODPROBE_SRC=modprobe.d/ally-x20-steamos-audio.conf
 AUDIO_MODPROBE_REL=/etc/modprobe.d/ally-x20-steamos-audio.conf
-AUDIO_FW_REL="${AX20_STATE_REL}/firmware"
+AUDIO_FW_REL="${AX20_EARLY_REL}/firmware" # must exist when the amp driver loads (before /var, /home)
 AUDIO_STOCK_FW_REL=/usr/lib/firmware
 AUDIO_FW_CLASS_PATH_REL=/sys/module/firmware_class/parameters/path
 AUDIO_ACPI_IMG_NAME=ally-x20-steamos-acpi.img

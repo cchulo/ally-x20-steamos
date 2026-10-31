@@ -5,7 +5,7 @@ load '../test_helper'
 
 UCM=/usr/share/alsa/ucm2
 OVL=/var/lib/ally-x20-steamos/ucm2
-FW=/var/lib/ally-x20-steamos/firmware
+FW=/etc/ally-x20-steamos/firmware
 KMOD_DIR=kernel/sound/soc/amd/acp
 
 setup() {
@@ -408,7 +408,7 @@ tree_listing() { (cd "$AX20_ROOT" && find . | LC_ALL=C sort); }
     done
     [ "$(component_status audio)" = active ]
     # everything new outside the manifest file itself is in the manifest
-    (cd "$AX20_ROOT" && find ./etc ./var/lib/ally-x20-steamos/ucm2 ./var/lib/ally-x20-steamos/firmware \( -type f -o -type l \)) \
+    (cd "$AX20_ROOT" && find ./etc ./var/lib/ally-x20-steamos/ucm2 ./etc/ally-x20-steamos/firmware \( -type f -o -type l \)) \
         | sed 's#^\.##' | while read -r p; do
             manifest_has "$p" || {
                 echo "untracked: $p"

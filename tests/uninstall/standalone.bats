@@ -20,7 +20,7 @@ run_uninstall() {
 install_demo() {
     manifest_install_file "$SRC" /etc/modprobe.d/ally-x20-steamos.conf modules 0644
     manifest_install_file "$SRC" /etc/environment.d/90-ally-x20-steamos-ucm.conf audio 0644
-    manifest_install_file "$SRC" /var/lib/ally-x20-steamos/bin/load-or-fallback modules 0755
+    manifest_install_file "$SRC" /etc/ally-x20-steamos/load-or-fallback modules 0755
     manifest_install_symlink /var/lib/ally-x20-steamos/bin/gamescope /home/deck/.local/bin/ally-x20-steamos-gamescope hdr home
 }
 

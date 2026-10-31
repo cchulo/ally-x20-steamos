@@ -56,6 +56,33 @@ echo false > $L/enabled             # rings off, settings kept; "true" to restor
 brightness has four hardware steps. The selected effect is kept across
 suspend.
 
+## Solid colour: if one ring goes dark
+
+If Effect = Solid in Steam lights both rings and the right one then goes
+dark, the module is an older build that mixed two report types for Solid.
+Current builds send Solid as the ring MCU's own static effect, and keep the
+old strategies available for testing through the `rgb_static_mode` module
+parameter (`0` default, `1` per-zone Aura, `2` per-zone LED report only,
+`3` old behaviour). Find the mode that keeps both rings lit with:
+
+```sh
+sudo vm/guest/test-rgb-solid.sh            # tries modes 0 1 2 3, 3 s per step
+echo 1 | sudo tee /sys/module/hid_asus_ally/parameters/rgb_static_mode  # switch by hand
+```
+
+To make a mode stick, add `options hid-asus-ally rgb_static_mode=N` to a
+modprobe.d file. The details are in
+[`README-hid.md`](../patches/kernel/README-hid.md#solid-dropout).
+
+## Xbox button light
+
+The Xbox button's green light is dark on Linux, and no driver exposes it. No
+public source documents the command for it yet. `vm/guest/xbox-led.sh`
+(`on`, `off`, `brightness <0-100>`, `color R G B`) uses an LED class device
+if one ever appears. Otherwise it sends an experimental probe that treats
+the button as one more Aura zone (`--zone 5` by default; try 5–8). See
+[`README-hid.md`](../patches/kernel/README-hid.md#xbox-button-light).
+
 ## Turning it off
 
 To keep the old LED name, so that tools hardcoding `ally:rgb:joystick_rings`
@@ -69,7 +96,8 @@ Uninstalling ally-x20-steamos restores the stock module.
 
 ## Not verified yet
 
-These patches have not been run on an X20 (`TODO(hw)`): whether the X20 has
-an LED besides the rings (for example on the Xbox button), whether Steam
-writes the effect attributes, and which attributes Valve's udev rule makes
-writable for `deck`. See [`hardware-data.md`](hardware-data.md).
+Steam's Customization page drives the rings on an X20 with these patches.
+Still open (`TODO(hw)`): which `rgb_static_mode` keeps both rings lit on
+Solid (the default is the most likely one), how the Xbox-button light is
+controlled, and which attributes Valve's udev rule makes writable for
+`deck`. See [`hardware-data.md`](hardware-data.md).

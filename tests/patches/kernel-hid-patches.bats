@@ -132,3 +132,11 @@ hid_patches() {
     p="$(ls "$PATCH_DIR"/0012-*.patch)"
     grep -q '^+#define ALLY_X20_KEY_QAM 0xa0' "$p"
 }
+
+@test "0011 sends Solid through the Aura report by default, rgb_static_mode selects the rest" {
+    p="$(ls "$PATCH_DIR"/0011-*.patch)"
+    grep -q '^+static int rgb_static_mode = ALLY_RGB_STATIC_AURA;' "$p"
+    grep -q '^+module_param_cb(rgb_static_mode, &rgb_static_mode_ops, &rgb_static_mode, 0644);' "$p"
+    grep -q '^Solid dropout\.' "$p"
+    grep -q '^### Solid dropout' "$PATCH_DIR/README-hid.md"
+}

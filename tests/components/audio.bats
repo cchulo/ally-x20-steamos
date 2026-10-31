@@ -206,7 +206,10 @@ tree_listing() { (cd "$AX20_ROOT" && find . | LC_ALL=C sort); }
     cmp "$REPO_ROOT/overlay/ucm2/codecs/tas2783/init.conf" "$AX20_ROOT$OVL/codecs/tas2783/init.conf"
     # session environment and modprobe hook
     grep -qx "ALSA_CONFIG_UCM2=$OVL" "$AX20_ROOT/etc/environment.d/90-ally-x20-steamos-ucm.conf"
-    grep -q '^install snd_soc_tas2783_sdw ' "$AX20_ROOT/etc/modprobe.d/ally-x20-steamos-audio.conf"
+    # No install hook here: it would compete with ally-x20-steamos-modules.conf
+    # for the same module (measured: the stock codec won). Comments only.
+    ! grep -qE '^(install|softdep|alias) ' "$AX20_ROOT/etc/modprobe.d/ally-x20-steamos-audio.conf"
+    grep -q 'firmware_class.path' "$AX20_ROOT/etc/modprobe.d/ally-x20-steamos-audio.conf"
     # stock tree untouched
     [ "$(cat "$AX20_ROOT$UCM/sof-soundwire/HiFi.conf")" = "stock HiFi" ]
     ! [ -e "$AX20_ROOT$UCM/sof-soundwire/tas2783.conf" ]

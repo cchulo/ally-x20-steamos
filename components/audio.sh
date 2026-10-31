@@ -4,7 +4,7 @@
 # link-0 layout in snd-soc-acpi-amd-match) is the `modules` component.
 #
 # What this component installs (all manifest-tracked, component "audio"):
-#   /etc/modprobe.d/ally-x20-steamos-audio.conf   firmware_class.path hook
+#   /etc/modprobe.d/ally-x20-steamos-audio.conf   firmware_class.path notes (no install hook)
 #                                                 before the amp driver loads
 #   /var/lib/ally-x20-steamos/ucm2/**             UCM overlay: relative symlinks
 #                                                 to every stock entry + the

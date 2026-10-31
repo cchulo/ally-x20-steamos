@@ -1,0 +1,79 @@
+From 2ce1d48892f3033f15e29c568f395b2f8d912b22 Mon Sep 17 00:00:00 2001
+From: Matthew Schwartz <matthew.schwartz@linux.dev>
+Date: Sat, 17 Oct 2026 21:31:58 -0700
+Subject: [PATCH] [FOR-UPSTREAM] ASoC: tas2783-sdw: refuse playback when the
+ init writes failed
+
+When the SDCA function initialization writes fail, tas_io_init() leaves
+hw_init false, but the firmware download has already set fw_dl_success,
+so tas_sdw_hw_params() goes on to play through an amp that is missing
+part of its setup. On the ASUS ROG Xbox Ally X20 those writes come from
+the ACPI DisCo initialization table and include the posture, which the
+BIOS sets differently on each amp.
+
+Refuse playback until the init writes have completed as well, and log
+which of the two steps is missing. A stream that is only prepared again
+after a resume does not go through hw_params, so check in the port
+prepare as well.
+
+Fixes: ca8f3611dcf8 ("ASoC: tas2783A: use acpi initialisation table")
+Signed-off-by: Matthew Schwartz <matthew.schwartz@linux.dev>
+
+ally-x20-steamos: backport of Valve linux-integration commit
+2ce1d48892f3033f15e29c568f395b2f8d912b22 (mirror
+github.com/evlaV/linux-integration, in tag 7.2.10-valve1) to
+7.2.7-valve2 (31504582a073), on top of the 0004/0005 backports. On the
+X20 the DisCo init writes carry each amp's posture (which side of the
+stereo stream it plays); playing without them gives the wrong mix.
+
+Adjusted: tas_port_prep(). 7.2.7-valve2 lacks 5c9979eb1917 ("power
+the Function up before preparing the port"), so the tas_dev local
+that Valve's hunk relies on is added here, and the new check sits
+directly before the port prepare write instead of before the PDE23
+power-up block.
+
+Valve-Upstream: 7.2.10-valve1
+Derived from: evlaV/linux-integration 2ce1d48892f3 "[FOR-UPSTREAM]
+  ASoC: tas2783-sdw: refuse playback when the init writes failed" by
+  Matthew Schwartz
+---
+ sound/soc/codecs/tas2783-sdw.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/sound/soc/codecs/tas2783-sdw.c b/sound/soc/codecs/tas2783-sdw.c
+index e1bdf36f7803..1148eaed555c 100644
+--- a/sound/soc/codecs/tas2783-sdw.c
++++ b/sound/soc/codecs/tas2783-sdw.c
+@@ -1010,6 +1010,11 @@ static s32 tas_sdw_hw_params(struct snd_pcm_substream *substream,
+ 		return -EINVAL;
+ 	}
+ 
++	if (!tas_dev->hw_init) {
++		dev_err(tas_dev->dev, "error playback without init writes");
++		return -EINVAL;
++	}
++
+ 	sdw_stream = snd_soc_dai_get_dma_data(dai, substream);
+ 	if (!sdw_stream)
+ 		return -EINVAL;
+@@ -1370,6 +1375,7 @@ static int tas_port_prep(struct sdw_slave *slave, struct sdw_prepare_ch *prep_ch
+ 			 enum sdw_port_prep_ops pre_ops)
+ {
+ 	struct device *dev = &slave->dev;
++	struct tas2783_prv *tas_dev = dev_get_drvdata(dev);
+ 	struct sdw_dpn_prop *dpn_prop;
+ 	u32 addr;
+ 	int ret;
+@@ -1381,6 +1387,12 @@ static int tas_port_prep(struct sdw_slave *slave, struct sdw_prepare_ch *prep_ch
+ 	addr = SDW_DPN_PREPARECTRL(prep_ch->num);
+ 	switch (pre_ops) {
+ 	case SDW_OPS_PORT_PRE_PREP:
++		if (!tas_dev->hw_init) {
++			dev_err(dev, "error port %d prepare without init writes\n",
++				prep_ch->num);
++			return -EINVAL;
++		}
++
+ 		ret = sdw_write_no_pm(slave, addr, prep_ch->ch_mask);
+ 		if (ret)
+ 			dev_err(dev, "prep failed for port %d, err=%d\n",

@@ -16,9 +16,64 @@ touched_paths() {
     awk '/^diff --git a\// { sub(/^a\//, "", $3); sub(/^b\//, "", $4); print $3; print $4 }' "$1" | sort -u
 }
 
+# outside_mdirs <patch> : files the patch touches that are under none of the
+# M= dirs it is listed with in modules.list (include/ and Documentation/ are
+# exempt).
+outside_mdirs() {
+    local f
+    for f in $(touched_paths "$KDIR/$1" | grep -v -e '^include/' -e '^Documentation/'); do
+        awk -F'\t' -v p="$1" -v f="$f" '$1 == p && index(f, $2 "/") == 1 { ok = 1 } END { if (!ok) print f }' "$KDIR/modules.list"
+    done
+}
+
 @test "the speaker-audio patches exist" {
     [ -f "$KDIR/0001-ASoC-amd-acpi-add-RC74XA-link0-tas2783-layout.patch" ]
     [ -f "$KDIR/0002-ACPI-x86-quirk-ignore-acp-audio-config-flag-RC74XA.patch" ]
+}
+
+@test "the Valve 7.2.10-valve1 speaker-audio backports exist" {
+    [ -f "$KDIR/0003-ASoC-sdw_utils-honor-empty-DisCo-port-lists.patch" ]
+    [ -f "$KDIR/0004-ASoC-tas2783-sdw-keep-the-volume-settings-across-resets.patch" ]
+    [ -f "$KDIR/0005-ASoC-tas2783-sdw-load-the-firmware-synchronously.patch" ]
+    [ -f "$KDIR/0006-ASoC-tas2783-sdw-refuse-playback-when-init-writes-failed.patch" ]
+}
+
+@test "the Valve backports keep their author, name their source commit and a Valve-Upstream tag" {
+    local p sha
+    for p in "$KDIR"/000[3-6]-*.patch; do
+        sha=$(head -n 1 "$p" | cut -d' ' -f2)
+        grep -qx 'From: Matthew Schwartz <matthew.schwartz@linux.dev>' "$p" || {
+            echo "author changed: $p"
+            false
+        }
+        grep -q "^ally-x20-steamos: backport of Valve linux-integration commit\$" "$p" || {
+            echo "no ally-x20-steamos note: $p"
+            false
+        }
+        grep -qx "$sha (mirror" "$p" || {
+            echo "note does not name the source commit $sha: $p"
+            false
+        }
+        # the tag must sit in the description, where build-modules.sh reads it
+        [ "$(awk '/^---$/ { exit } /^Valve-Upstream: / { print $2 }' "$p")" = 7.2.10-valve1 ] || {
+            echo "no Valve-Upstream: 7.2.10-valve1 line: $p"
+            false
+        }
+    done
+}
+
+@test "modules.list rebuilds every user of the struct changed by 0003, and tas2783 for 0004-0006" {
+    local l="$KDIR/modules.list" p
+    p=0003-ASoC-sdw_utils-honor-empty-DisCo-port-lists.patch
+    grep -qxF "$p$(printf '\t')sound/soc/sdw_utils$(printf '\t')snd-soc-sdw-utils.ko" "$l"
+    grep -qxF "$p$(printf '\t')sound/soc/amd/acp$(printf '\t')snd-acp-sdw-legacy-mach.ko" "$l"
+    grep -qxF "$p$(printf '\t')sound/soc/amd/acp$(printf '\t')snd-acp-sdw-sof-mach.ko" "$l"
+    for p in "$KDIR"/000[4-6]-*.patch; do
+        grep -qxF "$(basename "$p")$(printf '\t')sound/soc/codecs$(printf '\t')snd-soc-tas2783-sdw.ko" "$l" || {
+            echo "not listed for snd-soc-tas2783-sdw.ko: $p"
+            false
+        }
+    done
 }
 
 @test "every kernel patch has git format-patch headers" {
@@ -61,12 +116,12 @@ touched_paths() {
     done
 }
 
-@test "kernel patches only touch sound/, drivers/ or Documentation/" {
+@test "kernel patches only touch sound/, drivers/, include/ or Documentation/" {
     local p f
     for p in $(kernel_patches); do
         for f in $(touched_paths "$p") $(git apply --numstat "$p" | cut -f3); do
             case "$f" in
-                sound/* | drivers/* | Documentation/*) ;;
+                sound/* | drivers/* | include/* | Documentation/*) ;;
                 *)
                     echo "$p touches $f"
                     false
@@ -125,10 +180,12 @@ touched_paths() {
                 false
                 ;;
         esac
-        # Every file the patch touches must live in or under its M= dir.
-        rest=$(touched_paths "$KDIR/$patch" | grep -v "^$mdir/" || true)
+        # Every file the patch touches must live under one of the M= dirs the
+        # patch is listed with; include/ headers are searched first for every
+        # M= build (build-modules.sh), Documentation/ is not built.
+        rest=$(outside_mdirs "$patch")
         [ -z "$rest" ] || {
-            echo "line $n: $patch touches files outside $mdir: $rest"
+            echo "line $n: $patch touches files outside its M= dirs: $rest"
             false
         }
     done <"$KDIR/modules.list"

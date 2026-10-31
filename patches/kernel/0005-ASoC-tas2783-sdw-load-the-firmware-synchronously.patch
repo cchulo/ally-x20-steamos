@@ -1,0 +1,221 @@
+From 5ce75814c28a9cbfd2635d21baa31e79be71b776 Mon Sep 17 00:00:00 2001
+From: Matthew Schwartz <matthew.schwartz@linux.dev>
+Date: Sat, 17 Oct 2026 21:31:40 -0700
+Subject: [PATCH] [FOR-UPSTREAM] ASoC: tas2783-sdw: load the firmware
+ synchronously
+
+tas_fw_load() requests the firmware asynchronously and gives up waiting
+for the callback after three seconds. tas_io_init() then returns without
+the SDCA function initialization writes, while the callback carries on
+downloading, sets fw_dl_success and so allows playback on an amp that
+never got them. Nothing cancels the callback when the driver is unbound
+either, so it can run on freed driver data. The download takes about
+1.2 s per amp on the ASUS ROG Xbox Ally X20, so it fits there, but
+nothing bounds it.
+
+Request the firmware with request_firmware_direct() and download it in
+the caller, as rt1320 does from its io_init, which removes the wait, the
+timeout and the callback. The download now returns its result, so a
+missing or bad firmware file fails tas_io_init() before the init writes
+instead of running them on an amp that refuses playback anyway.
+
+Fixes: 4cc9bd8d7b32 ("ASoc: tas2783A: Add soundwire based codec driver")
+Signed-off-by: Matthew Schwartz <matthew.schwartz@linux.dev>
+
+ally-x20-steamos: backport of Valve linux-integration commit
+5ce75814c28a9cbfd2635d21baa31e79be71b776 (mirror
+github.com/evlaV/linux-integration, in tag 7.2.10-valve1) to
+7.2.7-valve2 (31504582a073), on top of the 0004 backport. It removes
+the 3 s asynchronous firmware wait, after which v7.2.7 skips the init
+writes while the callback keeps downloading, and the callback that
+can outlive an unbound driver.
+
+Adjusted: the struct tas2783_prv hunk (7.2.7-valve2 has no
+fw_version member, from 65eadd5b0e65) and the tas2783_fw_download()
+hunks: 7.2.7-valve2 has no firmware-version read, no PRAM skip, no
+download retry and no regcache_drop_region() after the download, so
+those context lines are absent. The code removed and added is the
+same as Valve's.
+
+request_firmware_direct() still searches firmware_class.path, which
+is how the audio component points the driver at the tuning files.
+
+Valve-Upstream: 7.2.10-valve1
+Derived from: evlaV/linux-integration 5ce75814c28a "[FOR-UPSTREAM]
+  ASoC: tas2783-sdw: load the firmware synchronously" by Matthew
+  Schwartz
+---
+ sound/soc/codecs/tas2783-sdw.c | 83 +++++++++++-----------------------
+ 1 file changed, 26 insertions(+), 57 deletions(-)
+
+diff --git a/sound/soc/codecs/tas2783-sdw.c b/sound/soc/codecs/tas2783-sdw.c
+index bbd201700a09..e1bdf36f7803 100644
+--- a/sound/soc/codecs/tas2783-sdw.c
++++ b/sound/soc/codecs/tas2783-sdw.c
+@@ -24,7 +24,6 @@
+ #include <linux/pm.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
+-#include <linux/wait.h>
+ #include <linux/soundwire/sdw.h>
+ #include <linux/soundwire/sdw_registers.h>
+ #include <linux/soundwire/sdw_type.h>
+@@ -40,7 +39,6 @@
+ 
+ #include "tas2783.h"
+ 
+-#define TIMEOUT_FW_DL_MS (3000)
+ #define FW_DL_OFFSET	84 /* binary file information */
+ #define FW_FL_HDR	20 /* minimum number of bytes in one chunk */
+ #define TAS2783_PROBE_TIMEOUT 5000
+@@ -106,9 +104,7 @@ struct tas2783_prv {
+ 	u8 rca_binaryname[64];
+ 	u8 dev_name[32];
+ 	bool hw_init;
+-	/* wq for firmware download */
+-	wait_queue_head_t fw_wait;
+-	bool fw_dl_task_done;
++	/* firmware download result */
+ 	bool fw_dl_success;
+ 	/* use fallback fw name */
+ 	bool fw_use_fallback;
+@@ -851,51 +847,29 @@ static s32 tas_fw_get_next_file(const u8 *data, struct tas_fw_file *file)
+ 	return file->length + sizeof(u32) * 5;
+ }
+ 
+-static void tas2783_fw_ready(const struct firmware *fmw, void *context)
++static s32 tas2783_fw_download(struct tas2783_prv *tas_dev,
++			       const struct firmware *fmw)
+ {
+-	struct tas2783_prv *tas_dev =
+-		(struct tas2783_prv *)context;
+ 	const u8 *buf = NULL;
+ 	s32  img_sz, ret = 0, cur_file = 0;
+ 	s32 offset = 0;
+ 
+ 	struct tas_fw_hdr *hdr __free(kfree) = kzalloc_obj(*hdr);
+ 	struct tas_fw_file *file __free(kfree) = kzalloc_obj(*file);
+-	if (!file || !hdr) {
+-		ret = -ENOMEM;
+-		goto out;
+-	}
+-
+-	/* firmware binary not found*/
+-	if (!fmw || !fmw->data) {
+-		if (!tas_dev->fw_use_fallback) {
+-			tas_dev->fw_use_fallback = true;
+-			dev_info(tas_dev->dev,
+-				"Failed to read preferred fw binary: %s, attempting fallback binary load\n",
+-				tas_dev->rca_binaryname);
+-		} else {
+-			dev_err(tas_dev->dev,
+-				"Failed to read fallback fw binary %s\n",
+-				tas_dev->rca_binaryname);
+-		}
+-
+-		ret = -EINVAL;
+-		goto out;
+-	}
++	if (!file || !hdr)
++		return -ENOMEM;
+ 
+ 	img_sz = fmw->size;
+ 	buf = fmw->data;
+ 	offset += tas_fw_read_hdr(buf, hdr);
+ 	if (hdr->size != img_sz) {
+-		ret = -EINVAL;
+ 		dev_err(tas_dev->dev, "firmware size mismatch with header");
+-		goto out;
++		return -EINVAL;
+ 	}
+ 
+ 	if (img_sz < FW_DL_OFFSET) {
+-		ret = -EINVAL;
+ 		dev_err(tas_dev->dev, "unexpected size, size is too small");
+-		goto out;
++		return -EINVAL;
+ 	}
+ 
+ 	mutex_lock(&tas_dev->pde_lock);
+@@ -927,13 +901,7 @@ static void tas2783_fw_ready(const struct firmware *fmw, void *context)
+ 		tas2783_update_calibdata(tas_dev);
+ 	}
+ 
+-out:
+-	if (!ret)
+-		tas_dev->fw_dl_success = true;
+-	tas_dev->fw_dl_task_done = true;
+-	wake_up(&tas_dev->fw_wait);
+-	if (fmw)
+-		release_firmware(fmw);
++	return ret;
+ }
+ 
+ static inline s32 tas_clear_latch(struct tas2783_prv *priv)
+@@ -1279,31 +1247,32 @@ static void tas_generate_fw_name(struct sdw_slave *slave, char *name, size_t siz
+ 
+ static s32 tas_fw_load(struct tas2783_prv *tas_dev, struct sdw_slave *slave)
+ {
++	const struct firmware *fmw;
+ 	s32 ret;
+-	u8 unique_id = tas_dev->sdw_peripheral->id.unique_id;
+ 
+ 	tas_generate_fw_name(slave, tas_dev->rca_binaryname,
+ 			     sizeof(tas_dev->rca_binaryname));
+ 
+-	tas_dev->fw_dl_task_done = false;
+-	ret = request_firmware_nowait(THIS_MODULE, FW_ACTION_UEVENT,
+-				      tas_dev->rca_binaryname, tas_dev->dev,
+-				      GFP_KERNEL, tas_dev, tas2783_fw_ready);
++	ret = request_firmware_direct(&fmw, tas_dev->rca_binaryname,
++				      tas_dev->dev);
+ 	if (ret) {
+-		dev_err(tas_dev->dev,
+-			"firmware request failed for uid=%d, ret=%d\n",
+-			unique_id, ret);
++		if (!tas_dev->fw_use_fallback) {
++			tas_dev->fw_use_fallback = true;
++			dev_info(tas_dev->dev,
++				 "Failed to read preferred fw binary: %s, attempting fallback binary load\n",
++				 tas_dev->rca_binaryname);
++		} else {
++			dev_err(tas_dev->dev,
++				"Failed to read fallback fw binary %s\n",
++				tas_dev->rca_binaryname);
++		}
+ 		return ret;
+ 	}
+ 
+-	ret = wait_event_timeout(tas_dev->fw_wait, tas_dev->fw_dl_task_done,
+-				 msecs_to_jiffies(TIMEOUT_FW_DL_MS));
+-	if (!ret) {
+-		dev_err(tas_dev->dev, "fw request, wait_event timeout\n");
+-		return -EAGAIN;
+-	}
++	ret = tas2783_fw_download(tas_dev, fmw);
++	release_firmware(fmw);
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static s32 tas_io_init(struct device *dev, struct sdw_slave *slave)
+@@ -1325,8 +1294,9 @@ static s32 tas_io_init(struct device *dev, struct sdw_slave *slave)
+ 
+ 	tas_dev->fw_use_fallback = false;
+ 	ret = tas_fw_load(tas_dev, slave);
+-	if (!ret && tas_dev->fw_use_fallback)
++	if (ret && tas_dev->fw_use_fallback)
+ 		ret = tas_fw_load(tas_dev, slave);
++	tas_dev->fw_dl_success = !ret;
+ 
+ 	if (!ret) {
+ 		if (tas_dev->sa_func_data)
+@@ -1504,7 +1474,6 @@ static s32 tas_sdw_probe(struct sdw_slave *peripheral,
+ 	tas_dev->amp_level = TAS2783_AMP_LEVEL_MAX;
+ 	tas_dev->dvc_level = TAS2783_DVC_LVL_MAX;
+ 
+-	init_waitqueue_head(&tas_dev->fw_wait);
+ 	dev_set_drvdata(dev, tas_dev);
+ 	regmap = devm_regmap_init_sdw_mbq_cfg(&peripheral->dev,
+ 					      peripheral,

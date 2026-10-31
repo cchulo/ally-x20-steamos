@@ -1,0 +1,162 @@
+From 9a0dabd2637d85629cb94dcf0c4b80667c39dd68 Mon Sep 17 00:00:00 2001
+From: Matthew Schwartz <matthew.schwartz@linux.dev>
+Date: Thu, 15 Oct 2026 19:39:15 -0700
+Subject: [PATCH] [FOR-UPSTREAM] ASoC: sdw_utils: honor empty DisCo port lists
+ when creating DAI links
+
+The codec_info tables give each DAI a fixed direction, so a TAS2783
+always gets an amp feedback capture link. The ASUS ROG Xbox Ally X20
+BIOS declares mipi-sdw-source-port-list as 0 for both of its TAS2783s,
+so the capture port has no DisCo properties and every open of the
+SmartAmp capture PCM fails in sdw_program_slave_port_params() with
+-EINVAL. The PCM is probed at session start, which logs a burst of
+transport errors on every boot, and the same failure is reported on the
+ASUS ProArt PX13.
+
+Store the effective direction in each endpoint and drop a direction
+when the peripheral declares an empty port list for it. A missing port
+list keeps the table direction, so platforms that do not describe their
+ports are unaffected.
+
+Signed-off-by: Matthew Schwartz <matthew.schwartz@linux.dev>
+
+ally-x20-steamos: backport of Valve linux-integration commit
+9a0dabd2637d85629cb94dcf0c4b80667c39dd68 (mirror
+github.com/evlaV/linux-integration, in tag 7.2.10-valve1) to
+7.2.7-valve2 (31504582a073). Without it the RC74XA layout from 0001
+gets a SmartAmp feedback capture DAI link that the BIOS does not
+declare: every open of SDW0-PIN4-CAPTURE-SmartAmp fails with -22 in
+snd_soc_link_prepare(), logs a burst of "Program transport params
+failed", and its hw_free writes PDE23 = PS3 on both amps.
+
+Adjusted: the sound/soc/intel/boards/sof_sdw.c hunk (Intel machine
+driver) is dropped. The X20 is an AMD machine and only the AMD machine
+drivers are rebuilt; the remaining hunks are unchanged.
+
+The hunk in include/sound/soc_sdw_utils.h grows struct
+asoc_sdw_endpoint, which the AMD machine drivers allocate and
+snd-soc-sdw-utils fills, so snd-soc-sdw-utils.ko,
+snd-acp-sdw-legacy-mach.ko and snd-acp-sdw-sof-mach.ko are rebuilt and
+replaced together.
+
+The patch does not reverse-apply on 7.2.10-valve1 by itself because
+the 7.2.y stable merge there reworked the context
+(asoc_sdw_parse_sdw_endpoints() signature); the Valve-Upstream line
+below tells build/build-modules.sh to treat it as present from that
+tag on.
+
+Valve-Upstream: 7.2.10-valve1
+Derived from: evlaV/linux-integration 9a0dabd2637d "[FOR-UPSTREAM]
+  ASoC: sdw_utils: honor empty DisCo port lists when creating DAI
+  links" by Matthew Schwartz (also anatase-org/kernel-anatase
+  7.2.7-an22, patch 0257)
+---
+ include/sound/soc_sdw_utils.h           |  1 +
+ sound/soc/amd/acp/acp-sdw-legacy-mach.c |  2 +-
+ sound/soc/amd/acp/acp-sdw-sof-mach.c    |  2 +-
+ sound/soc/sdw_utils/soc_sdw_utils.c     | 36 ++++++++++++++++++++++---
+ 4 files changed, 36 insertions(+), 5 deletions(-)
+
+diff --git a/include/sound/soc_sdw_utils.h b/include/sound/soc_sdw_utils.h
+index 79c21966220b..a3108ceb844f 100644
+--- a/include/sound/soc_sdw_utils.h
++++ b/include/sound/soc_sdw_utils.h
+@@ -114,6 +114,7 @@ struct asoc_sdw_endpoint {
+ 	const char *codec_name;
+ 	const char *name_prefix;
+ 	bool include_sidecar;
++	bool direction[2]; /* dai_info direction limited by the DisCo port lists */
+ 
+ 	struct asoc_sdw_codec_info *codec_info;
+ 	const struct asoc_sdw_dai_info *dai_info;
+diff --git a/sound/soc/amd/acp/acp-sdw-legacy-mach.c b/sound/soc/amd/acp/acp-sdw-legacy-mach.c
+index e8b6819cc4b4..75fb594e85f1 100644
+--- a/sound/soc/amd/acp/acp-sdw-legacy-mach.c
++++ b/sound/soc/amd/acp/acp-sdw-legacy-mach.c
+@@ -252,7 +252,7 @@ static int create_sdw_dailink(struct snd_soc_card *card,
+ 			return -ENOMEM;
+ 
+ 		list_for_each_entry(soc_end, &soc_dai->endpoints, list) {
+-			if (!soc_end->dai_info->direction[stream])
++			if (!soc_end->direction[stream])
+ 				continue;
+ 
+ 			int link_num = ffs(soc_end->link_mask) - 1;
+diff --git a/sound/soc/amd/acp/acp-sdw-sof-mach.c b/sound/soc/amd/acp/acp-sdw-sof-mach.c
+index a423853f3a97..f1bc307fca67 100644
+--- a/sound/soc/amd/acp/acp-sdw-sof-mach.c
++++ b/sound/soc/amd/acp/acp-sdw-sof-mach.c
+@@ -168,7 +168,7 @@ static int create_sdw_dailink(struct snd_soc_card *card,
+ 			return -ENOMEM;
+ 
+ 		list_for_each_entry(sof_end, &sof_dai->endpoints, list) {
+-			if (!sof_end->dai_info->direction[stream])
++			if (!sof_end->direction[stream])
+ 				continue;
+ 
+ 			int link_num = ffs(sof_end->link_mask) - 1;
+diff --git a/sound/soc/sdw_utils/soc_sdw_utils.c b/sound/soc/sdw_utils/soc_sdw_utils.c
+index d8db8fc5313e..29ad9f70d65c 100644
+--- a/sound/soc/sdw_utils/soc_sdw_utils.c
++++ b/sound/soc/sdw_utils/soc_sdw_utils.c
+@@ -1976,6 +1976,32 @@ put_device:
+ 	return ret;
+ }
+ 
++/* A DisCo port list that is present but empty means the stream cannot run */
++static bool asoc_sdw_has_ports(struct device *dev,
++			       const struct snd_soc_acpi_link_adr *adr_link,
++			       int adr_index, int stream)
++{
++	const char *prop = stream == SNDRV_PCM_STREAM_PLAYBACK ?
++			   "mipi-sdw-sink-port-list" : "mipi-sdw-source-port-list";
++	const char *sdw_codec_name;
++	struct device *sdw_dev;
++	u32 ports;
++	int ret;
++
++	sdw_codec_name = _asoc_sdw_get_codec_name(dev, adr_link, adr_index);
++	if (!sdw_codec_name)
++		return true;
++
++	sdw_dev = bus_find_device_by_name(&sdw_bus_type, NULL, sdw_codec_name);
++	if (!sdw_dev)
++		return true;
++
++	ret = device_property_read_u32(sdw_dev, prop, &ports);
++	put_device(sdw_dev);
++
++	return ret || ports;
++}
++
+ int asoc_sdw_parse_sdw_endpoints(struct snd_soc_card *card,
+ 				 struct snd_soc_aux_dev *soc_aux,
+ 				 struct asoc_sdw_dailink *soc_dais,
+@@ -2099,12 +2125,16 @@ int asoc_sdw_parse_sdw_endpoints(struct snd_soc_card *card,
+ 					}
+ 				}
+ 
++				for_each_pcm_streams(stream)
++					soc_end->direction[stream] = dai_info->direction[stream] &&
++						asoc_sdw_has_ports(dev, adr_link, i, stream);
++
+ 				dev_dbg(dev,
+ 					"Add dev: %d, 0x%llx end: %d, dai: %d, %c/%c to %s: %d\n",
+ 					ffs(adr_link->mask) - 1, adr_dev->adr,
+ 					adr_end->num, dai_info->dai_type,
+-					dai_info->direction[SNDRV_PCM_STREAM_PLAYBACK] ? 'P' : '-',
+-					dai_info->direction[SNDRV_PCM_STREAM_CAPTURE] ? 'C' : '-',
++					soc_end->direction[SNDRV_PCM_STREAM_PLAYBACK] ? 'P' : '-',
++					soc_end->direction[SNDRV_PCM_STREAM_CAPTURE] ? 'C' : '-',
+ 					adr_end->aggregated ? "group" : "solo",
+ 					adr_end->group_id);
+ 
+@@ -2125,7 +2155,7 @@ int asoc_sdw_parse_sdw_endpoints(struct snd_soc_card *card,
+ 						return -EINVAL;
+ 					}
+ 
+-					if (dai_info->direction[stream]) {
++					if (soc_end->direction[stream]) {
+ 						num_dais += !soc_dai->num_devs[stream];
+ 						soc_dai->num_devs[stream]++;
+ 						soc_dai->link_mask[stream] |= adr_link->mask;

@@ -16,12 +16,34 @@ bus, next to an RT721 headset codec. Four separate problems keep them silent.
 | 3 | The amp driver requests tuning files under a name linux-firmware does not ship, and the right pair depends on the speaker supplier (JGX or LS, from the `SPEAKER_ID` UEFI variable). | `audio`: `firmware/fetch-tas2783.sh` (see [`firmware/README.md`](../firmware/README.md)) |
 | 4 | SteamOS's alsa-ucm-conf predates TAS2783, so PipeWire finds no speaker device. | `audio`: UCM overlay with upstream `sof-soundwire/tas2783.conf`, selected through `ALSA_CONFIG_UCM2` |
 
+Beyond the four problems, the `modules` component also rebuilds the amp
+driver and the SoundWire machine-driver helpers with four fixes from Valve's
+`7.2.10-valve1` kernel; see [Kernel fixes from Valve 7.2.10](#kernel-fixes-from-valve-7210).
+
 Valve's `7.2.10-valve1` kernel already contains the RC74XA link-0 layout, the
-ACPI flag handling and the SPEAKER_ID-aware firmware names. On such a kernel
+ACPI flag handling, the SPEAKER_ID-aware firmware names and those four fixes. On such a kernel
 the `modules` component and the ACPI override become superseded, while the UCM
 profile (alsa-ucm-conf) and possibly the firmware links are still needed until
 SteamOS's userspace packages catch up. `status --verbose` shows each part
 separately (see below).
+
+## Kernel fixes from Valve 7.2.10
+
+On the `7.2.7-valve2` kernel, the `modules` component also replaces these
+modules (patches `0003`–`0006`, details in
+[`patches/kernel/README.md`](../patches/kernel/README.md#00030006-valve-7210-valve1-backports)):
+
+| Module | Fix | What you notice |
+|---|---|---|
+| `snd-soc-sdw-utils`, `snd-acp-sdw-legacy-mach`, `snd-acp-sdw-sof-mach` | no amp feedback capture link where the BIOS declares no capture port | The `SDW0-PIN4-CAPTURE-SmartAmp` PCM is gone, and with it the bursts of `Program transport params failed: -22` / `ASoC error (-22) at snd_soc_link_prepare()` in the kernel log each time PipeWire probes the card. Closing that failed PCM no longer powers the amps' SmartAmp domain off (PDE23 = PS3). |
+| `snd-soc-tas2783-sdw` | volume settings kept across resets | `tas2783-1/2 Amp Volume` and `Speaker Volume` can be read and set while the speakers are idle (no more `-EBUSY`), and a value you set survives the SoundWire link idling, suspend and resume. Until you set one, the tuning firmware's value applies, as before. |
+| `snd-soc-tas2783-sdw` | firmware loaded synchronously | The tuning file is loaded and downloaded before the amp is initialised, with no 3 s timeout that let an amp play without its init writes. A missing tuning file now fails the amp's init outright (`Failed to read fallback fw binary`). The file is still found through `firmware_class.path`. |
+| `snd-soc-tas2783-sdw` | no playback without the init writes | If an amp's DisCo init writes fail, playback on it is refused (`error playback without init writes`) instead of playing with the wrong posture (wrong side or mix). |
+
+The three SoundWire helper modules change a shared structure, so they are
+always built and loaded as a set. All four fixes are in Valve's
+`7.2.10-valve1`; on that kernel the modules are reported `superseded` and the
+stock ones load. Hardware confirmation is `TODO(hw)` (below).
 
 ## What the component installs
 
@@ -106,6 +128,7 @@ amixer -c amdsoundwire info | grep Components   # should include spk:tas2783
 journalctl -k | grep -iE 'acp|sof|soundwire|tas2783|Table Upgrade'
 #   "ACPI: Table Upgrade: override [DSDT-...]"      override loaded
 #   no "Failed to read ... fw binary"               tuning found
+#   no "Program transport params failed"            SmartAmp capture link gone (0003)
 cat /sys/module/firmware_class/parameters/path  # /etc/ally-x20-steamos/firmware
 systemctl --user show-environment | grep ALSA_CONFIG_UCM2
 alsaucm -c amdsoundwire dump text | grep -A3 Speaker
@@ -145,7 +168,11 @@ for a test, unset the variable for the session (commands above with
 - The `layout` probe heuristic: upstream may name the layout table
   differently from `acp70_tas2783x2_l0u8b_rt721_l1u0`.
 - The amps' feedback capture stream (`SDW0-PIN4-CAPTURE-SmartAmp`) fails to
-  start per hungarianhc; no application uses it.
+  start per hungarianhc; no application uses it. With patch `0003` the PCM
+  should no longer exist and the `-22` bursts should stop.
+- That a mixer change to `Amp Volume` / `Speaker Volume` survives the sink
+  suspending (`0004`), and that the card still comes up with the tuning
+  firmware loaded synchronously (`0005`).
 
 ## Measured on the X20 (2026-10-31)
 

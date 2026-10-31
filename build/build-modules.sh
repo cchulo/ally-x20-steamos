@@ -30,9 +30,11 @@
 # Steps 1 and 2 provide no .c files, so the M= directories are taken from a
 # sparse checkout of the exact Valve commit (evlaV tag, verified against the
 # -g<commit> suffix). Patches already present in that tree (`git apply
-# --check --reverse` succeeds) are skipped and recorded as already-upstream;
+# --check --reverse` succeeds, or the patch names a "Valve-Upstream:" tag
+# not newer than the target's) are skipped and recorded as already-upstream;
 # a module whose patches are all upstream is not built and is recorded as
-# superseded in BUILD-INFO.
+# superseded in BUILD-INFO. Only the listed .ko files are built; include/
+# headers changed by a patch are searched before the kernel's own.
 #
 # Every function is side-effect free on load: the script can be sourced by the
 # test-suite, which stubs bm_fetch / bm_git / bm_make and calls the pure
@@ -57,7 +59,7 @@ bm_die() {
 }
 
 bm_usage() {
-    sed -n '3,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '3,37p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 bm_have() { command -v "$1" >/dev/null 2>&1; }
@@ -185,11 +187,16 @@ bm_patch_touched_files() {
 }
 
 # bm_check_patch_scope <patches-dir> : entries on stdin; every file a patch
-# touches must sit below the M= dir it is listed with, otherwise a headers
-# based out-of-tree build would silently ignore that part of the patch.
+# touches must sit below one of the M= dirs the patch is listed with,
+# otherwise a headers based out-of-tree build would silently ignore that part
+# of the patch. Two exceptions: Documentation/ (excluded when applying) and
+# include/ (patched headers are put ahead of the kernel's include/ for every
+# M= build, see bm_include_overlay; every module that uses a changed header
+# must then be listed for that patch).
 bm_check_patch_scope() {
-    local dir=$1 p m k f bad=0
-    while IFS="$(printf '\t')" read -r p m k; do
+    local dir=$1 entries p f m ok bad=0
+    entries=$(cat)
+    for p in $(printf '%s\n' "$entries" | bm_entries_column 1); do
         [ -n "$p" ] || continue
         if [ ! -f "$dir/$p" ]; then
             bm_warn "listed patch not found: $dir/$p"
@@ -198,16 +205,42 @@ bm_check_patch_scope() {
         fi
         for f in $(bm_patch_touched_files "$dir/$p"); do
             case "$f" in
-                "$m"/*) ;;
-                Documentation/*) ;; # ABI docs ride along; excluded when applying
-                *)
-                    bm_warn "$p touches $f, outside M=$m (needed for $k)"
-                    bad=1
-                    ;;
+                Documentation/* | include/*) continue ;; # see above
             esac
+            ok=0
+            for m in $(printf '%s\n' "$entries" | awk -F'\t' -v p="$p" '$1 == p { print $2 }'); do
+                case "$f" in "$m"/*) ok=1 ;; esac
+            done
+            if [ "$ok" = 0 ]; then
+                bm_warn "$p touches $f, outside M=$(printf '%s\n' "$entries" | awk -F'\t' -v p="$p" '$1 == p { print $2 }' | sort -u | paste -sd, -)"
+                bad=1
+            fi
         done
     done
     return "$bad"
+}
+
+# bm_patch_valve_upstream <patch> : the Valve tag named by a
+# "Valve-Upstream: <x.y.z>-valveN" line in the patch description, if any.
+# Used for backports whose text cannot reverse-apply on the newer Valve tree
+# (Valve carries prerequisites we do not), see bm_patch_state.
+bm_patch_valve_upstream() {
+    awk '/^---$/ || /^diff --git / { exit } /^Valve-Upstream: / { print $2; exit }' "$1"
+}
+
+# bm_tag_key <x.y[.z]-valveN> : fixed-width sort key, empty if malformed.
+bm_tag_key() {
+    printf '%s\n' "$1" | sed -nE 's/^([0-9]+)\.([0-9]+)(\.([0-9]+))?-valve([0-9]+)$/\1 \2 x\4 \5/p' \
+        | awk '{ sub(/^x/, "", $3); printf "%08d%08d%08d%08d\n", $1, $2, $3, $4 }'
+}
+
+# bm_tag_ge <tag-a> <tag-b> : Valve tag a is the same as or newer than b.
+bm_tag_ge() {
+    local a b
+    a=$(bm_tag_key "$1")
+    b=$(bm_tag_key "$2")
+    [ -n "$a" ] && [ -n "$b" ] || return 1
+    [ "$a" = "$b" ] || [ "$(printf '%s\n%s\n' "$a" "$b" | sort | tail -n1)" = "$a" ]
 }
 
 # -------------------------------------------------------------- repo db --
@@ -477,9 +510,28 @@ bm_src_from_srcpkg() {
 }
 
 # bm_sparse_dirs : the first two path components of every M= dir, so that
-# relative includes such as sound/soc/amd/acp -> ../../codecs still resolve.
+# relative includes such as sound/soc/amd/acp -> ../../codecs still resolve,
+# plus the directory of every include/ header a listed patch touches.
 bm_sparse_dirs() {
-    printf '%s\n' "$BM_ENTRIES" | bm_entries_column 2 | awk -F/ '{ print (NF > 1 ? $1 "/" $2 : $1) }' | sort -u
+    local p
+    {
+        printf '%s\n' "$BM_ENTRIES" | bm_entries_column 2 | awk -F/ '{ print (NF > 1 ? $1 "/" $2 : $1) }'
+        for p in $(printf '%s\n' "$BM_ENTRIES" | bm_entries_column 1); do
+            [ -f "$PATCHES_DIR/$p" ] || continue
+            bm_patch_touched_files "$PATCHES_DIR/$p" | sed -n 's|^\(include/.*\)/[^/]*$|\1|p'
+        done
+    } | sort -u
+}
+
+# bm_sparse_has <dir> : a cached sparse tree covers every bm_sparse_dirs path.
+bm_sparse_has() {
+    local have want d
+    have=$(sed -n 's/^sparse=//p' "$1/.ax20-source" | tr ' ' '\n')
+    want=$(bm_sparse_dirs)
+    for d in $want; do
+        printf '%s\n' "$have" | grep -Fxq -- "$d" || return 1
+    done
+    return 0
 }
 
 # bm_use_cached_source <dir> : adopt a cached tree and its provenance.
@@ -499,14 +551,14 @@ bm_source_valve_sparse() {
     if [ -f "$full/Makefile" ] && bm_use_cached_source "$full"; then
         return 0
     fi
-    if [ -d "$dest" ] && bm_use_cached_source "$dest"; then
+    if [ -d "$dest" ] && bm_sparse_has "$dest" && bm_use_cached_source "$dest"; then
         return 0
     fi
     if [ -z "$KERNEL_SRC_URL" ]; then
         mkdir -p "$CACHE_DIR/valve-sparse" || return 1
         # shellcheck disable=SC2046
         if bm_src_from_git "$BM_GIT_URL" "$BM_TAG" "$dest.tmp" $(bm_sparse_dirs); then
-            printf 'url=%s\nref=%s\nsha256=\n' "$BM_SOURCE_URL" "$BM_SOURCE_REF" >"$dest.tmp/.ax20-source"
+            printf 'url=%s\nref=%s\nsha256=\nsparse=%s\n' "$BM_SOURCE_URL" "$BM_SOURCE_REF" "$(bm_sparse_dirs | tr '\n' ' ')" >"$dest.tmp/.ax20-source"
             rm -rf "$dest"
             mv "$dest.tmp" "$dest" || return 1
             BM_VALVE_SRC=$dest
@@ -738,8 +790,14 @@ bm_make_worktree() {
 }
 
 # bm_patch_state <tree> <patch> : applies | upstream | conflict
+# A patch whose "Valve-Upstream:" tag is not newer than the target's tag is
+# upstream without looking at the tree.
 bm_patch_state() {
-    if (cd "$1" && bm_git apply --check -p1 --exclude='Documentation/*' "$2") >/dev/null 2>&1; then
+    local since
+    since=$(bm_patch_valve_upstream "$2")
+    if [ -n "$since" ] && bm_tag_ge "$BM_TAG" "$since"; then
+        echo upstream
+    elif (cd "$1" && bm_git apply --check -p1 --exclude='Documentation/*' "$2") >/dev/null 2>&1; then
         echo applies
     elif (cd "$1" && bm_git apply --check --reverse -p1 --exclude='Documentation/*' "$2") >/dev/null 2>&1; then
         echo upstream
@@ -778,6 +836,7 @@ bm_apply_patches() {
         BM_PATCH_STATUS="$BM_PATCH_STATUS$p applied
 "
     done
+    bm_include_overlay "$tree" "$tree.include" || bm_die "cannot stage the patched headers"
     BM_SUPERSEDED=""
     for k in $(printf '%s\n' "$BM_ENTRIES" | bm_entries_column 3); do
         if bm_module_superseded "$k"; then
@@ -811,12 +870,51 @@ bm_mdir_needed() {
     return 1
 }
 
+# bm_include_overlay <tree> <dir> : copy the include/ headers changed by the
+# applied patches to <dir> (laid out like include/). Sets BM_INCLUDE_OVERLAY
+# to <dir>, or to "" when no applied patch changes a header.
+bm_include_overlay() {
+    local tree=$1 dir=$2 p f
+    BM_INCLUDE_OVERLAY=""
+    rm -rf "$dir"
+    for p in $(printf '%s' "${BM_PATCH_STATUS:-}" | awk '$2 == "applied" { print $1 }'); do
+        for f in $(bm_patch_touched_files "$PATCHES_DIR/$p"); do
+            case "$f" in include/*) ;; *) continue ;; esac
+            [ -f "$tree/$f" ] || continue
+            mkdir -p "$dir/$(dirname "${f#include/}")" || return 1
+            cp -p "$tree/$f" "$dir/${f#include/}" || return 1
+            BM_INCLUDE_OVERLAY=$dir
+        done
+    done
+    [ -z "$BM_INCLUDE_OVERLAY" ] || bm_log "patched headers searched first: $(cd "$dir" && find . -type f | sed 's|^\./||' | tr '\n' ' ')"
+}
+
+# bm_make_args <tree> <mdir> : make arguments for one M= dir, one per line.
+# Only the listed .ko files are built (kbuild single targets), not every
+# module the directory's Makefile configures. Patched headers go ahead of the
+# kernel's include/ through NOSTDINC_FLAGS, the only flags kbuild puts before
+# LINUXINCLUDE; the top Makefile sets it to just -nostdinc.
+bm_make_args() {
+    local k
+    printf '%s\n' -C "$BM_HEADERS_DIR" "M=$1/$2" "-j$JOBS"
+    [ -z "${BM_INCLUDE_OVERLAY:-}" ] || printf '%s\n' "NOSTDINC_FLAGS=-nostdinc -I$BM_INCLUDE_OVERLAY"
+    for k in $(printf '%s\n' "$BM_ENTRIES" | bm_kos_for_mdir "$2"); do
+        bm_is_superseded "$k" || printf '%s.ko\n' "$k"
+    done
+}
+
 bm_build_mdirs() {
-    local tree=$1 m
+    local tree=$1 m old_ifs
     for m in $(printf '%s\n' "$BM_ENTRIES" | bm_entries_column 2); do
         bm_mdir_needed "$m" || continue
-        bm_log "make M=$m modules"
-        bm_make -C "$BM_HEADERS_DIR" M="$tree/$m" -j"$JOBS" modules || bm_die "build of M=$m failed"
+        bm_log "make M=$m $(printf '%s\n' "$BM_ENTRIES" | bm_kos_for_mdir "$m" | tr '\n' ' ')"
+        old_ifs=$IFS
+        IFS='
+'
+        # shellcheck disable=SC2046
+        set -- $(bm_make_args "$tree" "$m")
+        IFS=$old_ifs
+        bm_make "$@" || bm_die "build of M=$m failed"
     done
 }
 

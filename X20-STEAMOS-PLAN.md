@@ -73,9 +73,12 @@ stoneharborent/aquarius-os PR #40, anatase-org/kernel-anatase 7.2.7-an22):
   (`/etc/systemd/system/inputplumber.service.d/50-ally-x20-steamos.conf`,
   `ExecStart=` replaced). No stock file edited; removing the drop-in restores
   the stock daemon.
-- Quick Access button sends `0xa0` on the ASUS N-KEY HID interface; stock
-  `hid-asus-ally` only knows `0xa6` (older Allys) and drops it.
-  Fix: add the mapping in our `hid-asus-ally` patch (we rebuild it anyway, §1.3).
+- The top-right button (ovenham: "Quick Access"; owner: Capture) sends `0xa0`
+  on the ASUS N-KEY HID interface; stock `hid-asus-ally` only knows `0xa6`
+  (older Allys) and drops it.
+  Fix: report it as its own key (`KEY_PROG2`) in our `hid-asus-ally` patch (we
+  rebuild it anyway, §1.3) and map it in the InputPlumber capability map
+  (docs/inputplumber.md §6).
 
 ### 1.3 Joystick ring RGB in Steam's native Customization menu
 - Kernel side works: `hid-asus-ally` exposes
@@ -165,7 +168,7 @@ ally-x20-steamos/
 │   │   ├── 0002-ACPI-x86-quirk-ignore-acp-audio-config-flag-RC74XA.patch   # optional alt to initrd override
 │   │   ├── 0010-hid-asus-ally-alias-LED-to-go_s-and-fix-mc_subled.patch
 │   │   ├── 0011-hid-asus-ally-add-effect-speed-mode-sysfs.patch
-│   │   └── 0012-hid-asus-ally-map-X20-quick-access-0xa0.patch
+│   │   └── 0012-hid-asus-ally-report-X20-top-right-key-0xa0.patch
 │   └── inputplumber/               # only if the stock daemon needs a source patch (fallback path)
 ├── build/
 │   ├── Containerfile               # archlinux base; podman rootless OK on SteamOS

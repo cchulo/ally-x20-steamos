@@ -1,12 +1,27 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) the InputPlumber authors (https://github.com/ShadowBlip/InputPlumber)
-# ally-x20-steamos: copy of upstream
+# ally-x20-steamos: X20 button map, derived from upstream
 #   rootfs/usr/share/inputplumber/capability_maps/ally_type2.yaml
 #   tag v0.83.0, commit 4ed1f50c7801e4f91fd17ce1a7b2b9d8d8b82e69, git blob 9ab261dde44fcb1e618ee4fb3e08cfd8f5182537
 #   https://github.com/ShadowBlip/InputPlumber/blob/v0.83.0/rootfs/usr/share/inputplumber/capability_maps/ally_type2.yaml
-# Only `name` and `id` differ from upstream, so the stock `aly2` map (used by
-# the stock Xbox Ally profile) is left untouched. Installed only for daemons
-# older than 0.82.0, together with 50-rog_xbox_ally_x20.stock.yaml.
+# Installed only for daemons older than 0.82.0, together with
+# 50-rog_xbox_ally_x20.stock.yaml, under its own id so the stock `aly2` map
+# (used by the stock Xbox Ally profile) is left untouched.
+#
+# Differences from upstream (button table and reasons: docs/inputplumber.md §6):
+#  - Armoury Crate (top left, N-KEY 0xa6 -> KEY_F16 with qam_mode=0) is
+#    QuickAccess, not Keyboard. Upstream's Keyboard goes through the daemon's
+#    default profile as Guide+North, i.e. Steam+X, which Steam sometimes
+#    reads as a bare Steam press.
+#  - Armoury Crate long press: KeyProg1 (0x38/0x93, what the Ally firmware
+#    sends on a hold) and KeyF21 (the Xbox Ally's left hold) also open Quick
+#    Access, so a long press does the same as a short one and never sends a
+#    Steam chord. TODO(hw): confirm which code the X20 sends on a hold.
+#  - Capture (top right, N-KEY 0xa0 -> KEY_PROG2 with our hid-asus-ally
+#    patch 0012) is Screenshot: the Steam Deck target sends Steam+R1, the
+#    Xbox targets KEY_RECORD. KeyF22 (the Xbox Ally's right hold) is
+#    Screenshot too.
+#  - Paddles: unchanged from upstream.
 
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v1.json
 # Schema version number
@@ -16,37 +31,43 @@ version: 1
 kind: CapabilityMap
 
 # Name for the device event map
-name: Ally Type 2 (ally-x20-steamos copy of upstream v0.83.0)
+name: ROG Xbox Ally X20 (ally-x20-steamos)
 
 # Unique identifier of the capability mapping
 id: ally_x20_steamos_aly2
 
 # List of mapped events that are activated by a specific set of activation keys.
 mapping:
-  - name: Armoury Crate (Left Short)
+  - name: Armoury Crate (Top Left Short)
     source_events:
       - keyboard: KeyF16
     target_event:
       gamepad:
-        button: Keyboard
-  - name: Armoury Crate (Left Long)
-    source_events:
-      - keyboard: KeyF21
-    target_event:
-      gamepad:
-        button: LeftPaddle2
-  - name: Library (Right Short)
+        button: QuickAccess
+  - name: Armoury Crate (Top Left Long, Ally code)
     source_events:
       - keyboard: KeyProg1
     target_event:
       gamepad:
         button: QuickAccess
-  - name: Library (Right Long)
+  - name: Armoury Crate (Top Left Long, Xbox Ally code)
+    source_events:
+      - keyboard: KeyF21
+    target_event:
+      gamepad:
+        button: QuickAccess
+  - name: Capture (Top Right Short)
+    source_events:
+      - keyboard: KeyProg2
+    target_event:
+      gamepad:
+        button: Screenshot
+  - name: Capture (Top Right Long, Xbox Ally code)
     source_events:
       - keyboard: KeyF22
     target_event:
       gamepad:
-        button: QuickAccess2
+        button: Screenshot
   - name: Left Paddle
     source_events:
       - keyboard: KeyF14

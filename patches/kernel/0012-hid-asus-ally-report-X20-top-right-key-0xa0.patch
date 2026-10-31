@@ -1,0 +1,119 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Carlos Chulo <cchulo.dev@gmail.com>
+Date: Sat, 31 Oct 2026 09:00:00 -0700
+Subject: [PATCH] HID: asus-ally: report the ROG Xbox Ally X20 top-right key
+ (0xa0) as KEY_PROG2
+
+The ROG Xbox Ally X20 (board RC74XA) has a button at the top right of
+the screen that sends vendor code 0xa0 on the N-KEY interface: "5a a0"
+on press, "5a 00" on release. No earlier Ally sends 0xa0, and neither
+ally_x_raw_event() nor the Ally config input path in ally_raw_event()
+knows it, so the button does nothing.
+
+Report it as KEY_PROG2, one plain key, on the Ally X gamepad input
+device and on the "ASUS ROG Ally Config" input device. KEY_PROG2 is not
+used by any other Ally button: 0xa6 (the left button, Armoury Crate on
+the X20) reports KEY_F16 or BTN_MODE, 0x38/0x93 report KEY_PROG1 or the
+Steam Quick Access chord, 0xa7/0xa8 report KEY_F17/KEY_F18.
+
+0xa0 gets KEY_PROG2 whatever qam_mode is set to. The driver emits no
+Steam chord for it. InputPlumber, which SteamOS uses for this
+controller, sets qam_mode=0 and maps keys to Steam actions through its
+capability maps. It needs a key that is distinct from 0xa6. A first
+version of this patch reported KEY_F16 for 0xa0 (the 0xa6 key), so both
+top buttons did the same thing under InputPlumber, and with qam_mode=1
+it synthesised BTN_MODE+BTN_A. That chord raced with InputPlumber's own
+mapping.
+
+The ally-x20-steamos InputPlumber capability map turns KEY_PROG2 into
+Steam's screenshot action, matching the red capture label the owner
+reports on that button. Other users can map it to anything.
+
+hid-asus is not changed. Its asus_input_mapping() table maps vendor
+usage 0xa6 to KEY_F16, but with CONFIG_HID_ASUS_ALLY reachable
+hid-asus skips the Ally endpoints 0x83, 0x87 and 0x04 (asus_probe() in
+hid-asus.c returns -ENODEV for them), and the 0x5a vendor reports are
+delivered to hid-asus-ally. The other hid-asus devices (ROG laptop
+keyboards) may use 0xa0 for something else, so a hid-asus-wide mapping
+would be wrong too.
+
+No device-table change is needed. The X20's N-KEY device enumerates as
+0b05:1b4c (hidraw node 0003:0B05:1B4C.*), the same ID as the ROG Ally X
+(USB_DEVICE_ID_ASUSTEK_ROG_NKEY_ALLY_X), so it already binds to this
+driver.
+
+Derived from:
+- ovenham/rog-ally-x20-steamos-speaker-qam-fix (README button table
+  and tools/x20-buttons.sh: Armoury Crate at the top left sends 0xa6,
+  the right-side button sends 0xa0 on press and 0x00 on release; N-KEY
+  device 0b05:1b4c),
+  https://github.com/ovenham/rog-ally-x20-steamos-speaker-qam-fix
+- hhd-dev/hhd src/hhd/device/rog_ally/base.py (AllyHidraw.produce():
+  0xa6 is the left button, 0x38/0x93/0xa0 the right button)
+- drivers/hid/hid-asus.c in the same tree (0xa6 -> KEY_F16 "ROG Ally
+  QAM button"; Ally endpoints skipped when CONFIG_HID_ASUS_ALLY is
+  reachable)
+
+Base: linux-integration 7.2.7-valve2 plus the previous patches in this
+series. Applies without them as well.
+
+TODO(hw): on an RC74XA confirm with hidraw that the top-right button
+sends 5a a0 and nothing else, and that the evdev node of "ASUS ROG Ally X
+Gamepad" shows exactly one KEY_PROG2 press and release per press.
+---
+ drivers/hid/hid-asus-ally.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/drivers/hid/hid-asus-ally.c b/drivers/hid/hid-asus-ally.c
+index 224aa9c..cd45ebc 100644
+--- a/drivers/hid/hid-asus-ally.c
++++ b/drivers/hid/hid-asus-ally.c
+@@ -36,6 +36,15 @@
+ #define ROG_ALLY_X_MIN_MCU 313
+ #define ROG_ALLY_MIN_MCU 319
+ 
++/*
++ * Vendor key code in byte 1 of 0x5a input reports on the N-KEY interface.
++ * The ROG Xbox Ally X20 (RC74XA) sends 0xa0 for the button at the top
++ * right of the screen. No earlier Ally sends it. The driver reports it
++ * as KEY_PROG2, a key no other Ally button uses, and leaves its meaning
++ * to userspace.
++ */
++#define ALLY_X20_KEY_RIGHT 0xa0
++
+ #define FEATURE_KBD_LED_REPORT_ID1 0x5d
+ #define FEATURE_KBD_LED_REPORT_ID2 0x5e
+ 
+@@ -1483,6 +1492,7 @@ static struct ally_gamepad_cfg *ally_gamepad_cfg_create(struct hid_device *hdev)
+ 	input_dev->uniq = hdev->uniq;
+ 	input_dev->name = "ASUS ROG Ally Config";
+ 	input_set_capability(input_dev, EV_KEY, KEY_PROG1);
++	input_set_capability(input_dev, EV_KEY, KEY_PROG2);
+ 	input_set_capability(input_dev, EV_KEY, KEY_F16);
+ 	input_set_capability(input_dev, EV_KEY, KEY_F17);
+ 	input_set_capability(input_dev, EV_KEY, KEY_F18);
+@@ -1591,6 +1601,8 @@ static int ally_x_raw_event(struct ally_x_device *ally_x, struct hid_report *rep
+ 			input_report_key(ally_x->input, KEY_F16, data[1] == 0xA6);
+ 			input_report_key(ally_x->input, KEY_PROG1, data[1] == 0x38 || data[1] == 0x93);
+ 		}
++		/* X20 top-right key: one plain key in both qam modes, no chord */
++		input_report_key(ally_x->input, KEY_PROG2, data[1] == ALLY_X20_KEY_RIGHT);
+ 		/* QAM long press */
+ 		input_report_key(ally_x->input, KEY_F17, data[1] == 0xA7);
+ 		/* QAM long press released */
+@@ -1720,6 +1732,7 @@ static struct input_dev *ally_x_setup_input(struct hid_device *hdev)
+ 	input_set_capability(input, EV_KEY, BTN_THUMBR);
+ 
+ 	input_set_capability(input, EV_KEY, KEY_PROG1);
++	input_set_capability(input, EV_KEY, KEY_PROG2);
+ 	input_set_capability(input, EV_KEY, KEY_F16);
+ 	input_set_capability(input, EV_KEY, KEY_F17);
+ 	input_set_capability(input, EV_KEY, KEY_F18);
+@@ -2632,6 +2645,7 @@ static int ally_raw_event(struct hid_device *hdev, struct hid_report *report, u8
+ 
+ 	if (cfg && !ally_x) {
+ 		input_report_key(cfg->input, KEY_PROG1, data[1] == 0x38);
++		input_report_key(cfg->input, KEY_PROG2, data[1] == ALLY_X20_KEY_RIGHT);
+ 		input_report_key(cfg->input, KEY_F16, data[1] == 0xA6);
+ 		input_report_key(cfg->input, KEY_F17, data[1] == 0xA7);
+ 		input_report_key(cfg->input, KEY_F18, data[1] == 0xA8);

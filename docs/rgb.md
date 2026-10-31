@@ -6,7 +6,7 @@ Stock SteamOS registers the X20's joystick rings as
 `/sys/class/leds/ally:rgb:joystick_rings`. The Steam client does not know that
 name, and the LED's colour layout does not match what Steam writes, so
 **Settings → Customization** has no RGB controls. ally-x20-steamos rebuilds
-`hid-asus-ally` with four patches (`patches/kernel/0010`–`0013`, see
+`hid-asus-ally` with five patches (`patches/kernel/0010`–`0014`, see
 [`patches/kernel/README-hid.md`](../patches/kernel/README-hid.md)):
 
 1. The rings are registered as `go_s:rgb:joystick_rings` (a name Steam knows),
@@ -14,8 +14,10 @@ name, and the LED's colour layout does not match what Steam writes, so
 2. New sysfs attributes select the ring's built-in effects (breathe, strobe,
    colour cycle, rainbow), their speed and direction, and turn the rings
    on or off.
-3. The X20 Quick Access button works. This patch is not RGB-related but
-   ships in the same module.
+3. The X20's top-right (capture) button, vendor code `0xa0`, reports
+   `KEY_PROG2`. InputPlumber maps it to Steam's screenshot
+   ([`docs/inputplumber.md`](inputplumber.md) §6). This patch is not
+   RGB-related but ships in the same module.
 4. Unloading or reloading the module no longer uses freed memory. This
    patch is not RGB-related either.
 

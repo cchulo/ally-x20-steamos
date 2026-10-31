@@ -2,8 +2,9 @@
 
 Four patches to Valve's `hid-asus-ally` driver. Together they make the ROG
 Xbox Ally X20 joystick-ring RGB show up in Steam's Customization menu, expose
-the MCU's Aura effects through sysfs, make the X20 Quick Access button work,
-and fix use-after-free bugs when the driver's two interfaces unbind. They all produce one rebuilt module, `hid-asus-ally.ko`
+the MCU's Aura effects through sysfs, make the X20 top-right (capture) button
+report a key, and fix use-after-free bugs when the driver's two interfaces
+unbind. They all produce one rebuilt module, `hid-asus-ally.ko`
 (see [`modules-hid.list`](modules-hid.list)).
 
 ## Source tree: Valve's, not linux-stable
@@ -155,22 +156,34 @@ reverse write order) for modes 0–3, with 3 s between steps. It asks after
 each step whether both rings are lit, prints a summary and restores the
 previous state. Report the mode(s) with "y" on every step.
 
-## 0012 — `hid-asus-ally-map-X20-quick-access-0xa0.patch`
+## 0012 — `hid-asus-ally-report-X20-top-right-key-0xa0.patch`
 
-**Fixes:** the X20 Quick Access button sends `5a a0` / `5a 00` on the N-KEY
+**Fixes:** the X20's top-right button (red, labelled for capture; ovenham's
+table calls it "Quick Access") sends `5a a0` / `5a 00` on the N-KEY
 interface, and the driver only knew `0xa6`.
-- `qam_mode=0`: `0xa0` reports `KEY_F16`, the same key as `0xa6`.
-- `qam_mode=1` (the driver default on Ally X class devices): `0xa0` emits
-  Steam's Quick Access chord (Xbox+A), the path already used for `0x38`/`0x93`.
-  Copying `0xa6` there would give a bare `BTN_MODE`, which the X20's Xbox
-  button already sends.
+- `0xa0` reports **`KEY_PROG2`**, one plain key, in both `qam_mode` settings
+  and on both the "ASUS ROG Ally X Gamepad" and the "ASUS ROG Ally Config"
+  input devices. No other Ally button reports `KEY_PROG2`, so userspace can
+  tell it apart from `0xa6` (top-left Armoury Crate: `KEY_F16`, or
+  `BTN_MODE` with `qam_mode=1`) and `0x38`/`0x93` (`KEY_PROG1`, or the
+  Xbox+A chord with `qam_mode=1`).
+- No synthetic chord. InputPlumber sets `qam_mode=0` and owns the mapping:
+  our capability map turns `KEY_PROG2` into Steam's screenshot
+  (`docs/inputplumber.md` §6).
+- The first version of 0012 (PR #4) reported `KEY_F16` for `0xa0`, the same
+  key as `0xa6`, and the Xbox+A chord with `qam_mode=1`. Under InputPlumber
+  both top buttons then did the same thing (Steam+X), which is what the owner
+  saw on 2026-10-31.
 - The right place is `hid-asus-ally`, not `hid-asus`. `asus_probe()` returns
   `-ENODEV` for the Ally endpoints `0x83`/`0x87`/`0x04` when
   `CONFIG_HID_ASUS_ALLY` is reachable, so `hid-asus`'s `0xa6` keymap never sees
   these reports.
 
-**Derived from:** ovenham/rog-ally-x20-steamos-speaker-qam-fix (button table,
-`tools/x20-buttons.sh`, N-KEY ID `0b05:1b4c`); `hid-asus.c` in the same tree.
+**Derived from:** ovenham/rog-ally-x20-steamos-speaker-qam-fix (button table:
+Armoury Crate top left = `0xa6`, right-side button = `0xa0`;
+`tools/x20-buttons.sh`, N-KEY ID `0b05:1b4c`); hhd
+`src/hhd/device/rog_ally/base.py` (`0xa0` grouped with the right button
+`0x38`/`0x93`); `hid-asus.c` in the same tree.
 
 ## 0013 — `hid-asus-ally-fix-use-after-free-on-interface-unbind.patch`
 
@@ -278,9 +291,9 @@ button light. Once the report is known, add a `go_s:white:xbox_button` (or
   uses) drives the X20 rings, that the five effect bytes match their names, the
   speed and direction encodings, and whether the 0–3 level is stored in MCU
   flash.
-- `TODO(hw)` hidraw capture: Quick Access sends only `5a a0`, `lsusb` shows
-  `0b05:1b4c`, and with `qam_mode=1` one press opens Steam's Quick Access
-  menu exactly once.
+- `TODO(hw)` hidraw capture: the top-right button sends only `5a a0` and the
+  top-left Armoury Crate button `5a a6`; `lsusb` shows `0b05:1b4c`; one press
+  gives exactly one `KEY_PROG2` press/release on "ASUS ROG Ally X Gamepad".
 - `TODO(hw)` the X20's MCU firmware version against `ROG_ALLY_X_MIN_MCU`
   (313) in `hid-asus.c`, which this series does not change.
 

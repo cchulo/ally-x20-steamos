@@ -88,7 +88,7 @@ against a fixture tree, which is how the test suite works.
 ally-x20-steamos.sh   CLI dispatcher            lib/          common, manifest, probes, component, slots, rauc, modules, selfupdate, status, notify
 cmd/                  one file per command      components/   audio, audio_dsp, hdr, inputplumber, modules, update
 overlay/              files installed on the device (manifest-tracked)   uninstall/   standalone POSIX uninstaller
-patches/kernel/       0001-0002 ASoC (audio), 0010-0012 hid-asus-ally     patches/{gamescope,libdisplay-info}/
+patches/kernel/       0001-0002 ASoC (audio), 0010-0013 hid-asus-ally     patches/{gamescope,libdisplay-info}/
 build/                Containerfile, build-modules.sh, build-hdr.sh, build-inputplumber.sh, build-libmysofa.sh, kernel-sources.md
 acpi/                 patch-acp-flag.py (DSDT flag patch + early initrd), dump-dsdt.md, fixtures/, tests/
 firmware/             tas2783.lock, fetch-tas2783.sh, speaker-id.map       keys/        release signing key placeholders

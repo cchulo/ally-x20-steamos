@@ -26,6 +26,7 @@ Developer-facing:
 | [etc-survival.md](etc-survival.md) | measurement template for `/etc` carry-over across slots |
 | [hardware-data.md](hardware-data.md) | every fact still to be collected on a real X20 (`TODO(hw)`) |
 | [xtc-notes.md](xtc-notes.md) | crosstalk cancellation research for the built-in speakers (stretch goal) |
+| [rumble-analysis.md](rumble-analysis.md) | rumble report formats (kernel, InputPlumber, hhd), the kernel magnitude-scaling bug, speaker-hiss hypotheses and the raw-report device test |
 | [../acpi/dump-dsdt.md](../acpi/dump-dsdt.md) | dumping and patching the DSDT, testing the override |
 | [../build/kernel-sources.md](../build/kernel-sources.md) | where kernel sources and headers come from |
 | [../patches/kernel/README.md](../patches/kernel/README.md), [README-hid.md](../patches/kernel/README-hid.md) | the kernel patches |

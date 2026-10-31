@@ -283,3 +283,11 @@ button light. Once the report is known, add a `go_s:white:xbox_button` (or
   menu exactly once.
 - `TODO(hw)` the X20's MCU firmware version against `ROG_ALLY_X_MIN_MCU`
   (313) in `hid-asus.c`, which this series does not change.
+
+## Draft: 0014 (not built, not in modules-hid.list)
+
+[`drafts/0014-hid-asus-ally-scale-rumble-and-vibration-intensity-to-0-100.patch`](drafts/0014-hid-asus-ally-scale-rumble-and-vibration-intensity-to-0-100.patch)
+scales `FF_RUMBLE` magnitudes to the report's 0..100 range (the driver sends
+0..127) and lets `gamepad_vibration_intensity` take 0..100. See
+[`docs/rumble-analysis.md`](../../docs/rumble-analysis.md) §6b for why and
+for the steps to promote it.

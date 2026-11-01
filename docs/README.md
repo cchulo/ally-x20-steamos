@@ -4,6 +4,7 @@ User-facing:
 
 | page | what it covers |
 |---|---|
+| [user-guide.md](user-guide.md) | **start here**: what it fixes and what not, install, checks, updating, uninstall, troubleshooting, reporting a problem |
 | [install.md](install.md) | prerequisites, Desktop Mode install steps, what gets written where |
 | [audio.md](audio.md) | speakers: the four problems, UCM overlay, firmware, ACPI override, how to verify |
 | [audio-dsp-history.md](audio-dsp-history.md) | the removed audio DSP (2026-10 to 2026-11-01): what it was, the A/B verdicts, lessons on volume stacking and WirePlumber hooks |

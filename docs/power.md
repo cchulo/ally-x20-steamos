@@ -217,8 +217,9 @@ Everything except `/run` is recorded in the manifest.
 
 The device entry (`overlay/steamos-manager/devices/90-ally-x20-steamos-rc74xa.toml`)
 is upstream's RC74XA block: `dmi.sys_vendor = "ASUS"`,
-`dmi.board_name = "RC74XA"`, `device = "rog_xbox_ally_x_20"` (`device` is a free
-string in 26.4.1, not an enum), `variant = "RC74XA"`,
+`dmi.board_name = "RC74XA"`, `device = "rog_xbox_ally_x"` (upstream:
+`rog_xbox_ally_x_20`; `device` is a free string in 26.4.1, not an enum, see
+the table below), `variant = "RC74XA"`,
 `friendly_name = "ROG Xbox Ally"`, `gpu_performance` on `amdgpu`, the
 asus-wmi platform profile, and `battery_charge_limit` method `acpi_sb`.
 Upstream main has since moved the platform profile to a
@@ -226,13 +227,26 @@ Upstream main has since moved the platform profile to a
 file uses the 26.4.1 form
 `[performance_profile] platform_profile_name = "asus-wmi"`.
 
-Differences from upstream, all from the measurements in section 1:
+Differences from upstream (the first three from the measurements in section 1):
 
 | Upstream | Ours | Why |
 |---|---|---|
 | `[tdp_limit]` `firmware_attribute` on `asus-armoury`, in profile `performance` | left out; appended by `power tdp-slider on` | the firmware ignores PPT writes (1.2) |
 | `[gpu_power_profile] driver = "amdgpu"` | left out | no `pp_power_profile_mode` on this APU (1.3) |
 | `suggested_default = "performance"` ("until custom mode is added") | `balanced` | the firmware's boot profile, better on battery (1.1) |
+| `device = "rog_xbox_ally_x_20"` | `device = "rog_xbox_ally_x"` | Steam artwork, see below |
+
+**Why the Xbox Ally X device name.** The Steam client picks the handheld
+artwork in its controller and layout screens from the `device` name of
+this entry. The Steam client shipped with SteamOS 3.9.5
+does not know `rog_xbox_ally_x_20`, the name upstream chose for the X20, and
+falls back to a generic handheld silhouette (it looks like a Legion Go S).
+It does know `rog_xbox_ally_x`, the Xbox Ally X, whose shell, screen and
+controls the X20 shares, so with that name Steam draws the right device.
+`variant = "RC74XA"` and the DMI match stay as upstream has them.
+steamos-manager's own RC74XA entry (upstream `bfbb261ed6b2`, not yet in
+26.4.1) uses the X20 name; once SteamOS ships it, our shim steps aside
+(section 4.4) and the client will by then presumably know the X20 name.
 
 `apply` renders the installed file from the overlay file plus, with
 `tdp_slider=on`, the `[tdp_limit]` tables, and records it in the manifest

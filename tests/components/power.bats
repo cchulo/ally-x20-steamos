@@ -340,7 +340,7 @@ assert set(d) <= {"device", "tdp_limit", "fan_speed", "gpu_performance", "gpu_po
                   "battery_charge_limit", "performance_profile", "inputplumber", "cec_hw",
                   "firmware_debug"}, sorted(d)
 assert d["device"] == [{"dmi": {"sys_vendor": "ASUS", "board_name": "RC74XA"},
-                        "device": "rog_xbox_ally_x_20", "variant": "RC74XA",
+                        "device": "rog_xbox_ally_x", "variant": "RC74XA",
                         "friendly_name": "ROG Xbox Ally"}], d["device"]
 assert d["gpu_performance"] == {"driver": "amdgpu"}
 # no pp_power_profile_mode on this APU
@@ -360,6 +360,7 @@ PY
     else
         grep -qx 'dmi.sys_vendor = "ASUS"' "$1"
         grep -qx 'dmi.board_name = "RC74XA"' "$1"
+        grep -qx 'device = "rog_xbox_ally_x"' "$1"
         grep -qx 'platform_profile_name = "asus-wmi"' "$1"
         grep -qx 'suggested_default = "balanced"' "$1"
         run grep -n '^\[gpu_power_profile' "$1"

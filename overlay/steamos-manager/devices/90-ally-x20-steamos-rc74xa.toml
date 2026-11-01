@@ -21,11 +21,18 @@
 #   - suggested_default "balanced" (upstream "performance", which only
 #     existed so the slider would show): the firmware's own boot profile,
 #     and better battery life on battery.
+#   - device "rog_xbox_ally_x" (upstream "rog_xbox_ally_x_20"): the Steam
+#     client shipped with SteamOS 3.9.5 does not know the X20 name and falls
+#     back to a generic handheld silhouette (it looks like a Legion Go S) in
+#     its controller and layout screens. It knows the Xbox Ally X, whose
+#     shell, screen and controls the X20 shares, so it shows the right
+#     artwork. steamos-manager's own RC74XA entry (not in 26.4.1) will use
+#     the X20 name once the client knows it.
 
 [[device]]
 dmi.sys_vendor = "ASUS"
 dmi.board_name = "RC74XA"
-device = "rog_xbox_ally_x_20"
+device = "rog_xbox_ally_x"
 variant = "RC74XA"
 friendly_name = "ROG Xbox Ally"
 

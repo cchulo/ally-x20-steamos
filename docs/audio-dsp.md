@@ -428,6 +428,12 @@ this version and is not pruned. `audio-dsp off` removes every recorded
 configuration file, old names included, and keeps only the HRTF data and
 the settings. `uninstall` removes everything in the manifest either way.
 
+Settings already in `audio-dsp.conf` are kept. The previous version wrote
+every key, including `stereo_surround=0`, so an upgraded install stays on
+`x20-speakers` until `sudo ally-x20-steamos audio-dsp stereo-surround on`;
+a fresh install starts with surround on. `hardware_volume` is new and
+starts on.
+
 If an old headphone sink was picked by hand in Steam, that pick goes away
 with the sink when apply restarts the user's PipeWire: WirePlumber falls
 back to the automatic default. Pick an output again if you want a fixed

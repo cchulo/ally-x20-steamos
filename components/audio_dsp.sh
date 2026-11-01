@@ -733,6 +733,9 @@ audio_dsp_apply() {
     if ! audio_dsp_probe_sofa_support >/dev/null 2>&1; then
         log_warn "audio_dsp: PipeWire sofa support (libmysofa) not detected; virtual surround sinks may not load (see docs/audio-dsp.md)"
     fi
+    # Upgrades: drop what an earlier version installed under another name
+    # (50-x20-virtual-surround.conf would load the old sinks next to the new).
+    audio_dsp_prune || true
     _audio_dsp_fix_owner
     audio_dsp_restart_services
     return 0
@@ -756,23 +759,95 @@ _audio_dsp_unlink() {
     return 0
 }
 
-# audio_dsp_disable : `audio-dsp off`. Removes every configuration file so
-# PipeWire/WirePlumber run exactly as stock (no virtual sinks in the output
-# picker, no routing script), keeps the downloaded HRTF data and records
+# _audio_dsp_known_paths : every path this version installs while enabled,
+# one per line, whether or not this apply could render it (a surround conf
+# withheld because the HRTF set is missing is still ours, not stale).
+_audio_dsp_known_paths() {
+    local dir n
+    _audio_dsp_static_files | cut -f2
+    audio_dsp_headphones_rel
+    audio_dsp_speaker_chain_rel
+    audio_dsp_speaker_surround_rel
+    audio_dsp_wpsettings_rel
+    audio_dsp_settings_rel
+    dir=$(audio_dsp_hrtf_rel)
+    printf '%s/current.sofa\n' "$dir"
+    for n in $(audio_dsp_hrtf_names); do
+        printf '%s/%s.sofa\n' "$dir" "$n"
+    done
+}
+
+# _audio_dsp_recorded <kind> : manifest paths of this component of that kind
+# (file, symlink, dir).
+_audio_dsp_recorded() {
+    manifest_entries | _manifest_select component "$AUDIO_DSP_COMPONENT" \
+        | _manifest_select kind "$1" | _manifest_field path
+}
+
+# _audio_dsp_prune_dirs : directories we created (recorded as kind dir) that
+# are empty now are removed, deepest first; vanished ones are forgotten.
+# Never the home directory itself, never anything outside it, never through
+# a symlink (the uninstaller's rules).
+_audio_dsp_prune_dirs() {
+    local home d real
+    home=$(audio_dsp_home)
+    _audio_dsp_recorded dir | awk '{ print length($0) "\t" $0 }' | sort -rn | cut -f2- \
+        | while IFS= read -r d; do
+            case "$d" in "$home"/?*) ;; *) continue ;; esac
+            real=$(ax20_path "$d")
+            [ -L "$real" ] && continue
+            if [ ! -d "$real" ]; then
+                manifest_forget "$d"
+                continue
+            fi
+            [ -z "$(find "$real" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ] || continue
+            ax20_run rmdir "$real" && manifest_forget "$d"
+        done
+}
+
+# audio_dsp_prune : remove the files and symlinks recorded for this
+# component that this version no longer installs (renamed or dropped in an
+# upgrade), then the directories we created that this left empty. Same
+# rules as the uninstaller: only paths in our manifest that carry an x20
+# marker, content checked against the recorded digest first; a modified
+# file is kept, reported and stays in the manifest. Returns 1 if anything
+# was kept.
+audio_dsp_prune() {
+    local known p rc=0
+    known=$(_audio_dsp_known_paths)
+    for p in $(_audio_dsp_recorded file) $(_audio_dsp_recorded symlink); do
+        printf '%s\n' "$known" | grep -Fxq -- "$p" && continue
+        case "$p" in *x20*) ;; *)
+            log_warn "audio_dsp: not pruning $p: no x20 marker in the path"
+            rc=1
+            continue
+            ;;
+        esac
+        log_info "audio_dsp: removing $p (no longer installed by this version)"
+        if ! _audio_dsp_unlink "$p"; then
+            log_warn "audio_dsp: PipeWire/WirePlumber still load $p; remove it by hand"
+            rc=1
+        fi
+    done
+    _audio_dsp_prune_dirs
+    return $rc
+}
+
+# audio_dsp_disable : `audio-dsp off`. Removes every configuration file we
+# recorded, including names from earlier versions, so PipeWire/WirePlumber
+# run exactly as stock (no virtual sinks in the output picker, no hook
+# scripts), keeps the downloaded HRTF data (and current.sofa) and records
 # enabled=0 so neither `apply` nor the boot service turns it back on.
 audio_dsp_disable() {
-    local dest rc=0
+    local p rc=0 settings hrtf
     audio_dsp_write_settings enabled=0
-    while IFS=$'\t' read -r _ dest _; do
-        [ -n "$dest" ] || continue
-        _audio_dsp_unlink "$dest" || rc=1
-    done <<EOF
-$(_audio_dsp_static_files)
-$(printf 'x\t%s\n' "$(audio_dsp_speaker_chain_rel)")
-$(printf 'x\t%s\n' "$(audio_dsp_headphones_rel)")
-$(printf 'x\t%s\n' "$(audio_dsp_speaker_surround_rel)")
-$(printf 'x\t%s\n' "$(audio_dsp_wpsettings_rel)")
-EOF
+    settings=$(audio_dsp_settings_rel)
+    hrtf=$(audio_dsp_hrtf_rel)
+    for p in $(_audio_dsp_recorded file) $(_audio_dsp_recorded symlink); do
+        case "$p" in "$settings" | "$hrtf"/*) continue ;; esac
+        _audio_dsp_unlink "$p" || rc=1
+    done
+    _audio_dsp_prune_dirs
     _audio_dsp_fix_owner
     audio_dsp_restart_services
     return $rc

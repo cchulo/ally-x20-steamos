@@ -444,6 +444,92 @@ PY
     ! manifest_has "$H/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf"
 }
 
+# old_layout : record a file of the previous version (the two-sink
+# 50-x20-virtual-surround.conf) and one in a directory only it used, the way
+# an older apply would have; prints nothing.
+OLD=/home/deck/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf
+OLDDIR=/home/deck/.config/pipewire/x20-old.d
+old_layout() {
+    local src="$BATS_TEST_TMPDIR/old.conf"
+    printf '# old two-sink conf: x20-virtual-surround-71, -51\n' >"$src"
+    manifest_install_file "$src" "$OLD" audio_dsp 0644 home
+    manifest_install_file "$src" "$OLDDIR/x20-old.conf" audio_dsp 0644 home
+    [ -f "$AX20_ROOT$OLD" ] && manifest_has "$OLD" && manifest_has "$OLDDIR"
+}
+
+@test "upgrade: apply prunes files of an earlier version and the directories only they used" {
+    component_apply audio_dsp
+    old_layout
+    component_apply audio_dsp
+    [ ! -e "$AX20_ROOT$OLD" ]
+    ! manifest_has "$OLD"
+    [ ! -e "$AX20_ROOT$OLDDIR" ]
+    ! manifest_has "$OLDDIR"
+    ! manifest_has "$OLDDIR/x20-old.conf"
+    # the new layout is complete, the shared directory stays
+    [ -f "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf" ]
+    manifest_has "$H/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf"
+    [ -d "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d" ]
+    [ "$(component_status audio_dsp)" = active ]
+}
+
+@test "upgrade: a modified old file is kept, reported and stays in the manifest" {
+    component_apply audio_dsp
+    old_layout
+    printf '# my edit\n' >>"$AX20_ROOT$OLD"
+    run component_apply audio_dsp
+    assert_success
+    assert_output_contains "50-x20-virtual-surround.conf was modified after install"
+    [ -f "$AX20_ROOT$OLD" ]
+    manifest_has "$OLD"
+}
+
+@test "upgrade: prune keeps HRTF sets, current.sofa, settings and other components' files" {
+    component_apply audio_dsp
+    local src="$BATS_TEST_TMPDIR/other.conf" other=/etc/modprobe.d/x20-other.conf
+    printf 'x\n' >"$src"
+    manifest_install_file "$src" "$other" audio 0644 shared
+    # a surround conf withheld this time (HRTF missing) is still ours
+    rm -rf "$AX20_HRTF_SOURCE_DIR" "$AX20_ROOT$H/.config/ally-x20-steamos/hrtf/set-a.sofa"
+    manifest_forget "$H/.config/ally-x20-steamos/hrtf/set-a.sofa"
+    component_apply audio_dsp
+    [ -f "$AX20_ROOT$other" ]
+    [ -f "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf" ]
+    [ -f "$AX20_ROOT$H/.config/ally-x20-steamos/hrtf/set-b.sofa" ]
+    [ -L "$AX20_ROOT$H/.config/ally-x20-steamos/hrtf/current.sofa" ]
+    [ -f "$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf" ]
+}
+
+@test "upgrade: off removes old-layout files too, keeps HRTF data and settings" {
+    component_apply audio_dsp
+    old_layout
+    audio_dsp_disable
+    [ ! -e "$AX20_ROOT$OLD" ]
+    ! manifest_has "$OLD"
+    [ ! -e "$AX20_ROOT$OLDDIR" ]
+    [ ! -e "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf" ]
+    [ ! -e "$AX20_ROOT$H/.local/share/wireplumber/scripts/x20-hardware-volume.lua" ]
+    [ -z "$(find "$AX20_ROOT$H/.config/pipewire" "$AX20_ROOT$H/.config/wireplumber" "$AX20_ROOT$H/.local" -type f 2>/dev/null)" ]
+    [ -f "$AX20_ROOT$H/.config/ally-x20-steamos/hrtf/set-a.sofa" ]
+    [ -L "$AX20_ROOT$H/.config/ally-x20-steamos/hrtf/current.sofa" ]
+    grep -qx 'enabled=0' "$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf"
+    # and on again brings the new layout back
+    audio_dsp_write_settings enabled=1
+    component_apply audio_dsp
+    [ "$(component_status audio_dsp)" = active ]
+    [ ! -e "$AX20_ROOT$OLD" ]
+}
+
+@test "upgrade: uninstall removes the new and the old layout" {
+    component_apply audio_dsp
+    old_layout
+    run sh "$REPO_ROOT/uninstall/uninstall.sh" --root "$AX20_ROOT" --yes --quiet --component audio_dsp
+    assert_success
+    [ ! -e "$AX20_ROOT$OLD" ]
+    [ -z "$(find "$AX20_ROOT/home" -type f -o -type l)" ]
+    [ -z "$(manifest_paths audio_dsp)" ]
+}
+
 @test "uninstall-ability: every entry verifies and can be removed newest-first" {
     component_apply audio_dsp
     local line p kind

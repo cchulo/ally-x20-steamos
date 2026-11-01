@@ -11,7 +11,15 @@
 #     lib/rauc.sh);
 #   * reconciling the booted slot's boot entry with the desired state that
 #     other components declare through slots_desired_set (documented
-#     exception, lib/slots.sh).
+#     exception, lib/slots.sh);
+#   * the factory-reset fail-safe that undoes that boot entry change when
+#     nothing else of ours is left: uninstall/efi-cleanup.sh copied to
+#     /efi/EFI/steamos/ally-x20-steamos-cleanup.sh on the slot whose entry
+#     we reconcile (the booted slot here, the new slot when the RAUC
+#     post-install handler runs `apply --slot`), and the shutdown hook
+#     /etc/systemd/system/ally-x20-steamos-reset-cleanup.service (+ its
+#     multi-user.target.wants link) that runs it on both slots when a
+#     factory reset is pending.
 # The enable links are created through manifest_install_symlink, not
 # `systemctl enable`, so uninstall removes exactly what we added.
 
@@ -25,10 +33,14 @@ COMPONENT_DESCRIPTION="survive SteamOS updates: RAUC pre/post-install handlers, 
 
 UPDATE_UNIT="${AX20_NAME}.service"
 UPDATE_NOTIFY_UNIT="${AX20_NAME}-notify.service"
+UPDATE_RESET_UNIT="${AX20_NAME}-reset-cleanup.service"
+UPDATE_CLEANUP_SRC="uninstall/efi-cleanup.sh"
+UPDATE_CLEANUP_REL="${SLOTS_GRUB_DIR_REL}/${AX20_NAME}-cleanup.sh"
 
 update_files() {
     printf 'systemd/%s\t/etc/systemd/system/%s\t0644\n' "$UPDATE_UNIT" "$UPDATE_UNIT"
     printf 'systemd/%s\t/etc/systemd/user/%s\t0644\n' "$UPDATE_NOTIFY_UNIT" "$UPDATE_NOTIFY_UNIT"
+    printf 'systemd/%s\t/etc/systemd/system/%s\t0644\n' "$UPDATE_RESET_UNIT" "$UPDATE_RESET_UNIT"
     printf 'rauc/pre-install.hook\t%s\t0755\n' "$RAUC_PRE_HANDLER_REL"
     printf 'rauc/post-install.hook\t%s\t0755\n' "$RAUC_POST_HANDLER_REL"
 }
@@ -39,6 +51,9 @@ update_apply() {
         "/etc/systemd/system/multi-user.target.wants/$UPDATE_UNIT" update
     manifest_install_symlink "../$UPDATE_NOTIFY_UNIT" \
         "/etc/systemd/user/default.target.wants/$UPDATE_NOTIFY_UNIT" update
+    manifest_install_symlink "../$UPDATE_RESET_UNIT" \
+        "/etc/systemd/system/multi-user.target.wants/$UPDATE_RESET_UNIT" update
+    update_cleanup_install
     rauc_register "$RAUC_PRE_HANDLER_REL" "$RAUC_POST_HANDLER_REL"
     if slot=$(slots_active 2>/dev/null); then
         slots_entry_reconcile "$slot"
@@ -47,8 +62,35 @@ update_apply() {
     fi
     if [ -z "$AX20_ROOT" ] && [ "$AX20_DRY_RUN" != 1 ] && ax20_have systemctl; then
         systemctl daemon-reload >/dev/null 2>&1 || true
+        # Arm the shutdown hook now, not only from the next boot on.
+        systemctl start --no-block "$UPDATE_RESET_UNIT" >/dev/null 2>&1 || true
     fi
     return 0
+}
+
+# update_cleanup_install : the EFI clean-up script lives next to the
+# grub.cfg it restores, on the efi partition of the slot being applied
+# (vfat: no exec bit, it is run as `sh <path>`). Only where that directory
+# exists, i.e. where lib/slots.sh can modify a grub entry; never created.
+update_cleanup_install() {
+    local real
+    if ! [ -d "$(ax20_path "$SLOTS_GRUB_DIR_REL")" ]; then
+        log_debug "update: no $SLOTS_GRUB_DIR_REL; EFI clean-up script not installed"
+        return 0
+    fi
+    real=$(ax20_path "$UPDATE_CLEANUP_REL")
+    if [ -f "$real" ] && ! [ -L "$real" ] && ! manifest_has "$UPDATE_CLEANUP_REL" \
+        && grep -q "^# $AX20_NAME EFI clean-up" "$real" 2>/dev/null; then
+        # A copy left by an earlier install whose manifest is gone (e.g. this
+        # slot's efi kept it through an uninstall run from the other slot).
+        log_info "update: replacing a leftover $UPDATE_CLEANUP_REL from an earlier install"
+        if [ "$AX20_DRY_RUN" = 1 ]; then
+            printf '[dry-run] replace %s\n' "$real" >&2
+            return 0
+        fi
+        rm -f "$real"
+    fi
+    manifest_install_file "$AX20_SRC/$UPDATE_CLEANUP_SRC" "$UPDATE_CLEANUP_REL" update 0644 esp
 }
 
 # Never superseded: this is our own re-apply machinery, there is no stock
@@ -79,7 +121,13 @@ update_remove() {
     if slot=$(slots_active 2>/dev/null); then
         slots_entry_restore "$slot"
     fi
-    # The units and their enable links are manifest entries; uninstall
-    # removes them and runs daemon-reload afterwards.
+    # Disarm the shutdown hook before its files go (live system only;
+    # stopping it runs the clean-up only if a factory reset is pending).
+    if [ -z "$AX20_ROOT" ] && [ "$AX20_DRY_RUN" != 1 ] && ax20_have systemctl; then
+        systemctl stop "$UPDATE_RESET_UNIT" >/dev/null 2>&1 || true
+    fi
+    # The units, their enable links and the EFI clean-up script are
+    # manifest entries; uninstall removes them and runs daemon-reload
+    # afterwards.
     return 0
 }

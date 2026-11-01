@@ -105,10 +105,51 @@ and early-initrd token, and the ACPI override image
 same applies to anyone who deleted the state directory by hand). Both
 `ally-x20-steamos.sh uninstall` and the standalone uninstaller rebuild the
 original entry from the marker when no usable backup exists, as described
-in step 1; without a manifest the leftover image has to be deleted by hand
-once the entry no longer references it. Run the uninstaller before a
-factory reset anyway: with the state directory still there everything,
-including the image, is removed and verified against its recorded hashes.
+in step 1. Run the uninstaller before a factory reset anyway: with the
+state directory still there everything is removed and verified against its
+recorded hashes.
+
+Two fail-safes cover a reset without an uninstall (both installed by the
+`update` component, which owns the boot entry):
+
+- **The EFI clean-up script.** `uninstall/efi-cleanup.sh` is copied next to
+  the entry it restores, as `/efi/EFI/steamos/ally-x20-steamos-cleanup.sh`,
+  on every slot whose `grub.cfg` we modify (the booted slot on `apply`, the
+  new slot from the RAUC post-install handler). It lives on the efi
+  partition, so it survives the reset. After a reset, run it on the booted
+  slot (vfat has no exec bit, hence `sh`):
+
+  ```sh
+  sudo sh /efi/EFI/steamos/ally-x20-steamos-cleanup.sh            # this slot
+  sudo sh /efi/EFI/steamos/ally-x20-steamos-cleanup.sh --all-slots # both slots
+  ```
+
+  It rebuilds `grub.cfg` from the marker (same strip as the uninstaller,
+  compared to the recorded original digest, written via temp file and
+  rename; a digest mismatch is reported but the stripped entry is still
+  written), deletes `ally-x20-steamos-acpi.img` once no `*.cfg` in that
+  directory references it, then deletes itself (`--keep` keeps it,
+  `--dry-run` only prints). It never touches a file without our marker,
+  nor anything outside its own directory (or the directory given as
+  argument; `--all-slots` mounts `/dev/disk/by-partsets/{A,B}/efi`
+  privately under `/run`). Nothing to do is exit 0.
+- **The shutdown hook.** `ally-x20-steamos-reset-cleanup.service` is a
+  oneshot that does nothing while the system runs. When it is stopped at
+  shutdown or reboot and a factory reset is pending (Steam's reset leaves
+  `efi/steamos/factory-reset/*.cfg` on the ESP and wipes at the next boot),
+  it runs the clean-up with `--all-slots`, so the reset boots into a
+  stock grub.cfg on both slots, without the ACPI image and without the
+  clean-up script itself (nothing of ours is left on the EFI partitions). Without a
+  pending reset the stop only mounts the ESP privately, finds no marker and
+  returns (bounded by `TimeoutStopSec=20s` in any case). The partitions are
+  mounted from `/dev/disk/by-partsets` rather than through the `/efi` and
+  `/esp` automounts, which may have expired or be going away during
+  shutdown. Only the clean-up script itself stays behind on each efi
+  partition; it has nothing left to do and can be deleted with
+  `sudo sh /efi/EFI/steamos/ally-x20-steamos-cleanup.sh --all-slots`.
+
+The uninstaller removes both as recorded manifest files (the remove hook
+stops the unit first).
 
 ## Deny-list (applied even to manifest entries)
 
@@ -129,7 +170,8 @@ uninstaller refuses to touch:
   name. Every file this project installs carries that marker (drop-ins are
   prefixed; the InputPlumber profile is `50-rog_xbox_ally_x20.yaml`; the
   PipeWire files are `50-x20-*`; the ESP initrd is
-  `ally-x20-steamos-acpi.img`). A component that installs a file without the
+  `ally-x20-steamos-acpi.img`, the EFI clean-up script
+  `ally-x20-steamos-cleanup.sh`). A component that installs a file without the
   marker is a bug: `tests/uninstall` will refuse to remove it.
 
 Refused entries are printed as `REFUSED <path>: <reason>` and counted as

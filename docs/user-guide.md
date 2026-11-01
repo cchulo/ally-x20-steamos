@@ -76,6 +76,12 @@ risk.
 - A hook in SteamOS's updater (RAUC) so the fixes are carried over to the
   new system after an update. The original updater configuration is saved
   first.
+- Two factory-reset fail-safes: a small clean-up script next to the boot
+  entry, `/efi/EFI/steamos/ally-x20-steamos-cleanup.sh`, which puts the
+  boot entry back to stock and removes the ACPI image, and a shutdown hook,
+  `ally-x20-steamos-reset-cleanup.service`, which runs it on both slots when
+  a factory reset is about to happen (see
+  [Uninstall](#uninstall)).
 
 Every file is recorded in a list (the manifest), and **everything can be
 removed** again, restoring the saved originals byte for byte (see
@@ -221,6 +227,21 @@ and updater configuration byte for byte, drops the bind mount, and deletes
 and reported. After the reboot your X20 is back to stock SteamOS, including
 silent speakers. Details: [uninstall.md](uninstall.md).
 
+**If you factory-reset without uninstalling.** A factory reset wipes the
+project's files but not the boot partitions, so the boot entry change and
+the ACPI image would stay behind (harmless: stock drivers load, the speakers
+stay silent). A reset started from Steam normally takes care of this by
+itself: the shutdown hook restores both slots just before the reboot. If
+anything is left afterwards, run:
+
+```sh
+sudo sh /efi/EFI/steamos/ally-x20-steamos-cleanup.sh
+```
+
+It restores the original boot entry, deletes the ACPI image and then itself;
+add `--all-slots` to clean the other SteamOS slot as well, or `--dry-run` to
+only see what it would do.
+
 ## Troubleshooting
 
 Start every time with:
@@ -272,6 +293,11 @@ If the buttons are still wrong, re-apply the controller profile too:
 **Power profiles missing in the Performance tab.** Run
 `sudo ./ally-x20-steamos.sh power status`, then restart Steam or reboot
 ([power.md](power.md) has more checks).
+
+**Leftovers after a factory reset.** If you reset without uninstalling and
+the shutdown hook did not run (for example the reset was started outside
+Steam), run `sudo sh /efi/EFI/steamos/ally-x20-steamos-cleanup.sh`
+(details under [Uninstall](#uninstall)).
 
 **Collecting information for a bug report.**
 

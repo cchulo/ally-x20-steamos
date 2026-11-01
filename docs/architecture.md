@@ -126,6 +126,8 @@ boot      = ally-x20-steamos.service: verify manifest, re-apply missing, ensure 
 update    = RAUC pre-install: self-update, make sure modules exist for the incoming kernel (policy block|degrade)
             RAUC post-install: apply --slot <new slot>, set its boot entry, stage modules
 uninstall = reverse manifest, restore saved boot entry + rauc block, depmod/ldconfig, reboot
+reset     = ally-x20-steamos-reset-cleanup.service stop with a factory reset pending:
+            efi-cleanup.sh --all-slots restores both grub.cfg from the marker, deletes the ACPI image
 ```
 
 ## 7. Conventions

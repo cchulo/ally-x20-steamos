@@ -1,35 +1,44 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# components/power.sh — Steam's TDP limit slider and power profiles on the
-# ROG Xbox Ally X20 (docs/power.md).
+# components/power.sh — Steam's power profiles (Low power / Balanced /
+# Performance) on the ROG Xbox Ally X20 (docs/power.md).
 #
-# Two things are missing on stock SteamOS 3.9.5 and both are needed:
-#   1. kernel: Valve's asus-armoury has no RC74XA power_limits entry, so the
-#      ppt_* firmware attributes return ENODEV. Fixed by patch 0020 and the
-#      asus-armoury line in patches/kernel/modules-power.list; the modules
-#      component builds, stages and loads it like every other patched module.
-#      This component only reports on it.
-#   2. steamos-manager 26.4.1 has no RC74XA device file, so it exposes no
-#      TdpLimit1 / PerformanceProfile1 interface. This component owns that
-#      part (all through the manifest):
-#        /etc/ally-x20-steamos/steamos-manager/90-ally-x20-steamos-rc74xa.toml
-#            the device entry (upstream values, stock 26.4.1 schema)
-#        /etc/ally-x20-steamos/steamos-manager-devices-shim
-#            start/stop helper: copies the stock device dir to /run, adds the
-#            entry, bind-mounts the copy over /usr/share/steamos-manager/devices
-#        /etc/systemd/system/ally-x20-steamos-power-devices.service
-#            runs the helper before both steamos-manager daemons
-#        .../multi-user.target.wants/ and .../steamos-manager.service.wants/
-#            enable links (manifest symlinks, not `systemctl enable`)
-#      A bind mount writes nothing under /usr; the helper steps aside by
-#      itself at every boot once a stock device file lists RC74XA.
+# steamos-manager 26.4.1 has no RC74XA device file, so it exposes no
+# PerformanceProfile1 interface. This component owns that part (all through
+# the manifest):
+#   /etc/ally-x20-steamos/steamos-manager/90-ally-x20-steamos-rc74xa.toml
+#       the device entry, rendered by power_apply from
+#       overlay/steamos-manager/devices/ (upstream values, stock 26.4.1
+#       schema) without [tdp_limit] and [gpu_power_profile]
+#   /etc/ally-x20-steamos/power.conf
+#       settings: tdp_slider=off|on (`power tdp-slider`)
+#   /etc/ally-x20-steamos/steamos-manager-devices-shim
+#       start/stop helper: copies the stock device dir to /run, adds the
+#       entry, bind-mounts the copy over /usr/share/steamos-manager/devices
+#   /etc/systemd/system/ally-x20-steamos-power-devices.service
+#       runs the helper before both steamos-manager daemons
+#   .../multi-user.target.wants/ and .../steamos-manager.service.wants/
+#       enable links (manifest symlinks, not `systemctl enable`)
+# A bind mount writes nothing under /usr; the helper steps aside by itself at
+# every boot once a stock device file lists RC74XA.
+#
+# No TDP slider, on purpose. Measured on the X20 (BIOS RC74XA.303): the
+# firmware ignores every PPT write (asus-armoury, the legacy asus-nb-wmi
+# ppt_* nodes, raw WMI), while the ASUS profiles do cap package power. An
+# entry with [tdp_limit] would give Steam a slider that changes nothing, so
+# the entry leaves it out. `power tdp-slider on` puts it back for testing
+# after a BIOS update. The kernel side (patch 0020: Valve's asus-armoury has
+# no RC74XA power_limits entry, so the ppt_* attributes return ENODEV) is
+# still built by the modules component; this component only reports on it.
 
 # shellcheck disable=SC2034  # read by lib/component.sh
-COMPONENT_DESCRIPTION="Steam TDP slider + power profiles: RC74XA steamos-manager device entry (bind-mount shim); asus-armoury limits via modules"
+COMPONENT_DESCRIPTION="Steam power profiles: RC74XA steamos-manager device entry (bind-mount shim); no TDP slider (firmware ignores PPT writes)"
 
 POWER_UNIT="${AX20_NAME}-power-devices.service"
 POWER_TOML_NAME="90-${AX20_NAME}-rc74xa.toml"
 POWER_TOML_REL="${AX20_EARLY_REL}/steamos-manager/${POWER_TOML_NAME}"
 POWER_SHIM_REL="${AX20_EARLY_REL}/steamos-manager-devices-shim"
+POWER_TOML_SRC="steamos-manager/devices/${POWER_TOML_NAME}"
+POWER_SETTINGS_REL="${AX20_EARLY_REL}/power.conf"
 POWER_STOCK_DEVICES=/usr/share/steamos-manager/devices
 POWER_STATE_REL="/run/${AX20_NAME}/steamos-manager-devices.state"
 POWER_ARMOURY_ATTRS=/sys/class/firmware-attributes/asus-armoury/attributes
@@ -40,9 +49,85 @@ AX20_POWER_SYSTEM_STEPS="${AX20_POWER_SYSTEM_STEPS:-auto}"
 power_files() {
     # No steamos-manager at all: nothing would read the entry.
     [ -d "$(ax20_path "$POWER_STOCK_DEVICES")" ] || return 0
-    printf 'steamos-manager/devices/%s\t%s\t0644\n' "$POWER_TOML_NAME" "$POWER_TOML_REL"
+    # The device entry is rendered by power_apply (tdp_slider setting).
     printf 'bin/steamos-manager-devices-shim\t%s\t0755\n' "$POWER_SHIM_REL"
     printf 'systemd/%s\t/etc/systemd/system/%s\t0644\n' "$POWER_UNIT" "$POWER_UNIT"
+}
+
+# power_tdp_slider : on|off, from tdp_slider= in power.conf (default off;
+# anything but on/1 counts as off).
+power_tdp_slider() {
+    local f v=""
+    f=$(ax20_path "$POWER_SETTINGS_REL")
+    if [ -f "$f" ]; then
+        v=$(sed -n 's/^[[:space:]]*tdp_slider[[:space:]]*=[[:space:]]*//p' "$f" | tail -n 1 | tr -d '[:space:]')
+    fi
+    case "$v" in
+        on | 1) printf 'on\n' ;;
+        *) printf 'off\n' ;;
+    esac
+}
+
+# power_tdp_slider_describe : one line for status and logs.
+power_tdp_slider_describe() {
+    if [ "$(power_tdp_slider)" = on ]; then
+        printf 'on (testing: [tdp_limit] in the device entry; Steam shows the slider in Performance)\n'
+    else
+        printf 'off (intentionally not exposed: this firmware ignores PPT writes; profiles only, docs/power.md)\n'
+    fi
+}
+
+# _power_install_rendered <dest> : stdin -> manifest-tracked file.
+_power_install_rendered() {
+    local dest=$1 tmp
+    tmp=$(mktemp "${TMPDIR:-/tmp}/ax20-power.XXXXXX") || die "cannot create a temporary file"
+    cat >"$tmp"
+    manifest_install_file "$tmp" "$dest" power 0644
+    rm -f "$tmp"
+}
+
+# power_write_settings [on|off] : rewrite power.conf with the given value,
+# or the current one.
+power_write_settings() {
+    local v=${1:-$(power_tdp_slider)}
+    printf '%s\n' \
+        "# $AX20_NAME power settings. Managed by '$AX20_NAME power tdp-slider';" \
+        "# edit with that command (hand edits are kept but flagged as drift)." \
+        "# tdp_slider=on adds [tdp_limit] to the RC74XA steamos-manager entry." \
+        "tdp_slider=$v" \
+        | _power_install_rendered "$POWER_SETTINGS_REL"
+}
+
+# power_render_entry : the device entry on stdout. The overlay file plus,
+# with tdp_slider=on, upstream's [tdp_limit] tables (steamos-manager
+# bfbb261ed6b2): Steam's slider in the performance profile, writing the
+# asus-armoury ppt_* attributes.
+power_render_entry() {
+    cat "$AX20_SRC/overlay/$POWER_TOML_SRC" || return 1
+    [ "$(power_tdp_slider)" = on ] || return 0
+    printf '%s\n' \
+        "" \
+        "# Added by '$AX20_NAME power tdp-slider on' (testing; BIOS RC74XA.303" \
+        "# ignores these writes, docs/power.md)." \
+        "[tdp_limit]" \
+        'method = "firmware_attribute"' \
+        "" \
+        "[tdp_limit.firmware_attribute]" \
+        'attribute = "asus-armoury"' \
+        "# until custom mode is added" \
+        'performance_profile = "performance"'
+}
+
+# power_install_entry : render and install the device entry.
+power_install_entry() {
+    local tmp
+    tmp=$(mktemp "${TMPDIR:-/tmp}/ax20-power.XXXXXX") || die "cannot create a temporary file"
+    if ! power_render_entry >"$tmp"; then
+        rm -f "$tmp"
+        die "power: overlay/$POWER_TOML_SRC missing"
+    fi
+    manifest_install_file "$tmp" "$POWER_TOML_REL" power 0644
+    rm -f "$tmp"
 }
 
 # power_stock_has_board : a stock steamos-manager device file (not one of
@@ -113,6 +198,7 @@ power_probe_details() {
     fi
     printf 'steamos_manager_devices=%s\n' "$dev"
     printf 'shim=%s\n' "$(power_shim_state)"
+    printf 'tdp_slider=%s\n' "$(power_tdp_slider_describe)"
     printf 'asus_armoury=%s\n' "$(power_kernel_limits || true)"
 }
 
@@ -168,14 +254,20 @@ power_apply() {
             log_warn "power: stock steamos-manager already lists $AX20_BOARD; the shim mounts nothing. Run '$AX20_NAME uninstall --superseded' to remove it."
             ;;
     esac
+    power_write_settings
+    power_install_entry
     manifest_install_symlink "../$POWER_UNIT" \
         "/etc/systemd/system/multi-user.target.wants/$POWER_UNIT" power
     manifest_install_symlink "../$POWER_UNIT" \
         "/etc/systemd/system/steamos-manager.service.wants/$POWER_UNIT" power
+    log_info "power: TDP slider $(power_tdp_slider_describe)"
     if msg=$(power_kernel_limits); then
         log_info "power: asus-armoury: $msg"
-    else
+    elif [ "$(power_tdp_slider)" = on ]; then
         log_warn "power: asus-armoury: $msg"
+    else
+        # Only the (off) TDP slider reads these attributes.
+        log_info "power: asus-armoury: $msg"
     fi
     if ! _power_system_steps; then
         log_info "power: root prefix in use; skipping systemctl (the unit starts at the next boot of that root)"

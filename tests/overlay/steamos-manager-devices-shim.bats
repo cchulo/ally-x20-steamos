@@ -81,6 +81,18 @@ layers() { awk -v mp="$STOCK" '$5 == mp' "$AX20_MOUNTINFO" | wc -l | tr -d ' '; 
     [ "$(layers)" = 1 ]
 }
 
+@test "start again after the entry changed (re-apply): the new entry is what gets mounted" {
+    stock
+    ours
+    "${TEST_SH:-sh}" "$SHIM" start
+    printf '# new entry\n' >>"$AX20_ROOT$OURS/90-ally-x20-steamos-rc74xa.toml"
+    run "${TEST_SH:-sh}" "$SHIM" start
+    assert_success
+    cmp -s "$AX20_ROOT$OURS/90-ally-x20-steamos-rc74xa.toml" "$AX20_ROOT$MERGED/90-ally-x20-steamos-rc74xa.toml"
+    [ "$(grep -c "^mount --bind " "$CALLS")" = 2 ]
+    [ "$(layers)" = 1 ]
+}
+
 @test "start: steps aside when a stock file already lists RC74XA" {
     stock
     ours

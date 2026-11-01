@@ -137,8 +137,9 @@ Two fail-safes cover a reset without an uninstall (both installed by the
   oneshot that does nothing while the system runs. When it is stopped at
   shutdown or reboot and a factory reset is pending (Steam's reset leaves
   `efi/steamos/factory-reset/*.cfg` on the ESP and wipes at the next boot),
-  it runs the clean-up with `--all-slots --keep`, so the reset boots into a
-  stock grub.cfg on both slots and without the ACPI image. Without a
+  it runs the clean-up with `--all-slots`, so the reset boots into a
+  stock grub.cfg on both slots, without the ACPI image and without the
+  clean-up script itself (nothing of ours is left on the EFI partitions). Without a
   pending reset the stop only mounts the ESP privately, finds no marker and
   returns (bounded by `TimeoutStopSec=20s` in any case). The partitions are
   mounted from `/dev/disk/by-partsets` rather than through the `/efi` and

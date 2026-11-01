@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# summary: headphone virtual surround + speaker chain: on|off|status|hrtf|speakers-precedence|headphones-virtual-surround|hardware-volume|stereo-hrtf|lfe|master-gain|test
+# summary: headphone virtual surround + speaker chain: on|off|status|hrtf|headphones-fronts|speakers-precedence|headphones-virtual-surround|hardware-volume|stereo-hrtf|lfe|master-gain|test
 # shellcheck source=lib/component.sh
 . "$AX20_SRC/lib/component.sh"
 
@@ -12,6 +12,11 @@ usage: $AX20_NAME audio-dsp <command>
   status                show settings, installed files and PipeWire support
   hrtf list             list HRTF sets (* = current)
   hrtf <name>           switch the HRTF set (relinks current.sofa, restarts PipeWire)
+  headphones-fronts [dry|hrtf]
+                        dry (default): X20 Headphones plays front left, right
+                        and centre without HRTF, only rears and sides through
+                        it (hybrid); hrtf: all seven through the HRTF.
+                        Re-renders the headphone conf, restarts PipeWire
   speakers-precedence on|off
                         on (default): with Steam's output on "Default", the
                         built-in speakers play through the X20 speaker DSP;
@@ -69,6 +74,10 @@ cmd_audio_dsp() {
         hrtf)
             shift
             _audio_dsp_cmd_hrtf "$@"
+            ;;
+        headphones-fronts)
+            shift
+            _audio_dsp_cmd_fronts "$@"
             ;;
         stereo-hrtf)
             shift
@@ -131,6 +140,7 @@ _audio_dsp_cmd_status() {
     printf 'user/home:       %s %s\n' "$(audio_dsp_user)" "$(audio_dsp_home)"
     printf 'enabled:         %s\n' "$(audio_dsp_setting enabled 1)"
     printf 'hrtf:            %s (%s)\n' "$name" "$(audio_dsp_hrtf_installed "$name" && echo installed || echo missing)"
+    printf 'headphones_fronts: %s\n' "$(audio_dsp_fronts_describe)"
     printf 'stereo_hrtf:     %s\n' "$(audio_dsp_setting_value stereo_hrtf)"
     printf 'speakers_precedence: %s (priority.session x20-speakers %s)\n' \
         "$(audio_dsp_setting_value speakers_precedence)" "$(audio_dsp_priority)"
@@ -179,6 +189,33 @@ _audio_dsp_cmd_hrtf() {
         audio_dsp_restart_services pipewire.service
     fi
     log_info "HRTF set: $name"
+}
+
+# _audio_dsp_cmd_fronts [dry|hrtf] : headphones_fronts. It decides the graph
+# of x20-headphones, so the headphone conf is re-rendered and the user's
+# PipeWire restarts (only while enabled and the HRTF set is installed;
+# otherwise the choice is just recorded and the next apply renders it).
+_audio_dsp_cmd_fronts() {
+    case "${1:-}" in
+        '')
+            printf 'headphones_fronts=%s\n' "$(audio_dsp_setting_value headphones_fronts)"
+            return 0
+            ;;
+        dry | hrtf) ;;
+        *)
+            log_error "usage: $AX20_NAME audio-dsp headphones-fronts dry|hrtf"
+            return 2
+            ;;
+    esac
+    require_root audio-dsp headphones-fronts "$1"
+    ax20_check_readonly_root
+    audio_dsp_write_settings "headphones_fronts=$1"
+    if audio_dsp_enabled && audio_dsp_hrtf_installed "$(audio_dsp_hrtf_current)"; then
+        audio_dsp_render_headphones
+        _audio_dsp_fix_owner
+        audio_dsp_restart_services pipewire.service
+    fi
+    log_info "headphones-fronts: $(audio_dsp_fronts_describe)"
 }
 
 # _audio_dsp_on_off <command> <on|off> : 1 or 0, usage error otherwise.

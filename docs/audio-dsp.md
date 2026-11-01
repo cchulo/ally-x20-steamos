@@ -13,7 +13,7 @@ sinks.
 | Sink (Steam name) | `node.name` | Use | Processing | Automatic default? |
 |---|---|---|---|---|
 | X20 Speakers (downmix + width + EQ) | `x20-speakers` | built-in speakers | surround downmixed to stereo, stereo width, EQ, LFE low-pass, master gain | on the speakers (default) |
-| X20 Headphones (virtual surround) | `x20-headphones` | headphones | each channel through an HRTF at its 7.1 angle, summed to 2 ears | on any headphones (default) |
+| X20 Headphones (virtual surround) | `x20-headphones` | headphones | rears and sides through an HRTF at their 7.1 angles, fronts and centre dry (`headphones-fronts`), LFE low-passed, summed to 2 ears | on any headphones (default) |
 
 The headphone sink was called `x20-virtual-surround-71` until 2026-10, with
 a 5.1 sibling `x20-virtual-surround-51`; see "Upgrading from the
@@ -183,6 +183,78 @@ stream that carries its 5.1 surrounds on SL/SR lands on the 7.1 sides
 (+-90 deg). The earlier 5.1 sink rendered +-110 deg, but it was a second
 entry in Steam's list that hardly anyone would pick by hand, and the
 automatic default never used it.
+
+### Hybrid headphone chain: fronts dry
+
+Owner report from the device (2026-10-31, wired headphones on
+`x20-headphones`): "ambient sounds are amazing but voices and sounds in
+front of me sound sandy". The cause is the generic (non-individual) HRTF.
+Its frontal responses carry deep spectral notches and some ringing, which
+an ear that is not the measured one hears as colouration rather than as
+"in front". Front/back confusion and in-head localisation of frontal
+sources are the well-known weak spots of non-individual HRTFs. The rear
+and side positions, where the cues are strong and the colouration matters
+less, sound convincing. Owner decision: a hybrid, on the headphones only.
+
+`headphones_fronts=dry` (default) builds this graph:
+
+| Channel | Path | Into the ears |
+|---|---|---|
+| FL | dry, straight into the left mixer | left at 0.707 (-3 dB) |
+| FR | dry, straight into the right mixer | right at 0.707 (-3 dB) |
+| FC | dry, copy node into both mixers | both at 0.5 (-6 dB), 3 dB below FL/FR |
+| LFE | two low-passes at `lfe_cutoff_hz` (unchanged) | both at `lfe_gain_db` |
+| RL, RR | sofa spatializer at 150 / 210 deg (unchanged) | both, binaural |
+| SL, SR | sofa spatializer at 90 / 270 deg (unchanged) | both, binaural |
+
+`headphones_fronts=hrtf` is the full graph used until 2026-10-31: FL, FR
+and FC through spatializers at 30, 330 and 0 deg as well. In both modes the
+sink, its 8 input channels and their order (FL FR FC LFE RL RR SL SR), the
+mixers `mixL`/`mixR`, `media.class`, the output stream
+`x20-headphones.output` and its routing are the same, so the WirePlumber
+hooks do not notice the difference. The template
+[`50-x20-headphones.conf`](../overlay/home/pipewire/pipewire.conf.d/50-x20-headphones.conf)
+holds both variants in marked blocks, and the component keeps the blocks of
+the selected mode when it renders the conf.
+
+Stereo is the main beneficiary: a stereo stream fills only FL/FR, so with
+the dry fronts it reaches the headphones as plain stereo at -3 dB, with no
+HRTF colouration. Out-of-head stereo, the old effect, is one command away
+(`hrtf`). Surround keeps its rear and side image, and a centre-panned
+voice now sounds as clean as on plain headphones.
+
+Level match. libmysofa normalises every set when it loads it, so that the
+impulse-response pair of the frontal direction carries an energy of 2
+(about unity per ear straight ahead). The conf scales each spatializer by
+`gain = 0.5`. A spatialized FL therefore put a total power of
+2 x 0.5^2 = 0.5 into the two ears, and FC put 0.5 (-6 dB) into each ear.
+The dry gains reproduce that: FL/FR at 0.707 (power 0.5, now in one ear)
+and FC at 0.707 x 0.707 = 0.5 into each ear. That is the usual -3 dB
+centre fold, and exactly FC's per-ear level from before. A frontal source
+keeps its loudness, and the balance against the still-spatialized rears
+and sides stays as it was. Correlated content on FL and FR (a voice panned
+centre in stereo) can sum about 3 dB louder at low frequencies through the
+HRTF, where both ears get both sources in phase, so such content may sound
+slightly quieter in `dry`. Power-matching is the better compromise for
+everything else. TODO(hw): confirm the match by ear in an A/B.
+
+A/B on the device (each command re-renders the conf and restarts the
+user's PipeWire, so playback stutters for a moment):
+
+```sh
+sudo ally-x20-steamos audio-dsp headphones-fronts hrtf   # all seven directions through the HRTF
+sudo ally-x20-steamos audio-dsp headphones-fronts dry    # hybrid (default)
+ally-x20-steamos audio-dsp headphones-fronts             # show the current mode
+```
+
+The setting is stored in `audio-dsp.conf` and survives `apply`, the boot
+service and updates. While audio-dsp is off, the command only records the
+choice. `audio-dsp status` shows it on the `headphones_fronts:` line.
+
+The speaker chain is unchanged: `x20-speakers` has no HRTF at all. If the
+owner likes the hybrid on headphones, the same idea (dry fronts, processed
+rears and sides) may later be applied to the speaker chain. It is not
+implemented.
 
 ### Pinned speaker output
 
@@ -370,7 +442,7 @@ All entries are in the manifest with slot `home` and owned by `audio_dsp`.
 
 | Path (in the user's home) | Source |
 |---|---|
-| `.config/pipewire/pipewire.conf.d/50-x20-headphones.conf` | rendered from [`overlay/home/pipewire/pipewire.conf.d/50-x20-headphones.conf`](../overlay/home/pipewire/pipewire.conf.d/50-x20-headphones.conf) with the absolute HRTF path and the LFE settings |
+| `.config/pipewire/pipewire.conf.d/50-x20-headphones.conf` | rendered from [`overlay/home/pipewire/pipewire.conf.d/50-x20-headphones.conf`](../overlay/home/pipewire/pipewire.conf.d/50-x20-headphones.conf) with the absolute HRTF path, the LFE settings and the `headphones_fronts` mode (the marked blocks of the other mode removed) |
 | `.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf` | rendered from [`51-x20-speaker-chain.conf`](../overlay/home/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf), or the `-lsp` variant, with the LFE, master gain and priority settings |
 | `.config/pipewire/pipewire-pulse.conf.d/50-x20-no-upmix.conf` | copied |
 | `.config/pipewire/client.conf.d/50-x20-no-upmix.conf` | copied |
@@ -457,6 +529,7 @@ selection".
 | Turn everything off / on | `sudo ally-x20-steamos audio-dsp off` / `on` |
 | Pick the output | Steam's output setting (or KDE, pavucontrol, `wpctl set-default`): "Default" (automatic), an X20 sink, or a hardware output |
 | Pick an HRTF set | `ally-x20-steamos audio-dsp hrtf list`, `sudo ally-x20-steamos audio-dsp hrtf <name>` |
+| Headphone fronts: dry (hybrid) or through the HRTF | `sudo ally-x20-steamos audio-dsp headphones-fronts dry` (default) / `hrtf` (re-renders the headphone conf, restarts PipeWire) |
 | Automatic default: X20 speaker DSP or bare speakers | `sudo ally-x20-steamos audio-dsp speakers-precedence on` (default) / `off` (re-renders the priorities, restarts PipeWire) |
 | Automatic default on headphones: virtual surround or bare | `sudo ally-x20-steamos audio-dsp headphones-virtual-surround on` (default) / `off` (live, no restart) |
 | Sinks under our default at 100 % (Steam's slider is the only volume) | `sudo ally-x20-steamos audio-dsp hardware-volume on` (default) / `off` (live, restores what it raised) |
@@ -470,8 +543,8 @@ selection".
 `~/.config/ally-x20-steamos/audio-dsp.conf` holds `enabled`, `hrtf`,
 `stereo_hrtf` (no effect), `speakers_precedence` (default 1),
 `headphones_virtual_surround` (default 1), `hardware_volume` (default 1),
-`lfe_cutoff_hz` (120), `lfe_gain_db` (-6) and `speakers_master_gain_db`
-(auto). The commands rewrite it. Out-of-range values fall back to the
+`lfe_cutoff_hz` (120), `lfe_gain_db` (-6), `speakers_master_gain_db`
+(auto) and `headphones_fronts` (dry). The commands rewrite it. Out-of-range values fall back to the
 defaults; unknown keys are ignored and dropped on the next write. `apply` and the boot service read it,
 so `off` stays off across reboots and updates.
 
@@ -631,6 +704,14 @@ hardware control (the TAS2783 amp volume), raising it restores loudness
 without bringing back digital clipping. If the volume slider is already at
 100 %, the maximum loudness drops by the same amount.
 
+The headphone chain has no computed analysis and no master gain: the
+HRTF magnitudes depend on the set, and the sofa plugin's `gain = 0.5` per
+spatializer is the headroom. The dry fronts lower its worst case. With
+everything coherent at full scale, one ear used to get up to
+3 x 0.5 x the peak HRTF magnitude from the fronts (a few times 1 around
+the 2-5 kHz ear-canal resonance). Now it gets 0.707 + 0.5 = 1.21, flat,
+plus the LFE and the four spatialized rears and sides as before.
+
 If noise bursts remain with `master-gain strict`, the cause is not digital
 clipping. Suspect the amplifiers' own protection or the drivers'
 excursion, and use `lfe set 120 -20` or a higher speaker high-pass.
@@ -778,6 +859,9 @@ core would carry over unchanged.
 - TODO(hw) WirePlumber runs the `main` profile on SteamOS.
 - TODO(hw) speaker EQ/width preset against the Windows reference recording.
 - TODO(hw) HRTF gain (`gain = 0.5` per source) for comfortable loudness without clipping.
+- TODO(hw) `headphones-fronts dry` against `hrtf`: frontal voices clean,
+  frontal loudness matched, rear/side image unchanged; the sink loads with
+  the `copy` node and the dry graph inputs.
 - TODO(hw) `measure-speaker-chain.sh --point hw` with the default and the
   strict master gain; RE2 loud scenes A/B.
 - TODO(vm) bit-identical stereo check and route-change rescans of the

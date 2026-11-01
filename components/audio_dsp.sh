@@ -52,6 +52,9 @@
 #   lfe_gain_db=<num>     LFE level folded into the outputs (-40..6, default -6)
 #   speakers_master_gain_db=auto|strict|<dB>
 #                         output gain of x20-speakers (default auto = 0 dB)
+#   headphones_fronts=dry|hrtf  dry (default): x20-headphones plays FL FR FC
+#                         without HRTF (hybrid; rears and sides spatialized);
+#                         hrtf: all seven directional channels spatialized
 # Keys of earlier versions (speaker_surround, stereo_surround, xtc_*,
 # master_gain_db: the speaker virtual surround, removed 2026-10, see
 # docs/xtc-notes.md) are ignored and dropped on the next rewrite.
@@ -74,7 +77,7 @@ COMPONENT_DESCRIPTION="headphone virtual surround (HRTF) + speaker chain, per-us
 AUDIO_DSP_COMPONENT=audio_dsp
 
 # Settings keys, in the order they are written to audio-dsp.conf.
-AUDIO_DSP_KEYS="enabled hrtf stereo_hrtf speakers_precedence headphones_virtual_surround hardware_volume lfe_cutoff_hz lfe_gain_db speakers_master_gain_db"
+AUDIO_DSP_KEYS="enabled hrtf stereo_hrtf speakers_precedence headphones_virtual_surround hardware_volume lfe_cutoff_hz lfe_gain_db speakers_master_gain_db headphones_fronts"
 
 # priority.session of x20-speakers. Measured on the X20 (SteamOS
 # 3.9.5): hardware Speaker sink 712, headphone jack sink 1000; USB and
@@ -90,6 +93,18 @@ AUDIO_DSP_PRIO_MANUAL=50
 # chains low-pass it there and fold it into the outputs at -6 dB.
 AUDIO_DSP_LFE_CUTOFF_DEFAULT=120
 AUDIO_DSP_LFE_GAIN_DB_DEFAULT=-6
+
+# Headphone fronts (headphones_fronts). dry: FL/FR straight to their ear at
+# AUDIO_DSP_HP_DRY_FRONT, FC into both ears at AUDIO_DSP_HP_DRY_CENTER (3 dB
+# below the fronts). The values keep a frontal source as loud as it was
+# through the spatializer: libmysofa normalises a set so the frontal IR pair
+# carries an energy of 2, the conf scales each spatializer by 0.5, so a
+# spatialized front source had a total power of 2 x 0.25 = 0.5 over both ears
+# (0.707^2 into one ear) and FC 0.5 into each ear. hrtf: unity behind the
+# spatializers, as before 2026-10-31.
+AUDIO_DSP_HP_FRONTS_DEFAULT=dry
+AUDIO_DSP_HP_DRY_FRONT=0.707
+AUDIO_DSP_HP_DRY_CENTER=0.5
 
 # ------------------------------------------------------------ user / paths --
 
@@ -162,6 +177,10 @@ audio_dsp_valid_lfe_cutoff() {
     [ "$1" -ge 40 ] && [ "$1" -le 250 ]
 }
 audio_dsp_valid_lfe_gain() { _audio_dsp_number_in "$1" -40 6; }
+audio_dsp_valid_fronts() {
+    case "$1" in dry | hrtf) return 0 ;; esac
+    return 1
+}
 # master gains: auto, strict, or dB in -60..12 (see audio_dsp_gain_numbers).
 audio_dsp_valid_master() {
     case "$1" in auto | strict) return 0 ;; esac
@@ -195,6 +214,10 @@ audio_dsp_setting_value() {
         speakers_master_gain_db)
             v=$(audio_dsp_setting "$1" "")
             audio_dsp_valid_master "$v" || v=auto
+            ;;
+        headphones_fronts)
+            v=$(audio_dsp_setting "$1" "")
+            audio_dsp_valid_fronts "$v" || v=$AUDIO_DSP_HP_FRONTS_DEFAULT
             ;;
         *) return 1 ;;
     esac
@@ -507,16 +530,36 @@ audio_dsp_render_speaker_chain() {
         | _audio_dsp_install_rendered "$(audio_dsp_speaker_chain_rel)"
 }
 
+# audio_dsp_fronts_describe : one line for humans (status, command).
+audio_dsp_fronts_describe() {
+    case "$(audio_dsp_setting_value headphones_fronts)" in
+        hrtf) printf 'hrtf (all seven directions through the HRTF)\n' ;;
+        *) printf 'dry (FL/FR/FC without HRTF, rears and sides through the HRTF)\n' ;;
+    esac
+}
+
 # audio_dsp_render_headphones : the headphone virtual surround conf (sink
 # x20-headphones) with the absolute HRTF path (libmysofa does not expand
 # "~"). /home is not part of the A/B slots, so the live path is used even
-# when applying to a staged slot.
+# when applying to a staged slot. headphones_fronts picks the marked blocks
+# (X20_FRONTS_HRTF or X20_FRONTS_DRY) and the front gains.
 audio_dsp_render_headphones() {
-    local hrtf_file
+    local hrtf_file drop keep front=1.0 center=1.0
     hrtf_file="$(audio_dsp_hrtf_rel)/current.sofa"
-    sed -e "s#@X20_HRTF_FILE@#$hrtf_file#g" \
+    if [ "$(audio_dsp_setting_value headphones_fronts)" = hrtf ]; then
+        drop=DRY keep=HRTF
+    else
+        drop=HRTF keep=DRY
+        front=$AUDIO_DSP_HP_DRY_FRONT center=$AUDIO_DSP_HP_DRY_CENTER
+    fi
+    sed -e "/@X20_FRONTS_${drop}_BEGIN@/,/@X20_FRONTS_${drop}_END@/d" \
+        -e "/@X20_FRONTS_${keep}_BEGIN@/d" \
+        -e "/@X20_FRONTS_${keep}_END@/d" \
+        -e "s#@X20_HRTF_FILE@#$hrtf_file#g" \
         -e "s#@X20_LFE_CUTOFF@#$(audio_dsp_setting_value lfe_cutoff_hz).0#g" \
         -e "s#@X20_LFE_GAIN@#$(audio_dsp_lfe_gain_lin)#g" \
+        -e "s#@X20_HP_FRONT_GAIN@#$front#g" \
+        -e "s#@X20_HP_CENTER_GAIN@#$center#g" \
         "$AX20_SRC/overlay/home/pipewire/pipewire.conf.d/50-x20-headphones.conf" \
         | _audio_dsp_install_rendered "$(audio_dsp_headphones_rel)"
 }

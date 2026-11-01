@@ -109,7 +109,90 @@ setup() {
     component_apply audio_dsp
     local f="$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf"
     ! grep -q '@X20_HRTF_FILE@' "$f"
+    # default headphones_fronts=dry: only the four rear/side spatializers
+    [ "$(grep -c "filename = \"$H/.config/ally-x20-steamos/hrtf/current.sofa\"" "$f")" = 4 ]
+    audio_dsp_write_settings headphones_fronts=hrtf
+    component_apply audio_dsp
     [ "$(grep -c "filename = \"$H/.config/ally-x20-steamos/hrtf/current.sofa\"" "$f")" = 7 ]
+}
+
+# graph_inputs <file> : the filter graph's inputs line.
+graph_inputs() { sed -n 's/^ *inputs  = \[ \(.*\) \]$/\1/p' "$1"; }
+
+# common_headphone_graph <file> : what both headphones_fronts modes share:
+# one sink, 8 inputs in FL FR FC LFE RL RR SL SR order, the rear/side
+# spatializers at their angles, the LFE path, the output stream.
+common_headphone_graph() {
+    local f=$1 n
+    ! grep -q '@X20_' "$f" || false
+    [ "$(grep -c 'name = libpipewire-module-filter-chain' "$f")" = 1 ]
+    [ "$(grep -c '^ *inputs  = ' "$f")" = 1 ]
+    [ "$(graph_inputs "$f" | wc -w | tr -d ' ')" -ge 8 ]
+    graph_inputs "$f" | grep -q '"lfeLP1:In" "spRL:In" "spRR:In" "spSL:In" "spSR:In"$'
+    for n in spRL:150.0 spRR:210.0 spSL:90.0 spSR:270.0; do
+        grep -A8 "name = ${n%%:*}\$" "$f" | grep -q "\"Azimuth\"   = ${n#*:}\$"
+    done
+    grep -q 'outputs = \[ "mixL:Out" "mixR:Out" \]' "$f"
+    grep -q 'node.name        = "x20-headphones"' "$f"
+    grep -q 'node.name        = "x20-headphones.output"' "$f"
+    grep -q 'media.class      = Audio/Sink$' "$f"
+    grep -q 'audio.position   = \[ FL FR FC LFE RL RR SL SR \]' "$f"
+    ! sed -n '/playback.props = {/,/}/p' "$f" | grep -q 'target.object' || false
+    [ "$(grep -c '"Gain 8" = 0.501187' "$f")" = 2 ]
+    grep -q '{ output = "lfeLP2:Out"  input = "mixL:In 8" }' "$f"
+    grep -q '{ output = "lfeLP2:Out"  input = "mixR:In 8" }' "$f"
+}
+
+@test "headphone fronts: default dry renders FL/FR/FC without HRTF, rears and sides spatialized" {
+    component_apply audio_dsp
+    local f
+    f=$(pwconf 50-x20-headphones.conf)
+    grep -qx 'headphones_fronts=dry' "$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf"
+    common_headphone_graph "$f"
+    ! grep -Eq 'name = sp(FL|FR|FC)$' "$f" || false
+    ! grep -q '"sp\(FL\|FR\|FC\):' "$f" || false
+    [ "$(grep -c 'label = spatializer' "$f")" = 4 ]
+    # FL straight into the left mixer, FR into the right, FC into both
+    [ "$(graph_inputs "$f")" = '"mixL:In 1" "mixR:In 2" "cpFC:In" "lfeLP1:In" "spRL:In" "spRR:In" "spSL:In" "spSR:In"' ]
+    grep -q '{ type = builtin label = copy name = cpFC }' "$f"
+    grep -q '{ output = "cpFC:Out" input = "mixL:In 3" }' "$f"
+    grep -q '{ output = "cpFC:Out" input = "mixR:In 3" }' "$f"
+    ! grep -q 'input = "mixR:In 1"' "$f" || false
+    ! grep -q 'input = "mixL:In 2"' "$f" || false
+    # dry fronts at 0.707 (power of a spatialized front at gain 0.5), FC 3 dB below
+    [ "$(grep -c '"Gain 1" = 0.707 "Gain 2" = 0.707 "Gain 3" = 0.5 "Gain 4" = 1.0' "$f")" = 2 ]
+}
+
+@test "headphone fronts: hrtf renders all seven spatializers (the graph before the hybrid)" {
+    audio_dsp_write_settings headphones_fronts=hrtf
+    component_apply audio_dsp
+    local f n
+    f=$(pwconf 50-x20-headphones.conf)
+    common_headphone_graph "$f"
+    [ "$(grep -c 'label = spatializer' "$f")" = 7 ]
+    for n in spFL:30.0 spFR:330.0 spFC:0.0; do
+        grep -A8 "name = ${n%%:*}\$" "$f" | grep -q "\"Azimuth\"   = ${n#*:}\$"
+    done
+    [ "$(graph_inputs "$f")" = '"spFL:In" "spFR:In" "spFC:In" "lfeLP1:In" "spRL:In" "spRR:In" "spSL:In" "spSR:In"' ]
+    ! grep -q 'cpFC' "$f" || false
+    grep -q '{ output = "spFL:Out R" input = "mixR:In 1" }' "$f"
+    grep -q '{ output = "spFC:Out L" input = "mixL:In 3" }' "$f"
+    [ "$(grep -c '"Gain 1" = 1.0 "Gain 2" = 1.0 "Gain 3" = 1.0 "Gain 4" = 1.0' "$f")" = 2 ]
+    [ "$(grep -c '^ *{ output = ' "$f")" = 17 ]
+}
+
+@test "headphone fronts: kept across apply; invalid value falls back to dry" {
+    audio_dsp_write_settings headphones_fronts=hrtf
+    component_apply audio_dsp
+    component_apply audio_dsp
+    grep -qx 'headphones_fronts=hrtf' "$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf"
+    [ "$(grep -c 'label = spatializer' "$(pwconf 50-x20-headphones.conf)")" = 7 ]
+    [ "$(component_status audio_dsp)" = active ]
+    audio_dsp_write_settings headphones_fronts=maybe
+    [ "$(audio_dsp_setting_value headphones_fronts)" = dry ]
+    component_apply audio_dsp
+    grep -qx 'headphones_fronts=dry' "$AX20_ROOT$H/.config/ally-x20-steamos/audio-dsp.conf"
+    [ "$(grep -c 'label = spatializer' "$(pwconf 50-x20-headphones.conf)")" = 4 ]
 }
 
 # pinned_output <file> : x20-speakers.output goes to the hardware speaker

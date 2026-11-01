@@ -29,4 +29,4 @@ marked `TODO(hw)`.
 | WirePlumber profile in use (`systemctl --user cat wireplumber`) | audio DSP loader fragment | pending |
 | Volume stacking under `x20-speakers` (hardware Speaker sink at 55 % under `x20-speakers` at 100 %, about -15.6 dB) | audio DSP hardware volume hook (`x20-hardware-volume.lua`) | **measured 2026-10-31** by the owner; with the hardware at 100 % `x20-speakers` judged "much better" than raw |
 | Hardware volume hook on the device: `mixer-api` (`api.mixer`) loaded and taking `set-volume` from Lua; Speaker sink raised and restored on default changes (`wpctl status`, `~/.local/state/wireplumber/x20-hardware-volume`); first boot after install, when the hardware sink appears after our sinks | audio DSP hardware volume hook | pending |
-| Speaker positions/orientation on the chassis | XTC stretch goal (`docs/xtc-notes.md`) | pending |
+| Speaker positions/orientation on the chassis | a future crosstalk cancellation attempt (the first one was removed, `docs/xtc-notes.md`) | pending |

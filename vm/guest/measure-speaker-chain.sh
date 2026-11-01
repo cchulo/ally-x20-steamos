@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
 # vm/guest/measure-speaker-chain.sh — measure peak level and digital clipping
-# of the X20 speaker chains (docs/audio-dsp.md, "Headroom"). Runs on the
+# of the X20 speaker chain (docs/audio-dsp.md, "Headroom"). Runs on the
 # device (or in the VM) as the desktop user, inside the PipeWire session,
 # NOT as root.
 #
 # Usage:
-#   measure-speaker-chain.sh [run] [--point hw|speakers|surround|NODE]
+#   measure-speaker-chain.sh [run] [--point hw|speakers|NODE]
 #                            [--sink NODE] [--seconds N] [--out DIR]
 #                            [--method pw|parec]
 #       Generate the worst-case 7.1 test file, play it (on the default sink,
@@ -20,9 +20,7 @@
 #             in float before the conversion to the device format, so
 #             samples above full scale are still visible (>= 1.0 = clipped
 #             at the conversion).
-#   speakers  the x20-speakers.output stream (output of the plain chain)
-#   surround  the x20-speakers-surround.output stream (output of the speaker
-#             surround chain, before x20-speakers)
+#   speakers  the x20-speakers.output stream (output of the speaker chain)
 #   NODE      any node.name (a sink is recorded through its monitor)
 #
 # Test file, 8 channels FL FR FC LFE RL RR SL SR, 48 kHz, three segments:
@@ -223,7 +221,6 @@ ms_run() {
     case "$point" in
         hw) target=$(ms_default_sink) ;;
         speakers) target=x20-speakers.output ;;
-        surround) target=x20-speakers-surround.output ;;
         *) target=$point ;;
     esac
     [ -n "$target" ] || ms_die "no hardware sink found; pass --point <node.name>"

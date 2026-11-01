@@ -117,8 +117,8 @@ outputs — stereo stays bit-identical stereo, 5.1 → virtual 5.1, 7.1 →
 virtual 7.1. Decided per stream, automatically. No vendor DSP (Dolby/Nahimic)
 exists on Linux; this is the open equivalent of "Atmos for Headphones".
 Speakers get a separate downmix + widener + EQ chain (HRTF does not work on
-speakers because of inter-aural crosstalk; transaural/XTC is a stretch goal,
-see below).
+speakers because of inter-aural crosstalk; transaural/XTC was tried and
+removed, see below).
 
 Pieces (all user-session config, survive updates, trivially reversible):
 1. `~/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf` —
@@ -144,7 +144,11 @@ Pieces (all user-session config, survive updates, trivially reversible):
 5. Stretch goal (not required for v0.1): transaural crosstalk cancellation
    (XTC) for the built-in speakers, exploiting the handheld's fixed
    head/speaker geometry; designed or measured filter loaded as a convolver.
-   Document findings even if it ends up not shipping.
+   Document findings even if it ends up not shipping. **Tried and removed
+   (2026-10-31):** a parametric RACE version shipped briefly as
+   `x20-speakers-surround`; the owner found it muffled on the device
+   ("like sand in my ears") and `x20-speakers` crisper. Findings and what a
+   better attempt would need in docs/xtc-notes.md.
 Requirements: SteamOS PipeWire built with `libmysofa` (check:
 `strings /usr/lib/pipewire-0.3/libpipewire-module-filter-chain.so | grep -i sofa`
 and `ls /usr/lib/libmysofa.so*`). If absent, ship libmysofa under
@@ -157,10 +161,8 @@ stereo stream's samples pass through unchanged (loopback capture + compare).
 per-stream routing of item 3 and the automatic selection of item 4:** the
 user picks the output in Steam and every stream follows the default sink.
 With Steam's output on "Default", a WirePlumber hook on select-default-node
-swaps WirePlumber's automatic choice: built-in speakers -> x20-speakers (or
-x20-speakers-surround with `stereo-surround on`; on by default since the
-owner's decision below), any headphones (jack, USB,
-Bluetooth) -> x20-headphones; plug/unplug switch; a manual pick
+swaps WirePlumber's automatic choice: built-in speakers -> x20-speakers,
+any headphones (jack, USB, Bluetooth) -> x20-headphones; plug/unplug switch; a manual pick
 always wins; `speakers-precedence off` / `headphones-virtual-surround off`
 opt out. The speaker chain output is pinned to the hardware speaker sink,
 and the HRTF outputs only link to available headphones. Reason:
@@ -170,13 +172,16 @@ an unpinned output followed the fallback to the unplugged jack sink
 (7.1, conf `50-x20-headphones.conf`), replaces `x20-virtual-surround-71` and
 the 5.1 sink of item 1: a 5.1 stream on the 7.1 sink fills FL FR FC LFE
 RL RR and leaves the sides silent. While one of our sinks is the default,
-every sink under it (x20-speakers under x20-speakers-surround, the hardware
-sink at the end) is held at 100 % so Steam's slider is the only volume
-(`audio-dsp hardware-volume`, docs/audio-dsp.md "Volumes"). The first A/B
-against the raw speakers was unfair because of that stacking; with the
-hardware at 100 % the owner preferred the processed chain, so
-`stereo-surround` is on by default: x20-speakers-surround on the speakers,
-x20-headphones on headphones.
+every sink under it (down to the hardware sink) is held at 100 % so Steam's
+slider is the only volume (`audio-dsp hardware-volume`, docs/audio-dsp.md
+"Volumes"). The first A/B against the raw speakers was unfair because of
+that stacking; with the hardware at 100 % the owner preferred the processed
+chain.
+**Changed again (2026-10-31, owner, on the device):** the speaker virtual
+surround `x20-speakers-surround` (item 5) is removed: it sounded muffled,
+`x20-speakers` crisper and closer to Windows. The automatic default on the
+speakers is `x20-speakers`; `stereo-surround`, `speaker-surround` and `xtc`
+are gone (docs/xtc-notes.md).
 
 ---
 

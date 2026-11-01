@@ -11,8 +11,8 @@
 -- 55 %, about -15.6 dB, under x20-speakers at 100 %). While the default is
 -- one of our sinks, this script raises every sink between it and the
 -- hardware to 100 % and saves the volume it found; when a sink leaves that
--- chain (the default moves to a hardware sink, or back from
--- x20-speakers-surround to x20-speakers) it gets the saved volume back. The
+-- chain (the default moves to a hardware sink, or to another of our sinks
+-- with a different chain) it gets the saved volume back. The
 -- default sink's own volume is never raised. The policy is
 -- x20-volume-core.decide (unit-tested, tests/lua/); this file is glue.
 --

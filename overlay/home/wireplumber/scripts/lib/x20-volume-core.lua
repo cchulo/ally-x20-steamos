@@ -14,14 +14,15 @@
 -- the hardware (the "chain") is held at 100 %, so the default's own slider is
 -- an absolute fraction of the hardware's full range:
 --   x20-speakers           -> hardware speaker sink
---   x20-speakers-surround  -> x20-speakers -> hardware speaker sink
 --   x20-headphones         -> the headphone sink its output is linked to
 -- A stage below 100 % that enters the chain is saved and raised to 100 %. A
 -- saved stage that is no longer in the chain gets its saved volume back. The
 -- default sink itself is never raised (it is the user's slider), and a stage
 -- that stays in the chain is never touched again (a manual change sticks).
 -- Nothing here knows the sink names: the chain comes from each x20 sink's
--- link target, so removing a sink is a deletion in its conf, not code.
+-- link target, so a chain of any length works (an x20 sink feeding another
+-- x20 sink, as the speaker virtual surround did until 2026-10, is covered by
+-- the tests), and removing a sink is a deletion in its conf, not code.
 
 local route = require ("x20-route-core")
 

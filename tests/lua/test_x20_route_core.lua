@@ -81,13 +81,13 @@ local NAMES = {
   spk = core.X20_SPEAKER_SINK,
   jack = "alsa_output.pci-0000_64_00.5-platform-amd_sdw.HiFi__Headphones__sink",
 }
-local ALL_X20 = { core.SINK_SPEAKERS, core.SINK_SPEAKERS_SURROUND, core.SINK_HEADPHONES }
+local ALL_X20 = { core.SINK_SPEAKERS, core.SINK_HEADPHONES }
 fh = assert (io.open (root .. "/tests/fixtures/audio_dsp/default-cases.txt", "r"))
 local dcases = 0
 for line in fh:lines () do
   if line:match ("%S") and not line:match ("^%s*#") then
     local f = split (line, "%S+")
-    assert (#f == 12, "bad default fixture line: " .. line)
+    assert (#f == 11, "bad default fixture line: " .. line)
     local name = NAMES[f[2]] or f[2]
     local sink = { name = name, routes = {} }
     if f[4] ~= "-" then
@@ -102,15 +102,15 @@ for line in fh:lines () do
       sink.api = f[7]
     end
     local available = { [NAMES.spk] = true, [NAMES.jack] = true, [name] = true }
-    local present = (f[11] == "all") and ALL_X20 or split (f[11], "[^,]+")
+    local present = (f[10] == "all") and ALL_X20 or split (f[10], "[^,]+")
     for _, n in ipairs (present) do
       available[n] = true
     end
     local got = core.decide_default (
       { name = name, priority = tonumber (f[3]), sink = sink },
       { speakers_precedence = f[8] == "yes", headphones_virtual_surround = f[9] == "yes",
-        stereo_surround = f[10] == "yes", available = available })
-    check ("default/" .. f[1], tostring (got), f[12])
+        available = available })
+    check ("default/" .. f[1], tostring (got), f[11])
     dcases = dcases + 1
   end
 end
@@ -120,11 +120,12 @@ check ("default/nothing-selected", core.decide_default (nil, nil), nil)
 -- precedence and headphone settings default to on when absent (nil)
 check ("default/settings-absent-speakers", core.decide_default (
   { name = core.X20_SPEAKER_SINK, priority = 712 },
-  { available = { [core.SINK_SPEAKERS] = true, [core.SINK_SPEAKERS_SURROUND] = true } }),
-  core.SINK_SPEAKERS_SURROUND)
-check ("default/settings-absent-surround-not-loaded", core.decide_default (
-  { name = core.X20_SPEAKER_SINK, priority = 712 },
   { available = { [core.SINK_SPEAKERS] = true } }), core.SINK_SPEAKERS)
+-- a stale stereo_surround from an older caller changes nothing
+check ("default/stale-stereo-surround-ignored", core.decide_default (
+  { name = core.X20_SPEAKER_SINK, priority = 712 },
+  { stereo_surround = true, available = { [core.SINK_SPEAKERS] = true } }), core.SINK_SPEAKERS)
+check ("default/no-surround-sink-constant", core.SINK_SPEAKERS_SURROUND, nil)
 check ("default/settings-absent-headphones", core.decide_default (
   { name = "bluez_output.x", priority = 1010, sink = { name = "bluez_output.x", api = "bluez5" } },
   { available = { [core.SINK_HEADPHONES] = true } }), core.SINK_HEADPHONES)

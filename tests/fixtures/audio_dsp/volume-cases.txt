@@ -4,7 +4,10 @@
 # chain: the sinks from the default down to the hardware, comma separated
 #   (chain[1] is the default; "-" = no default). Short names: spk = the
 #   hardware speaker sink, jack = the headphone jack sink, bt = a Bluetooth
-#   headset; x20-* are our sinks.
+#   headset; x20-* are our sinks. x20-stage is synthetic: an x20 sink that
+#   feeds x20-speakers (no such sink ships since the speaker virtual surround
+#   was removed in 2026-10); it keeps chains of more than one x20 stage
+#   covered.
 # previous: members remembered from the last run, comma separated; "first"
 #   = first run (nothing remembered), "none" = an empty set.
 # volumes: name=linear volume of every node present ("-" = none present).
@@ -17,20 +20,20 @@
 speakers-raise-hardware           x20-speakers,spk                         first                 x20-speakers=1,spk=0.166                          -                            yes  save:spk=0.166;set:spk=1                                                spk
 speakers-hardware-already-full    x20-speakers,spk                         first                 x20-speakers=0.5,spk=1                            -                            yes  none                                                                    spk
 speakers-own-volume-untouched     x20-speakers,spk                         first                 x20-speakers=0.3,spk=0.5                          -                            yes  save:spk=0.5;set:spk=1                                                  spk
-surround-raises-both-stages       x20-speakers-surround,x20-speakers,spk   first                 x20-speakers-surround=0.4,x20-speakers=0.7,spk=0.5  -                          yes  save:x20-speakers=0.7;set:x20-speakers=1;save:spk=0.5;set:spk=1         x20-speakers,spk
+stage-raises-both-stages          x20-stage,x20-speakers,spk   first                 x20-stage=0.4,x20-speakers=0.7,spk=0.5  -                          yes  save:x20-speakers=0.7;set:x20-speakers=1;save:spk=0.5;set:spk=1         x20-speakers,spk
 headphones-raise-jack             x20-headphones,jack                      first                 x20-headphones=0.5,jack=0.4,spk=1                 -                            yes  save:jack=0.4;set:jack=1                                                jack
 headphones-raise-bluetooth        x20-headphones,bt                        first                 x20-headphones=0.5,bt=0.6                         -                            yes  save:bt=0.6;set:bt=1                                                    bt
 
 # --- moving between our sinks
-surround-to-speakers-restores-x20-speakers  x20-speakers,spk           x20-speakers,spk      x20-speakers=1,spk=1                              x20-speakers=0.7,spk=0.5     yes  set:x20-speakers=0.7;forget:x20-speakers                                spk
-speakers-to-surround-raises-x20-speakers    x20-speakers-surround,x20-speakers,spk  spk     x20-speakers-surround=0.5,x20-speakers=0.8,spk=1  spk=0.5                      yes  save:x20-speakers=0.8;set:x20-speakers=1                                x20-speakers,spk
+stage-to-speakers-restores-x20-speakers     x20-speakers,spk           x20-speakers,spk      x20-speakers=1,spk=1                              x20-speakers=0.7,spk=0.5     yes  set:x20-speakers=0.7;forget:x20-speakers                                spk
+speakers-to-stage-raises-x20-speakers       x20-stage,x20-speakers,spk  spk     x20-stage=0.5,x20-speakers=0.8,spk=1  spk=0.5                      yes  save:x20-speakers=0.8;set:x20-speakers=1                                x20-speakers,spk
 headphones-unplugged-to-speakers  x20-speakers,spk                         jack                  x20-speakers=0.5,jack=1,spk=0.5                   jack=0.4                     yes  set:jack=0.4;forget:jack;save:spk=0.5;set:spk=1                         spk
 speakers-to-headphones            x20-headphones,jack                      spk                   x20-headphones=0.5,jack=0.4,spk=1                 spk=0.5                      yes  set:spk=0.5;forget:spk;save:jack=0.4;set:jack=1                         jack
 headset-changes-under-same-default  x20-headphones,bt                      jack                  x20-headphones=0.5,jack=1,bt=0.6                  jack=0.4                     yes  set:jack=0.4;forget:jack;save:bt=0.6;set:bt=1                           bt
 
 # --- the default becomes a hardware sink
 speakers-to-hardware-restores     spk                                      spk                   spk=1                                             spk=0.166                    yes  set:spk=0.166;forget:spk                                                none
-surround-to-hardware-restores-all spk                                      x20-speakers,spk      x20-speakers=1,spk=1                              x20-speakers=0.7,spk=0.5     yes  set:spk=0.5;forget:spk;set:x20-speakers=0.7;forget:x20-speakers         none
+stage-to-hardware-restores-all    spk                                      x20-speakers,spk      x20-speakers=1,spk=1                              x20-speakers=0.7,spk=0.5     yes  set:spk=0.5;forget:spk;set:x20-speakers=0.7;forget:x20-speakers         none
 hardware-nothing-saved            spk                                      first                 spk=0.5                                           -                            yes  none                                                                    none
 hdmi-restores-speakers            hdmi                                     spk                   hdmi=0.8,spk=1                                    spk=0.5                      yes  set:spk=0.5;forget:spk                                                  none
 

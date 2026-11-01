@@ -9,8 +9,8 @@
 -- (default-nodes/find-best-default-node). This hook runs right after that
 -- choice and before it is applied (default-nodes/apply-default-node), and
 -- swaps a hardware choice for its processed counterpart:
---   built-in speakers       -> x20-speakers-surround (x20-speakers with
---                              `audio-dsp stereo-surround off`)
+--   built-in speakers       -> x20-speakers (unless
+--                              `audio-dsp speakers-precedence off`)
 --   headphones: jack, USB,  -> x20-headphones, whose output the
 --   Bluetooth                  route-by-channels hook links to those same
 --                              headphones (one shared classification)
@@ -87,7 +87,6 @@ SimpleEventHook {
       {
         speakers_precedence = setting_bool ("x20.speakers_precedence", true),
         headphones_virtual_surround = setting_bool ("x20.headphones_virtual_surround", true),
-        stereo_surround = setting_bool ("x20.stereo_surround", true),
         available = available,
       })
 
@@ -106,7 +105,6 @@ local function rescan ()
     source:call ("schedule-rescan", "default-nodes")
   end
 end
-for _, key in ipairs ({ "x20.speakers_precedence", "x20.headphones_virtual_surround",
-                        "x20.stereo_surround" }) do
+for _, key in ipairs ({ "x20.speakers_precedence", "x20.headphones_virtual_surround" }) do
   pcall (Settings.subscribe, key, rescan)
 end

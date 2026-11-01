@@ -102,7 +102,9 @@ Running `install` again is safe: every step is idempotent.
 
 Files outside `/var/lib/ally-x20-steamos` are only written by `apply`, as
 prefixed drop-ins recorded in the manifest. Nothing is ever written under
-`/usr`.
+`/usr`. The `power` component bind-mounts a copy (in `/run`) over
+`/usr/share/steamos-manager/devices` at boot; a mount writes nothing to the
+read-only image and is gone after `stop` or a reboot ([power.md](power.md)).
 
 ## Checking status
 

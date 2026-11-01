@@ -14,10 +14,13 @@ setup() {
     printf '0010-h.patch\tdrivers/hid\thid-asus-ally.ko\n' >"$AX20_PATCHES_DIR/modules-hid.list"
 }
 
-# stock_modules <asoc-content> <hid-content> : fixture stock modules.
+# stock_modules <asoc-content> <hid-content> [armoury-content] : fixture
+# stock modules. asus-armoury defaults to a build that already carries the
+# RC74XA power limits, so the older tests only look at the first two.
 stock_modules() {
     fixture_file "/usr/lib/modules/$KV/kernel/sound/soc/amd/acp/snd-soc-acpi-amd-match.ko" "$1"
     fixture_file "/usr/lib/modules/$KV/kernel/drivers/hid/hid-asus-ally.ko" "$2"
+    fixture_file "/usr/lib/modules/$KV/kernel/drivers/platform/x86/asus-armoury.ko" "${3:-x RC74XA y}"
 }
 
 stage_build() {
@@ -71,6 +74,39 @@ stage_build() {
     stock_modules "nothing" "go_s:rgb:joystick_rings"
     run modules_probe
     [ "$status" -eq 1 ]
+}
+
+@test "probe: 1 when the stock asus-armoury lacks the RC74XA power limits" {
+    component_load modules
+    stock_modules "x RC74XA y" "x go_s:rgb:joystick_rings y" "RC73XA only"
+    run modules_probe
+    [ "$status" -eq 1 ]
+}
+
+@test "the modprobe.d drop-in gets an asus-armoury hook from modules-power.list" {
+    printf '0020-p.patch\tdrivers/platform/x86\tasus-armoury.ko\n' >"$AX20_PATCHES_DIR/modules-power.list"
+    run component_apply modules
+    assert_success
+    conf="$AX20_ROOT/etc/modprobe.d/ally-x20-steamos-modules.conf"
+    grep -Fxq 'install asus-armoury /bin/sh -c '"'"'/etc/ally-x20-steamos/load-or-fallback asus-armoury "$@" || exec modprobe --ignore-install asus-armoury "$@"'"'"' -- $CMDLINE_OPTS' "$conf"
+    [ "$(grep -c '^install asus-armoury ' "$conf")" -eq 1 ]
+}
+
+@test "status: stock when the drop-in predates a module added to the lists" {
+    stock_modules "nothing" "nothing"
+    component_apply modules
+    stage_build
+    run component_status modules
+    [ "$output" = active ]
+    printf '0020-p.patch\tdrivers/platform/x86\tasus-armoury.ko\n' >"$AX20_PATCHES_DIR/modules-power.list"
+    printf 'p' >"$AX20_ROOT/etc/ally-x20-steamos/modules/$KV/asus-armoury.ko.zst"
+    run component_status modules
+    [ "$output" = stock ]
+    run modules_status_detail
+    assert_output_contains "out of date"
+    component_apply modules
+    run component_status modules
+    [ "$output" = active ]
 }
 
 @test "probe: 0 only when every stock module contains its fix" {

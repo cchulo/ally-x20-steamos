@@ -10,6 +10,7 @@ User-facing:
 | [inputplumber.md](inputplumber.md) | controller profile, hwdb autostart, fallback daemon |
 | [rgb.md](rgb.md) | joystick ring RGB in Steam, effect/speed sysfs |
 | [hdr.md](hdr.md) | Desktop and Game Mode HDR, the gamescope profile and wrapper |
+| [power.md](power.md) | Steam's TDP slider and power profiles: asus-armoury limits, the steamos-manager device file shim, how to verify |
 | [kernel-modules.md](kernel-modules.md) | what is rebuilt, when, lockdown, forcing a rebuild |
 | [update-survival.md](update-survival.md) | what a SteamOS update does to us and how we survive it; update policy |
 | [self-update.md](self-update.md) | channels, signed tags, rollback, migrations |
@@ -29,5 +30,5 @@ Developer-facing:
 | [rumble-analysis.md](rumble-analysis.md) | rumble report formats (kernel, InputPlumber, hhd), the kernel magnitude-scaling bug, speaker-hiss hypotheses and the raw-report device test |
 | [../acpi/dump-dsdt.md](../acpi/dump-dsdt.md) | dumping and patching the DSDT, testing the override |
 | [../build/kernel-sources.md](../build/kernel-sources.md) | where kernel sources and headers come from |
-| [../patches/kernel/README.md](../patches/kernel/README.md), [README-hid.md](../patches/kernel/README-hid.md) | the kernel patches |
+| [../patches/kernel/README.md](../patches/kernel/README.md), [README-hid.md](../patches/kernel/README-hid.md) | the kernel patches (audio and asus-armoury in README.md, hid-asus-ally in README-hid.md) |
 | [../vm/README.md](../vm/README.md) | VM research notes |

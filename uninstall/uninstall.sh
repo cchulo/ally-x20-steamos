@@ -436,6 +436,44 @@ restore_backups() {
     done
 }
 
+# ------------------------------------------------------ live mounts --
+# release_power_mount : component power bind-mounts a copy of steamos-manager's
+# device files from /run/ally-x20-steamos over
+# /usr/share/steamos-manager/devices (no file under /usr is written). Stop
+# its unit and drop our mount layers before the files go, so steamos-manager
+# sees the stock directory again. Live root only; a mount never survives a
+# reboot, and another slot or recovery media has none. Only layers whose
+# source is under /ally-x20-steamos/ are unmounted, never anyone else's.
+POWER_MOUNT_POINT=/usr/share/steamos-manager/devices
+POWER_UNIT="$NAME-power-devices.service"
+power_mount_ours() {
+    [ -r /proc/self/mountinfo ] || return 1
+    awk -v mp="$POWER_MOUNT_POINT" -v tok="/$NAME/" '
+        $5 == mp { top = $4 }
+        END { exit !(top != "" && index(top, tok) > 0) }' /proc/self/mountinfo
+}
+release_power_mount() {
+    [ -n "$ROOT" ] && return 0
+    component_selected power || return 0
+    if [ "$DRY" = 1 ]; then
+        power_mount_ours && printf '[dry-run] stop %s and unmount %s\n' "$POWER_UNIT" "$POWER_MOUNT_POINT"
+        return 0
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop "$POWER_UNIT" 2>/dev/null || true
+    fi
+    n=0
+    while power_mount_ours && [ "$n" -lt 8 ]; do
+        n=$((n + 1))
+        log "umount $POWER_MOUNT_POINT (our bind mount)"
+        umount "$POWER_MOUNT_POINT" 2>/dev/null || umount -l "$POWER_MOUNT_POINT" 2>/dev/null || break
+    done
+    if power_mount_ours; then
+        warn "our bind mount on $POWER_MOUNT_POINT is still there; it goes away at the next reboot"
+    fi
+    return 0
+}
+
 # -------------------------------------------------------- post actions --
 post_actions() {
     [ -n "$ROOT" ] && return 0 # only on the live root
@@ -520,6 +558,9 @@ main() {
         read -r ans || ans=n
         case "$ans" in y | Y | yes | YES) ;; *) fatal "aborted" ;; esac
     fi
+
+    # 0. Live mounts (component power) go before the files behind them.
+    release_power_mount
 
     # 1. Restore saved originals (boot entry, rauc block).
     restore_backups

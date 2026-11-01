@@ -14,7 +14,7 @@
 . "$AX20_SRC/lib/modules.sh"
 
 # shellcheck disable=SC2034  # read by lib/component.sh
-COMPONENT_DESCRIPTION="patched kernel modules (ASoC match table, hid-asus-ally), loaded only for a matching kernel"
+COMPONENT_DESCRIPTION="patched kernel modules (ASoC audio, hid-asus-ally, asus-armoury), loaded only for a matching kernel"
 
 modules_files() {
     printf 'bin/load-or-fallback\t%s\t0755\tshared\n' "$AX20_HELPER_REL"
@@ -25,6 +25,7 @@ modules_files() {
 _modules_fix_strings() {
     printf 'snd-soc-acpi-amd-match\t%s\n' "$AX20_BOARD"
     printf 'hid-asus-ally\tgo_s:rgb:joystick_rings\n'
+    printf 'asus-armoury\t%s\n' "$AX20_BOARD"
 }
 
 modules_apply() {
@@ -66,9 +67,23 @@ EOF
     return "$PROBE_YES"
 }
 
-# _modules_files_ok : helper and modprobe.d drop-in are installed unmodified.
+# _modules_conf_current : the installed modprobe.d drop-in has one hook per
+# module the lists name today. A checkout update that adds a module (e.g.
+# asus-armoury) leaves the old drop-in verifying against the manifest; this
+# makes status report "stock" so the boot service re-applies it.
+_modules_conf_current() {
+    local conf want
+    conf=$(ax20_path "$AX20_MODPROBE_CONF_REL")
+    [ -f "$conf" ] || return 1
+    want=$(modules_render_modprobe_conf) || return 1
+    [ "$(cat "$conf")" = "$want" ]
+}
+
+# _modules_files_ok : helper and modprobe.d drop-in are installed unmodified
+# and the drop-in matches the current module lists.
 _modules_files_ok() {
-    manifest_verify "$AX20_HELPER_REL" && manifest_verify "$AX20_MODPROBE_CONF_REL"
+    manifest_verify "$AX20_HELPER_REL" && manifest_verify "$AX20_MODPROBE_CONF_REL" \
+        && _modules_conf_current
 }
 
 # modules_status : active | stock | superseded | n/a
@@ -111,8 +126,10 @@ modules_status_detail() {
         printf 'kernel lockdown is active: unsigned modules cannot load, stock modules in use\n'
     elif modules_all_superseded "$kver"; then
         printf 'Valve kernel %s already contains every patch\n' "$kver"
-    elif ! _modules_files_ok; then
+    elif ! manifest_verify "$AX20_HELPER_REL" || ! manifest_verify "$AX20_MODPROBE_CONF_REL"; then
         printf 'modprobe hooks not installed\n'
+    elif ! _modules_conf_current; then
+        printf 'modprobe hooks out of date with the module lists (run: %s apply --only modules)\n' "$AX20_NAME"
     elif modules_available "$kver"; then
         printf 'patched modules staged for %s\n' "$kver"
     else

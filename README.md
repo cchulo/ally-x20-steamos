@@ -19,7 +19,7 @@ testable in a VM before it ever touches the device.
 | **Controller not matched** by the bundled InputPlumber 0.78; top-right (capture) button dead. | Upstream X20 profile as a `devices.d` drop-in (adapted to the stock daemon's schema) with an X20 button map (Armoury Crate → Quick Access, capture → screenshot) + hwdb autostart; `0xa0` → `KEY_PROG2` in the rebuilt `hid-asus-ally` | `inputplumber`, `modules` · [docs/inputplumber.md](docs/inputplumber.md) |
 | **Joystick ring RGB** missing from Steam's Customization menu. | `hid-asus-ally` registers the LED under a name Steam knows, with a fixed R/G/B channel layout and effect/speed attributes | `modules` · [docs/rgb.md](docs/rgb.md) |
 | **HDR not detected** (panel metadata lives in a DisplayID 2 block). | libdisplay-info 0.3.0 + DisplayID 2 backport via `ld.so.conf.d` (Desktop Mode); gamescope Lua display profile for the panel, loaded by stock gamescope (Game Mode); optional custom gamescope behind a stock-fallback wrapper | `hdr` · [docs/hdr.md](docs/hdr.md) |
-| **No headphone virtual surround / speaker DSP.** | PipeWire `filter-chain` sinks: on Steam's "Default" output the speakers play through the X20 speaker DSP (downmix, width, EQ) and any headphones (jack, USB, Bluetooth) through 7.1 HRTF virtual surround, switching on plug/unplug; manual picks in Steam always win; while an X20 sink is the default the sinks under it stay at 100 %, so Steam's slider is the only volume; all in `~/.config` | `audio_dsp` · [docs/audio-dsp.md](docs/audio-dsp.md) |
+| **No headphone virtual surround / speaker DSP.** | PipeWire `filter-chain` sinks: on Steam's "Default" output the speakers play through the X20 speaker DSP (downmix, width, EQ) and any headphones (jack, USB, Bluetooth) through 7.1 virtual surround (HRTF on rears and sides, fronts dry), switching on plug/unplug; manual picks in Steam always win; while an X20 sink is the default the sinks under it stay at 100 %, so Steam's slider is the only volume; all in `~/.config` | `audio_dsp` · [docs/audio-dsp.md](docs/audio-dsp.md) |
 | **SteamOS updates wipe out-of-tree changes.** | RAUC pre/post-install handlers, boot service, user notifier; `block`/`degrade` policy when modules cannot be built for an incoming kernel | `update` · [docs/update-survival.md](docs/update-survival.md) |
 
 ## Principles
@@ -71,7 +71,7 @@ ally-x20-steamos.sh [--root <dir>] [--dry-run] [--verbose] [--yes] [--i-know] <c
 | `probe [--notify]` | "has SteamOS caught up?" per component |
 | `rebuild [--kver <v>]` | fetch or build the patched kernel modules (cache → release asset → container build) |
 | `self-update [--channel stable\|beta] [--check] [--rollback]` | signed-tag update of the checkout, migrations, re-apply |
-| `audio-dsp on\|off\|status\|hrtf <set>\|speakers-precedence on\|off\|headphones-virtual-surround on\|off\|hardware-volume on\|off\|lfe\|master-gain\|test` | the PipeWire chains |
+| `audio-dsp on\|off\|status\|hrtf <set>\|headphones-fronts dry\|hrtf\|speakers-precedence on\|off\|headphones-virtual-surround on\|off\|hardware-volume on\|off\|lfe\|master-gain\|test` | the PipeWire chains |
 | `update-policy show\|block\|degrade [--once]` | what an update does if modules cannot be built |
 | `boot-entry show\|set\|clear\|apply\|restore` | the boot-entry exception (early initrd, cmdline args) |
 | `audit [--json]` | manifest vs filesystem: modified, missing, unexpected |

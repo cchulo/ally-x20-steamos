@@ -182,6 +182,10 @@ surround `x20-speakers-surround` (item 5) is removed: it sounded muffled,
 `x20-speakers` crisper and closer to Windows. The automatic default on the
 speakers is `x20-speakers`; `stereo-surround`, `speaker-surround` and `xtc`
 are gone (docs/xtc-notes.md).
+**Changed again (2026-10-31, owner, on the device):** `x20-headphones` is
+hybrid: FL/FR/FC play dry (no HRTF), only rears and sides are spatialized,
+because the generic HRTF made frontal sounds "sandy";
+`audio-dsp headphones-fronts hrtf` restores item 1 (docs/audio-dsp.md).
 
 ---
 

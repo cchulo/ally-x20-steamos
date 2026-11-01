@@ -19,9 +19,13 @@ testable in a VM before it ever touches the device.
 | **Controller not matched** by the bundled InputPlumber 0.78; top-right (capture) button dead. | Upstream X20 profile as a `devices.d` drop-in (adapted to the stock daemon's schema) with an X20 button map (Armoury Crate → Quick Access, capture → screenshot) + hwdb autostart; `0xa0` → `KEY_PROG2` in the rebuilt `hid-asus-ally` | `inputplumber`, `modules` · [docs/inputplumber.md](docs/inputplumber.md) |
 | **Joystick ring RGB** missing from Steam's Customization menu. | `hid-asus-ally` registers the LED under a name Steam knows, with a fixed R/G/B channel layout and effect/speed attributes | `modules` · [docs/rgb.md](docs/rgb.md) |
 | **HDR not detected** (panel metadata lives in a DisplayID 2 block). | libdisplay-info 0.3.0 + DisplayID 2 backport via `ld.so.conf.d` (Desktop Mode); gamescope Lua display profile for the panel, loaded by stock gamescope (Game Mode); optional custom gamescope behind a stock-fallback wrapper | `hdr` · [docs/hdr.md](docs/hdr.md) |
-| **No headphone virtual surround / speaker DSP.** | PipeWire `filter-chain` sinks: on Steam's "Default" output the speakers play through the X20 speaker DSP (downmix, width, EQ) and any headphones (jack, USB, Bluetooth) through 7.1 virtual surround (HRTF on rears and sides, fronts dry), switching on plug/unplug; manual picks in Steam always win; while an X20 sink is the default the sinks under it stay at 100 %, so Steam's slider is the only volume; all in `~/.config` | `audio_dsp` · [docs/audio-dsp.md](docs/audio-dsp.md) |
 | **No power profiles in Steam's Performance menu.** steamos-manager 26.4.1 has no X20 device file. | The upstream steamos-manager RC74XA entry, merged into `/usr/share/steamos-manager/devices` by a boot-time bind mount of a copy in `/run` (nothing written to `/usr`, steps aside once SteamOS ships it): Low power / Balanced / Performance hold the APU at about 12 / 16-21 / 25-30 W on battery. No TDP slider on purpose: BIOS `RC74XA.303` ignores PPT writes (`power tdp-slider on` to re-test; the mainline `asus-armoury` RC74XA table is still built) | `power`, `modules` · [docs/power.md](docs/power.md) |
 | **SteamOS updates wipe out-of-tree changes.** | RAUC pre/post-install handlers, boot service, user notifier; `block`/`degrade` policy when modules cannot be built for an incoming kernel | `update` · [docs/update-survival.md](docs/update-survival.md) |
+
+Audio plays through the hardware sinks as on stock SteamOS. The headphone
+virtual surround and speaker DSP were removed on 2026-11-01 after a
+level-matched A/B on the device; `apply` removes them from older installs
+([docs/audio-dsp-history.md](docs/audio-dsp-history.md)).
 
 ## Principles
 
@@ -68,11 +72,10 @@ ally-x20-steamos.sh [--root <dir>] [--dry-run] [--verbose] [--yes] [--i-know] <c
 |---|---|
 | `install` | bootstrap: clone to `/var/lib/ally-x20-steamos/src`, pin keys, `apply`, `status` |
 | `apply [--slot <mount>] [--only <c>] [--missing-only] [--verify-only]` | (re)install components here or into a mounted slot; idempotent |
-| `status [--json] [--verbose]` | per component `active` / `stock` / `superseded` / `n/a`, kernel, policy, DSP state |
+| `status [--json] [--verbose]` | per component `active` / `stock` / `superseded` / `n/a`, kernel, policy |
 | `probe [--notify]` | "has SteamOS caught up?" per component |
 | `rebuild [--kver <v>]` | fetch or build the patched kernel modules (cache → release asset → container build) |
 | `self-update [--channel stable\|beta] [--check] [--rollback]` | signed-tag update of the checkout, migrations, re-apply |
-| `audio-dsp on\|off\|status\|hrtf <set>\|headphones-fronts dry\|hrtf\|speakers-precedence on\|off\|headphones-virtual-surround on\|off\|hardware-volume on\|off\|lfe\|master-gain\|test` | the PipeWire chains |
 | `power status\|tdp-slider [on\|off]` | power profiles; the TDP slider test switch (default off) |
 | `update-policy show\|block\|degrade [--once]` | what an update does if modules cannot be built |
 | `boot-entry show\|set\|clear\|apply\|restore` | the boot-entry exception (early initrd, cmdline args) |
@@ -87,11 +90,11 @@ against a fixture tree, which is how the test suite works.
 ## Repository layout
 
 ```
-ally-x20-steamos.sh   CLI dispatcher            lib/          common, manifest, probes, component, slots, rauc, modules, selfupdate, status, notify
-cmd/                  one file per command      components/   audio, audio_dsp, hdr, inputplumber, modules, power, update
+ally-x20-steamos.sh   CLI dispatcher            lib/          common, manifest, probes, component, retired, slots, rauc, modules, selfupdate, status, notify
+cmd/                  one file per command      components/   audio, hdr, inputplumber, modules, power, update
 overlay/              files installed on the device (manifest-tracked)   uninstall/   standalone POSIX uninstaller
 patches/kernel/       0001-0006 ASoC (audio), 0010-0015 hid-asus-ally, 0020 asus-armoury   patches/{gamescope,libdisplay-info}/
-build/                Containerfile, build-modules.sh, build-hdr.sh, build-inputplumber.sh, build-libmysofa.sh, kernel-sources.md
+build/                Containerfile, build-modules.sh, build-hdr.sh, build-inputplumber.sh, kernel-sources.md
 acpi/                 patch-acp-flag.py (DSDT flag patch + early initrd), dump-dsdt.md, fixtures/, tests/
 firmware/             tas2783.lock, fetch-tas2783.sh, speaker-id.map       keys/        release signing key placeholders
 vm/                   run-steamos-vm.sh, setup-fedora-host.sh, guest/ scripts, test LED module, ci/

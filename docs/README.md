@@ -6,7 +6,7 @@ User-facing:
 |---|---|
 | [install.md](install.md) | prerequisites, Desktop Mode install steps, what gets written where |
 | [audio.md](audio.md) | speakers: the four problems, UCM overlay, firmware, ACPI override, how to verify |
-| [audio-dsp.md](audio-dsp.md) | headphone virtual surround and speaker chain, knobs, verification |
+| [audio-dsp-history.md](audio-dsp-history.md) | the removed audio DSP (2026-10 to 2026-11-01): what it was, the A/B verdicts, lessons on volume stacking and WirePlumber hooks |
 | [inputplumber.md](inputplumber.md) | controller profile, hwdb autostart, fallback daemon |
 | [rgb.md](rgb.md) | joystick ring RGB in Steam, effect/speed sysfs |
 | [hdr.md](hdr.md) | Desktop and Game Mode HDR, the gamescope profile and wrapper |
@@ -26,7 +26,6 @@ Developer-facing:
 | [vm-testing.md](vm-testing.md) | QEMU/KVM harness, what each VM check proves |
 | [etc-survival.md](etc-survival.md) | measurement template for `/etc` carry-over across slots |
 | [hardware-data.md](hardware-data.md) | every fact still to be collected on a real X20 (`TODO(hw)`) |
-| [xtc-notes.md](xtc-notes.md) | speaker crosstalk cancellation: why the speaker virtual surround was removed, what a better attempt needs |
 | [rumble-analysis.md](rumble-analysis.md) | rumble report formats (kernel, InputPlumber, hhd), the kernel magnitude-scaling bug, speaker-hiss hypotheses and the raw-report device test |
 | [../acpi/dump-dsdt.md](../acpi/dump-dsdt.md) | dumping and patching the DSDT, testing the override |
 | [../build/kernel-sources.md](../build/kernel-sources.md) | where kernel sources and headers come from |

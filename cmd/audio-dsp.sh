@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# summary: headphone/speaker virtual surround + speaker chain: on|off|status|hrtf|speakers-precedence|headphones-virtual-surround|stereo-surround|hardware-volume|stereo-hrtf|speaker-surround|xtc|lfe|master-gain|test
+# summary: headphone virtual surround + speaker chain: on|off|status|hrtf|speakers-precedence|headphones-virtual-surround|hardware-volume|stereo-hrtf|lfe|master-gain|test
 # shellcheck source=lib/component.sh
 . "$AX20_SRC/lib/component.sh"
 
@@ -15,50 +15,36 @@ usage: $AX20_NAME audio-dsp <command>
   speakers-precedence on|off
                         on (default): with Steam's output on "Default", the
                         built-in speakers play through the X20 speaker DSP;
-                        off: through the bare hardware sink (both speaker
-                        sinks at priority 50; re-renders, restarts PipeWire)
+                        off: through the bare hardware sink (x20-speakers
+                        at priority 50; re-renders, restarts PipeWire)
   headphones-virtual-surround on|off
                         on (default): with Steam's output on "Default", any
                         headphones (jack, USB, Bluetooth) play through
                         x20-headphones; off: the bare headphone sink.
                         Applied to the running session at once
-  stereo-surround on|off
-                        on (default): the automatic default on the speakers
-                        is the speaker virtual surround; off: the plain
-                        speaker chain (restarts PipeWire)
   hardware-volume on|off
                         on (default): while one of our sinks is the default,
                         every sink under it (x20-speakers, the hardware
                         speaker or headphone sink) is held at 100 %, so
                         Steam's slider is the only volume; off: restores
                         what it raised. Applied to the running session at once
-  stereo-hrtf on|off
-  speaker-surround on|off
-                        no effect any more: streams follow the sink picked in
+  stereo-hrtf on|off    no effect any more: streams follow the sink picked in
                         Steam; kept so old scripts and settings still work
-  xtc                   show the crosstalk cancellation parameters
-  xtc set <delay_us> <atten_db> [taps]
-                        tune it: delay per tap 10..1000 us, attenuation per tap
-                        0.5..30 dB, taps 1..4 (restarts PipeWire)
-  xtc reset             back to the X20 defaults (117 us, 4 dB, 4 taps)
   lfe                   show the LFE low-pass and level
   lfe set <cutoff_hz> <gain_db>
                         LFE low-pass 40..250 Hz and level -40..6 dB in every
                         chain (default 120 Hz, -6 dB; restarts PipeWire)
-  master-gain           show the worst-case gain analysis and output gains
+  master-gain           show the worst-case gain analysis and the output gain
   master-gain [speakers] auto|strict|<dB>
-                        output gain of x20-speakers-surround (or, with
-                        "speakers", of x20-speakers): auto (default), strict
+                        output gain of x20-speakers: auto (default), strict
                         (no digital clipping even in the worst case) or a
                         number -60..12 (restarts PipeWire)
   test                  play 7.1 and stereo test tones and show which sink each
-                        used (the default sink), then the 7.1 channel sequence
-                        through the speaker virtual surround
+                        used (the default sink)
 
 Streams follow the default sink: Steam's "Default" (automatic, see above) or
-the output picked there by hand ("X20 Speakers", "X20 Speakers (virtual
-surround)", "X20 Headphones (virtual surround)", or the hardware outputs). A
-manual pick always wins.
+the output picked there by hand ("X20 Speakers", "X20 Headphones (virtual
+surround)", or the hardware outputs). A manual pick always wins.
 
 The user whose session is configured is \$SUDO_USER (or deck); override with
 AX20_AUDIO_USER / AX20_HOME. See docs/audio-dsp.md.
@@ -88,17 +74,9 @@ cmd_audio_dsp() {
             shift
             _audio_dsp_cmd_toggle stereo-hrtf stereo_hrtf "$@"
             ;;
-        speaker-surround)
-            shift
-            _audio_dsp_cmd_toggle speaker-surround speaker_surround "$@"
-            ;;
-        stereo-surround)
-            shift
-            _audio_dsp_cmd_priority stereo-surround stereo_surround "$@"
-            ;;
         speakers-precedence)
             shift
-            _audio_dsp_cmd_priority speakers-precedence speakers_precedence "$@"
+            _audio_dsp_cmd_precedence "$@"
             ;;
         headphones-virtual-surround)
             shift
@@ -107,10 +85,6 @@ cmd_audio_dsp() {
         hardware-volume)
             shift
             _audio_dsp_cmd_setting hardware-volume hardware_volume "$@"
-            ;;
-        xtc)
-            shift
-            _audio_dsp_cmd_xtc "$@"
             ;;
         lfe)
             shift
@@ -158,16 +132,11 @@ _audio_dsp_cmd_status() {
     printf 'enabled:         %s\n' "$(audio_dsp_setting enabled 1)"
     printf 'hrtf:            %s (%s)\n' "$name" "$(audio_dsp_hrtf_installed "$name" && echo installed || echo missing)"
     printf 'stereo_hrtf:     %s\n' "$(audio_dsp_setting_value stereo_hrtf)"
-    printf 'speaker_surround: %s\n' "$(audio_dsp_setting_value speaker_surround)"
-    printf 'stereo_surround: %s\n' "$(audio_dsp_setting_value stereo_surround)"
-    printf 'speakers_precedence: %s (priority.session x20-speakers %s, x20-speakers-surround %s)\n' \
-        "$(audio_dsp_setting_value speakers_precedence)" \
-        "$(audio_dsp_priorities | cut -d' ' -f1)" "$(audio_dsp_priorities | cut -d' ' -f2)"
+    printf 'speakers_precedence: %s (priority.session x20-speakers %s)\n' \
+        "$(audio_dsp_setting_value speakers_precedence)" "$(audio_dsp_priority)"
     printf 'headphones_virtual_surround: %s\n' "$(audio_dsp_setting_value headphones_virtual_surround)"
     printf 'hardware_volume: %s (sinks under our default held at 100 %%)\n' "$(audio_dsp_setting_value hardware_volume)"
-    printf 'xtc:             %s\n' "$(audio_dsp_xtc_describe)"
-    printf 'x20-speakers:    %s\n' "$(AX20_GAIN_CHAIN=speakers audio_dsp_gain_describe)"
-    printf 'speaker surround: %s\n' "$(audio_dsp_gain_describe)"
+    printf 'x20-speakers:    %s\n' "$(audio_dsp_gain_describe)"
     printf 'sofa support:    %s (plugin %s, libmysofa %s)\n' "$sofa" "$plugin" "$lib"
     printf 'speaker chain:   %s\n' "$([ "$lsp" = yes ] && echo 'builtin + LSP limiter' || echo builtin)"
     if [ -z "$AX20_ROOT" ] && ax20_have pw-dump && ax20_have jq; then
@@ -206,7 +175,6 @@ _audio_dsp_cmd_hrtf() {
     if audio_dsp_enabled; then
         # The confs may be missing if the previous set never downloaded.
         [ -f "$(ax20_path "$(audio_dsp_headphones_rel)")" ] || audio_dsp_render_headphones
-        [ -f "$(ax20_path "$(audio_dsp_speaker_surround_rel)")" ] || audio_dsp_render_speaker_surround
         _audio_dsp_fix_owner
         audio_dsp_restart_services pipewire.service
     fi
@@ -225,28 +193,26 @@ _audio_dsp_on_off() {
     esac
 }
 
-# _audio_dsp_cmd_priority <command> <key> on|off : speakers_precedence or
-# stereo_surround. Both decide the priority.session of the speaker sinks,
-# which is rendered into their confs, so the chains are re-rendered and the
-# user's PipeWire session restarts (only while enabled; otherwise the choice
-# is just recorded).
-_audio_dsp_cmd_priority() {
-    local cmd=$1 key=$2 v
-    v=$(_audio_dsp_on_off "$cmd" "${3:-}") || return 2
-    require_root audio-dsp "$cmd" "$3"
+# _audio_dsp_cmd_precedence on|off : speakers_precedence. It decides the
+# priority.session of x20-speakers, which is rendered into its conf, so the
+# chains are re-rendered and the user's PipeWire session restarts (only
+# while enabled; otherwise the choice is just recorded).
+_audio_dsp_cmd_precedence() {
+    local v
+    v=$(_audio_dsp_on_off speakers-precedence "${1:-}") || return 2
+    require_root audio-dsp speakers-precedence "$1"
     ax20_check_readonly_root
-    audio_dsp_write_settings "$key=$v"
+    audio_dsp_write_settings "speakers_precedence=$v"
     if audio_dsp_enabled; then
         audio_dsp_render_wpsettings
         _audio_dsp_rerender
     fi
-    log_info "$cmd: $3 (priority.session x20-speakers $(audio_dsp_priorities | cut -d' ' -f1), x20-speakers-surround $(audio_dsp_priorities | cut -d' ' -f2))"
+    log_info "speakers-precedence: $1 (priority.session x20-speakers $(audio_dsp_priority))"
 }
 
-# _audio_dsp_cmd_toggle <command> <key> on|off : stereo_hrtf or
-# speaker_surround. They used to steer the per-stream router; streams now
-# follow the default sink, so they are only recorded (audio-dsp.conf and
-# 51-x20-settings.conf) for compatibility.
+# _audio_dsp_cmd_toggle <command> <key> on|off : stereo_hrtf. It used to
+# steer the per-stream router; streams now follow the default sink, so it is
+# only recorded (audio-dsp.conf and 51-x20-settings.conf) for compatibility.
 _audio_dsp_cmd_toggle() {
     _audio_dsp_cmd_setting "$@" || return $?
     log_warn "$1 no longer changes routing: streams follow the output picked in Steam"
@@ -289,41 +255,6 @@ _audio_dsp_live_setting() {
     audio_dsp_restart_services wireplumber.service
 }
 
-# _audio_dsp_cmd_xtc [show | set <delay_us> <atten_db> [taps] | reset]
-_audio_dsp_cmd_xtc() {
-    local d a t
-    case "${1:-show}" in
-        show)
-            printf '%s\n' "$(audio_dsp_xtc_describe)"
-            return 0
-            ;;
-        reset)
-            d=$AUDIO_DSP_XTC_DELAY_US_DEFAULT
-            a=$AUDIO_DSP_XTC_ATTEN_DB_DEFAULT
-            t=$AUDIO_DSP_XTC_TAPS_DEFAULT
-            ;;
-        set)
-            d=${2:-}
-            a=${3:-}
-            t=${4:-$(audio_dsp_setting_value xtc_taps)}
-            if ! audio_dsp_xtc_valid_delay "$d" || ! audio_dsp_xtc_valid_atten "$a" \
-                || ! audio_dsp_xtc_valid_taps "$t"; then
-                log_error "usage: $AX20_NAME audio-dsp xtc set <delay_us 10..1000> <atten_db 0.5..30> [taps 1..4]"
-                return 2
-            fi
-            ;;
-        *)
-            log_error "usage: $AX20_NAME audio-dsp xtc [show | set <delay_us> <atten_db> [taps] | reset]"
-            return 2
-            ;;
-    esac
-    require_root audio-dsp xtc "$@"
-    ax20_check_readonly_root
-    audio_dsp_write_settings "xtc_delay_us=$d" "xtc_attenuation_db=$a" "xtc_taps=$t"
-    _audio_dsp_rerender
-    log_info "$(audio_dsp_xtc_describe)"
-}
-
 # _audio_dsp_rerender : render every chain from the settings and restart
 # PipeWire (only while enabled; otherwise the settings are just recorded).
 _audio_dsp_rerender() {
@@ -331,7 +262,6 @@ _audio_dsp_rerender() {
     audio_dsp_render_speaker_chain
     if audio_dsp_hrtf_installed "$(audio_dsp_hrtf_current)"; then
         audio_dsp_render_headphones
-        audio_dsp_render_speaker_surround
     fi
     _audio_dsp_fix_owner
     audio_dsp_restart_services pipewire.service
@@ -363,19 +293,17 @@ _audio_dsp_cmd_lfe() {
     log_info "lfe_cutoff_hz=$2 lfe_gain_db=$3"
 }
 
-# _audio_dsp_cmd_master_gain [show | [speakers] auto|strict|<dB>]
+# _audio_dsp_cmd_master_gain [show | [speakers] auto|strict|<dB>] : the
+# output gain of x20-speakers ("speakers" is optional; it used to tell it
+# from the removed speaker virtual surround).
 _audio_dsp_cmd_master_gain() {
-    local key=master_gain_db v
+    local key=speakers_master_gain_db v
     case "${1:-show}" in
         show)
-            printf 'x20-speakers:          %s\n' "$(AX20_GAIN_CHAIN=speakers audio_dsp_gain_describe)"
-            printf 'x20-speakers-surround: %s\n' "$(audio_dsp_gain_describe)"
+            printf 'x20-speakers: %s\n' "$(audio_dsp_gain_describe)"
             return 0
             ;;
-        speakers)
-            key=speakers_master_gain_db
-            v=${2:-}
-            ;;
+        speakers) v=${2:-} ;;
         *) v=$1 ;;
     esac
     if ! audio_dsp_valid_master "$v"; then
@@ -417,17 +345,13 @@ _audio_dsp_links() {
 
 # _audio_dsp_cmd_test : channel-identification sequences generated with
 # python3 at runtime (no audio files in git):
-#   1. routing check: a 2 s 7.1 file (each channel a quarter second of its
-#      own tone, FL first) and a 2 s stereo file, played together without a
-#      target, so both follow the default sink; prints stream -> sink and
-#      where the x20 filter outputs are linked.
-#   2. speaker surround: a 7.1 sequence with 0.7 s per channel played
-#      straight into x20-speakers-surround (FL FR FC LFE RL RR SL SR), so the
-#      virtual speaker positions can be judged by ear on the built-in
-#      speakers whatever the default sink is.
+#   routing check: a 2 s 7.1 file (each channel a quarter second of its own
+#   tone, FL first) and a 2 s stereo file, played together without a target,
+#   so both follow the default sink; prints stream -> sink and where the x20
+#   filter outputs are linked.
 # TODO(vm): run in the SteamOS VM with and without a headphone route.
 _audio_dsp_cmd_test() {
-    local tmp t t71 t20 tid pid71 pid20 pidid
+    local tmp t t71 t20 pid71 pid20
     if [ -n "$AX20_ROOT" ]; then
         log_error "audio-dsp test needs the live system (not --root)"
         return 1
@@ -446,8 +370,7 @@ _audio_dsp_cmd_test() {
     chmod 755 "$tmp"
     t71="$tmp/x20-test-7.1.wav"
     t20="$tmp/x20-test-2.0.wav"
-    tid="$tmp/x20-test-7.1-speaker-surround.wav"
-    python3 - "$t71" "$t20" "$tid" <<'PY'
+    python3 - "$t71" "$t20" <<'PY'
 import math, struct, sys, wave
 RATE = 48000
 def write(path, channels, seconds, tone_for):
@@ -472,11 +395,10 @@ def seq(step, gap):
     return lambda c, t: freqs[c] if int(t / step) == c and t % step < step - gap else None
 write(sys.argv[1], 8, 2.0, seq(0.25, 0.0))
 write(sys.argv[2], 2, 2.0, lambda c, t: 440 if c == 0 else 660)
-write(sys.argv[3], 8, 5.6, seq(0.7, 0.15))
 PY
-    chmod 644 "$t71" "$t20" "$tid"
+    chmod 644 "$t71" "$t20"
 
-    printf '1. routing (no target: both streams follow the default sink):\n'
+    printf 'routing (no target: both streams follow the default sink):\n'
     _audio_dsp_as_user pw-play --channels 8 --channel-map FL,FR,FC,LFE,RL,RR,SL,SR \
         --media-role Game "$t71" &
     pid71=$!
@@ -485,27 +407,9 @@ PY
     sleep 1
     _audio_dsp_links
     wait "$pid71" "$pid20" 2>/dev/null || true
-    printf '   expected: both streams -> the default sink (Steam on "Default": x20-speakers-surround,\n'
-    printf '             or x20-speakers with stereo-surround off; with headphones\n'
-    printf '             x20-headphones; a manual pick in Steam wins);\n'
+    rm -rf "$tmp"
+    printf '   expected: both streams -> the default sink (Steam on "Default": x20-speakers;\n'
+    printf '             with headphones x20-headphones; a manual pick in Steam wins);\n'
     printf '             x20-speakers.output -> the hardware Speaker sink;\n'
     printf '             x20-headphones.output -> a headphone sink, or unlinked\n'
-
-    printf '2. speaker virtual surround, channel by channel (listen on the built-in speakers):\n'
-    printf '   FL FR FC LFE RL RR SL SR, 0.7 s each\n'
-    if ! _audio_dsp_as_user pw-dump 2>/dev/null \
-        | jq -e 'any(.[]; .info.props["node.name"]? == "x20-speakers-surround")' >/dev/null 2>&1; then
-        printf '   x20-speakers-surround is not loaded (audio-dsp off, HRTF missing or no sofa plugin); skipped\n'
-        rm -rf "$tmp"
-        return 0
-    fi
-    _audio_dsp_as_user pw-play --target x20-speakers-surround --channels 8 \
-        --channel-map FL,FR,FC,LFE,RL,RR,SL,SR --media-role Game "$tid" &
-    pidid=$!
-    sleep 1
-    _audio_dsp_links
-    wait "$pidid" 2>/dev/null || true
-    rm -rf "$tmp"
-    printf '   expected: x20-test-7.1-speaker-surround -> x20-speakers-surround,\n'
-    printf '             x20-speakers-surround.output -> x20-speakers, x20-speakers.output -> hardware Speaker sink\n'
 }

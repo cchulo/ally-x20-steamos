@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Component power (docs/power.md): adds the ROG Xbox Ally X20 (RC74XA) to
+# steamos-manager's device files until SteamOS ships the entry itself.
+# Copies the stock /usr/share/steamos-manager/devices into
+# /run/ally-x20-steamos/steamos-manager-devices, adds
+# /etc/ally-x20-steamos/steamos-manager/90-ally-x20-steamos-rc74xa.toml and
+# bind-mounts the copy over the stock directory (read-only). Nothing on /usr
+# is written. When a stock file already lists RC74XA the unit mounts nothing.
+#
+# Both steamos-manager daemons read the device files once, at start: the
+# system one (steamos-manager.service, root) and the per-user one started
+# with the graphical session. The unit therefore runs before the system
+# daemon and before any login (systemd-user-sessions.service). Being wanted
+# by steamos-manager.service also covers a D-Bus activation of the daemon
+# that happens before multi-user.target.
+[Unit]
+Description=ally-x20-steamos: add the ROG Xbox Ally X20 to steamos-manager's device files
+Documentation=file:///var/lib/ally-x20-steamos/src/docs/power.md
+After=local-fs.target
+Before=steamos-manager.service systemd-user-sessions.service display-manager.service graphical.target
+ConditionPathExists=/etc/ally-x20-steamos/steamos-manager-devices-shim
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/etc/ally-x20-steamos/steamos-manager-devices-shim start
+ExecStop=/etc/ally-x20-steamos/steamos-manager-devices-shim stop
+TimeoutStartSec=30s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target steamos-manager.service

@@ -223,6 +223,128 @@ update_root() {
     assert_failure 1
 }
 
+# ------------------------------------------- factory-reset fail-safe --
+
+CLEANUP_REL=/efi/EFI/steamos/ally-x20-steamos-cleanup.sh
+RESET_UNIT=ally-x20-steamos-reset-cleanup.service
+
+@test "update component: installs the EFI clean-up script and the reset-cleanup unit, recorded in the manifest" {
+    update_root
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply --only update
+    assert_success
+    r=$AX20_ROOT
+    cmp "$r$CLEANUP_REL" "$REPO_ROOT/uninstall/efi-cleanup.sh"
+    cmp "$r/etc/systemd/system/$RESET_UNIT" "$REPO_ROOT/overlay/systemd/$RESET_UNIT"
+    [ "$(readlink "$r/etc/systemd/system/multi-user.target.wants/$RESET_UNIT")" = "../$RESET_UNIT" ]
+    source_libs
+    for p in "$CLEANUP_REL" "/etc/systemd/system/$RESET_UNIT" "/etc/systemd/system/multi-user.target.wants/$RESET_UNIT"; do
+        [ "$(manifest_entry_get "$(manifest_entry "$p")" component)" = update ]
+        manifest_verify "$p"
+    done
+    [ "$(manifest_entry_get "$(manifest_entry "$CLEANUP_REL")" slot)" = esp ]
+    # Idempotent, and the component stays active.
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply --only update
+    assert_success
+    [ "$(jq -r '.components[] | select(.name == "update") | .status' "$r/var/lib/ally-x20-steamos/state/status.json")" = active ]
+}
+
+@test "update component: an existing install gets the new files on apply; a missing copy is re-applied at boot" {
+    update_root
+    "$FAKE_CLI" --root "$AX20_ROOT" apply --only update 2>/dev/null
+    source_libs
+    # Simulate an install from before this change.
+    rm -f "$AX20_ROOT$CLEANUP_REL" "$AX20_ROOT/etc/systemd/system/$RESET_UNIT" \
+        "$AX20_ROOT/etc/systemd/system/multi-user.target.wants/$RESET_UNIT"
+    manifest_forget "$CLEANUP_REL"
+    manifest_forget "/etc/systemd/system/$RESET_UNIT"
+    manifest_forget "/etc/systemd/system/multi-user.target.wants/$RESET_UNIT"
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply
+    assert_success
+    [ -f "$AX20_ROOT$CLEANUP_REL" ]
+    [ -L "$AX20_ROOT/etc/systemd/system/multi-user.target.wants/$RESET_UNIT" ]
+    # Lost from the efi partition: the boot service puts it back.
+    rm -f "$AX20_ROOT$CLEANUP_REL"
+    run "$FAKE_CLI" --root "$AX20_ROOT" boot
+    assert_success
+    cmp "$AX20_ROOT$CLEANUP_REL" "$REPO_ROOT/uninstall/efi-cleanup.sh"
+}
+
+@test "update component: the clean-up script goes only where the grub directory exists" {
+    fixture_partsets A
+    fixture_rauc_conf 1
+    fake_src self-update rebuild
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply --only update
+    assert_success
+    [ ! -e "$AX20_ROOT/efi" ]
+    [ -f "$AX20_ROOT/etc/systemd/system/$RESET_UNIT" ]
+}
+
+@test "update component: apply --slot puts the clean-up script on that slot's efi partition" {
+    update_root
+    slot="$BATS_TEST_TMPDIR/slotB"
+    mkdir -p "$slot/var/lib/ally-x20-steamos" "$slot/etc" "$slot/efi/EFI/steamos"
+    cp "$AX20_ROOT/efi/EFI/steamos/grub.cfg" "$slot/efi/EFI/steamos/grub.cfg"
+    cp -R "$AX20_ROOT/etc/rauc" "$slot/etc/"
+    AX20_SLOT=B run "$FAKE_CLI" apply --slot "$slot" --only update
+    assert_success
+    cmp "$slot$CLEANUP_REL" "$REPO_ROOT/uninstall/efi-cleanup.sh"
+    grep -q "\"path\":\"$CLEANUP_REL\"" "$slot/var/lib/ally-x20-steamos/manifest"
+    [ ! -e "$AX20_ROOT$CLEANUP_REL" ]
+}
+
+@test "update component: a leftover copy from an earlier install is replaced, a foreign file is not" {
+    update_root
+    printf '#!/bin/sh\n# ally-x20-steamos EFI clean-up: an older version\n' >"$AX20_ROOT$CLEANUP_REL"
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply --only update
+    assert_success
+    assert_output_contains "replacing a leftover"
+    cmp "$AX20_ROOT$CLEANUP_REL" "$REPO_ROOT/uninstall/efi-cleanup.sh"
+    # Someone else's file under our name without our header: refused.
+    source_libs
+    manifest_forget "$CLEANUP_REL"
+    printf 'not ours\n' >"$AX20_ROOT$CLEANUP_REL"
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply --only update
+    assert_failure
+    [ "$(cat "$AX20_ROOT$CLEANUP_REL")" = "not ours" ]
+}
+
+@test "update component: uninstall removes the clean-up script, the unit and its link" {
+    update_root
+    "$FAKE_CLI" --root "$AX20_ROOT" boot-entry set --arg acpi_override=1 \
+        --initrd /efi/EFI/steamos/ally-x20-steamos-acpi.img 2>/dev/null
+    "$FAKE_CLI" --root "$AX20_ROOT" apply --only update 2>/dev/null
+    [ -f "$AX20_ROOT$CLEANUP_REL" ]
+    run "$FAKE_CLI" --root "$AX20_ROOT" uninstall
+    assert_success
+    [[ "$output" != *REFUSED* ]]
+    [ ! -e "$AX20_ROOT$CLEANUP_REL" ]
+    [ ! -e "$AX20_ROOT/etc/systemd/system/$RESET_UNIT" ]
+    [ ! -L "$AX20_ROOT/etc/systemd/system/multi-user.target.wants/$RESET_UNIT" ]
+    cmp "$AX20_ROOT/efi/EFI/steamos/grub.cfg" "$BATS_TEST_TMPDIR/grub.pristine"
+    # Stock EFI files stay.
+    [ -d "$AX20_ROOT/efi/EFI/steamos" ]
+}
+
+@test "reset-cleanup unit: oneshot armed at boot, stop runs the clean-up only for a pending reset" {
+    u="$REPO_ROOT/overlay/systemd/$RESET_UNIT"
+    head -n 1 "$u" | grep -q '^# SPDX-License-Identifier: GPL-2.0-only$'
+    grep -qx 'Type=oneshot' "$u"
+    grep -qx 'RemainAfterExit=yes' "$u"
+    grep -qx 'ExecStart=/bin/true' "$u"
+    grep -qx 'ExecStop=-/bin/sh /var/lib/ally-x20-steamos/src/uninstall/efi-cleanup.sh --if-reset-pending --all-slots --keep' "$u"
+    grep -qx 'TimeoutStopSec=20s' "$u"
+    grep -qx 'After=local-fs.target efi.automount esp.automount' "$u"
+    grep -qx 'ConditionPathExists=/var/lib/ally-x20-steamos/src/uninstall/efi-cleanup.sh' "$u"
+    grep -qx 'WantedBy=multi-user.target' "$u"
+    # Never pin the automounted partitions (an idle expiry would stop us early).
+    ! grep -q '^RequiresMountsFor=' "$u"
+    ! grep -q '^Requires=' "$u"
+    # The paths it runs exist in the checkout layout the boot service uses.
+    [ -f "$REPO_ROOT/uninstall/efi-cleanup.sh" ]
+    grep -q '^ExecStart=/var/lib/ally-x20-steamos/src/ally-x20-steamos.sh boot$' \
+        "$REPO_ROOT/overlay/systemd/ally-x20-steamos.service"
+}
+
 @test "notify: prints a summary, and shows each distinct summary once" {
     fake_src
     mkdir -p "$AX20_ROOT/var/lib/ally-x20-steamos/state"

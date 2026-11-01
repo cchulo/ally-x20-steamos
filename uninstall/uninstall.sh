@@ -297,6 +297,218 @@ remove_dir() {
     act "rmdir $1" rmdir "$real" && REMOVED=$((REMOVED + 1))
 }
 
+# --------------------------------------------------------- boot entries --
+# lib/slots.sh modifies the slot's boot entry (stage-2 grub.cfg on the efi
+# partition, or a BLS entry on the ESP) by prepending marker comments
+#   # ally-x20-steamos: boot entry modified by ...
+#   # ally-x20-steamos-args: <kernel args appended to the kernel line>
+#   # ally-x20-steamos-initrd: <early initrd token inserted first>
+#   # ally-x20-steamos-noeol: 0|1   (original had no final newline)
+#   # ally-x20-steamos-orig-sha256: <sha256 of the original entry>
+# and only appending the args / inserting the initrd token. The original is
+# therefore recoverable from the live file alone, which matters when the
+# saved copy is gone (state dir deleted, factory reset wiped /var but not
+# the efi partitions). entry_strip mirrors _slots_strip in lib/slots.sh;
+# keep the two in step.
+ENTRY_GRUB=/efi/EFI/steamos/grub.cfg
+ENTRY_GRUB_DIR=/efi/EFI/steamos
+ENTRY_BLS_DIR=/esp/loader/entries
+ENTRY_MARK="# $NAME"
+HANDLED_ENTRIES=""  # entries the backup pass looked at (newline separated)
+RESTORED_ENTRIES="" # entries restored, or that a dry run would restore
+
+# entry_mark_get <real-file> <key> : value of one marker line (may be empty).
+entry_mark_get() {
+    sed -n "s/^$ENTRY_MARK-$2: //p" "$1" | head -n 1
+}
+
+# entry_is_modified <real-file> : carries the lib/slots.sh marker.
+entry_is_modified() {
+    [ -f "$1" ] && grep -q "^$ENTRY_MARK-args:" "$1" 2>/dev/null
+}
+
+# entry_format </abs/path> : grub | bls (empty when neither).
+entry_format() {
+    case "$1" in
+        *.cfg) echo grub ;;
+        *.conf) echo bls ;;
+    esac
+}
+
+# in_list <item> <newline-separated list>
+in_list() {
+    printf '%s\n' "$2" | grep -Fxq -- "$1"
+}
+
+# entry_strip <real-file> <grub|bls> : print the entry without our edits.
+entry_strip() {
+    awk -v fmt="$2" -v mark="$ENTRY_MARK" \
+        -v args="$(entry_mark_get "$1" args)" \
+        -v ref="$(entry_mark_get "$1" initrd)" \
+        -v noeol="$(entry_mark_get "$1" noeol)" '
+        function kw(n) { return (NF >= n) ? $n : "" }
+        function endswith(s, t) { return length(t) > 0 && length(s) >= length(t) && substr(s, length(s) - length(t) + 1) == t }
+        function emit(s) { if (n++) printf "\n"; printf "%s", s }
+        index($0, mark ":") == 1 || index($0, mark "-") == 1 { next }
+        {
+            line = $0
+            if (fmt == "grub") {
+                if ((kw(1) ~ /^linux(efi)?$/ || kw(2) ~ /^linux(efi)?$/) && args != "" && endswith(line, " " args)) {
+                    line = substr(line, 1, length(line) - length(args) - 1)
+                } else if (ref != "" && (kw(1) ~ /^initrd(efi)?$/ || kw(2) ~ /^initrd(efi)?$/)) {
+                    i = index(line, ref " ")
+                    if (i > 0) line = substr(line, 1, i - 1) substr(line, i + length(ref) + 1)
+                }
+            } else {
+                if (kw(1) == "options" && args != "" && endswith(line, " " args)) {
+                    line = substr(line, 1, length(line) - length(args) - 1)
+                } else if (ref != "" && line == "initrd " ref && !done) {
+                    done = 1
+                    next
+                }
+            }
+            emit(line)
+        }
+        END { if (n && noeol != 1) printf "\n" }' "$1"
+}
+
+# entry_regenerate </abs/path> : rebuild the original entry from the marker
+# data and write it in place (temp file on the same filesystem, rename,
+# sync). The result is checked against the recorded orig-sha256; a mismatch
+# still writes the stripped entry (it no longer carries anything of ours)
+# but says so, like slots_entry_restore. Never touches a file without our
+# marker.
+entry_regenerate() {
+    rp=$1
+    real=$(rpath "$rp")
+    RESTORED_ENTRIES="$RESTORED_ENTRIES
+$rp"
+    if [ -L "$real" ] || ! entry_is_modified "$real"; then
+        log "restore $rp: no $NAME marker; leaving it alone"
+        return 0
+    fi
+    fmt=$(entry_format "$rp")
+    if [ -z "$fmt" ]; then
+        warn "restore $rp: unknown boot entry format; not regenerating"
+        SKIPPED=$((SKIPPED + 1))
+        return 1
+    fi
+    want=$(entry_mark_get "$real" orig-sha256)
+    stripped=$(mktemp "${TMPDIR:-/tmp}/$NAME-entry.XXXXXX") || fatal "mktemp failed"
+    if ! entry_strip "$real" "$fmt" >"$stripped"; then
+        rm -f "$stripped"
+        warn "restore $rp: could not strip our edits; left unchanged"
+        SKIPPED=$((SKIPPED + 1))
+        return 1
+    fi
+    got=$(sha256_of "$stripped")
+    if [ -n "$want" ] && [ "$got" = "$want" ]; then
+        match="matches the recorded original digest"
+    elif [ -n "$want" ]; then
+        match="differs from the recorded original digest"
+    else
+        match="no original digest recorded"
+    fi
+    if [ "$DRY" = 1 ]; then
+        rm -f "$stripped"
+        printf '[dry-run] regenerate %s from the %s marker (%s)\n' "$rp" "$NAME" "$match"
+        return 0
+    fi
+    tmp=$(mktemp "$real.XXXXXX") || {
+        rm -f "$stripped"
+        fatal "mktemp failed next to $rp"
+    }
+    if ! cat "$stripped" >"$tmp"; then
+        rm -f "$stripped" "$tmp"
+        warn "restore $rp: cannot write $tmp; left unchanged"
+        SKIPPED=$((SKIPPED + 1))
+        return 1
+    fi
+    rm -f "$stripped"
+    # vfat has no modes; elsewhere keep the live file's.
+    chmod --reference="$real" "$tmp" 2>/dev/null || chmod 0644 "$tmp" 2>/dev/null || true
+    if ! mv -f "$tmp" "$real"; then
+        rm -f "$tmp"
+        warn "restore $rp: cannot rename into place; left unchanged"
+        SKIPPED=$((SKIPPED + 1))
+        return 1
+    fi
+    if command -v sync >/dev/null 2>&1; then sync 2>/dev/null || true; fi
+    REMOVED=$((REMOVED + 1))
+    if [ -n "$want" ] && [ "$got" != "$want" ]; then
+        warn "regenerated entry $rp differs from the recorded original digest (changed since we modified it?); keeping the stripped version"
+    else
+        log "restore $rp: regenerated the original entry from the $NAME marker ($match)"
+    fi
+    return 0
+}
+
+# entry_candidates : root-relative paths of the boot entries lib/slots.sh may
+# have modified, whether or not a backup exists for them.
+entry_candidates() {
+    [ -f "$(rpath "$ENTRY_GRUB")" ] && printf '%s\n' "$ENTRY_GRUB"
+    for f in "$(rpath "$ENTRY_BLS_DIR")"/*.conf; do
+        [ -f "$f" ] && printf '%s\n' "${f#"$ROOT"}"
+    done
+    return 0
+}
+
+# restore_orphan_entries : boot entries that carry our marker but had no
+# backup record at all (the state dir is gone) are regenerated from the
+# marker. Part of component "update", which owns the boot entry.
+restore_orphan_entries() {
+    component_selected update || return 0
+    list=$(entry_candidates)
+    old_ifs=$IFS
+    IFS='
+'
+    for rp in $list; do
+        IFS=$old_ifs
+        in_list "$rp" "$HANDLED_ENTRIES" && continue
+        entry_is_modified "$(rpath "$rp")" || continue
+        warn "boot entry $rp carries the $NAME marker but no saved original exists; regenerating the original entry from the marker"
+        entry_regenerate "$rp"
+    done
+    IFS=$old_ifs
+}
+
+# entry_referencing </abs/image-path> : print the boot entry that still
+# points at this early initrd through our marker (none: return 1). An entry
+# a dry run would restore does not count.
+entry_referencing() {
+    img=$1
+    list=$(entry_candidates)
+    old_ifs=$IFS
+    IFS='
+'
+    for rp in $list; do
+        IFS=$old_ifs
+        real=$(rpath "$rp")
+        entry_is_modified "$real" || continue
+        if [ "$DRY" = 1 ] && in_list "$rp" "$RESTORED_ENTRIES"; then continue; fi
+        ref=$(entry_mark_get "$real" initrd)
+        [ -n "$ref" ] || continue
+        case "$(entry_format "$rp")" in
+            grub)
+                # shellcheck disable=SC2016  # a literal GRUB variable
+                case "$ref" in
+                    '${cmdpath}/'*) abs="$ENTRY_GRUB_DIR/${ref#'${cmdpath}/'}" ;;
+                    *) continue ;;
+                esac
+                ;;
+            bls) abs="/esp$ref" ;;
+            *) continue ;;
+        esac
+        if [ "$abs" = "$img" ]; then
+            IFS=$old_ifs
+            printf '%s\n' "$rp"
+            return 0
+        fi
+    done
+    IFS=$old_ifs
+    return 1
+}
+
 # ------------------------------------------------------------- backups --
 # Saved originals live in <state>/backup/<id>/ with:
 #   original   the stock file bytes as they were before we touched them
@@ -305,6 +517,9 @@ remove_dir() {
 # type=block : remove our delimited block from the live file; if the result
 #              equals 'original' nothing else to do, otherwise keep the
 #              stripped file (Valve may have changed it since) and say so.
+# A boot entry carrying the lib/slots.sh marker whose saved copy is missing,
+# corrupt or older than the entry is regenerated from the marker instead
+# (entry_regenerate).
 # Backups are restored before the manifest walk so a restored stock file is
 # never mistaken for one of ours.
 restore_backups() {
@@ -366,6 +581,8 @@ restore_backups() {
                 ;;
         esac
         real=$(rpath "$bpath")
+        HANDLED_ENTRIES="$HANDLED_ENTRIES
+$bpath"
         case "$btype" in
             block)
                 if [ ! -f "$real" ]; then
@@ -396,15 +613,39 @@ restore_backups() {
                 REMOVED=$((REMOVED + 1))
                 ;;
             file | '')
+                # A boot entry modified by lib/slots.sh can always be rebuilt
+                # from its marker, so an unusable saved copy is not fatal.
+                marked=0
+                [ -L "$real" ] || ! entry_is_modified "$real" || marked=1
                 if [ ! -f "$borig" ]; then
+                    if [ "$marked" = 1 ]; then
+                        warn "backup $bpath: saved original missing; regenerating the original entry from the $NAME marker"
+                        entry_regenerate "$bpath"
+                        continue
+                    fi
                     warn "backup $bpath: saved original missing; cannot restore (regenerate it from the stock template with the CLI if available)"
                     SKIPPED=$((SKIPPED + 1))
                     continue
                 fi
                 if [ -n "$bsha" ] && [ "$(sha256_of "$borig")" != "$bsha" ]; then
+                    if [ "$marked" = 1 ]; then
+                        warn "backup $bpath: saved original is corrupt (hash mismatch); regenerating the original entry from the $NAME marker"
+                        entry_regenerate "$bpath"
+                        continue
+                    fi
                     warn "backup $bpath: saved original is corrupt (hash mismatch); not restoring"
                     SKIPPED=$((SKIPPED + 1))
                     continue
+                fi
+                if [ "$marked" = 1 ]; then
+                    want=$(entry_mark_get "$real" orig-sha256)
+                    if [ -n "$want" ] && [ "$(sha256_of "$borig")" != "$want" ]; then
+                        # The saved copy predates a stock regeneration of the
+                        # entry; the stripped live entry is the faithful original.
+                        warn "backup $bpath: saved original is older than the current entry; regenerating instead"
+                        entry_regenerate "$bpath"
+                        continue
+                    fi
                 fi
                 if [ -f "$real" ] && [ "$(sha256_of "$real")" = "$(sha256_of "$borig")" ]; then
                     log "restore $bpath: already identical to saved original"
@@ -416,6 +657,8 @@ restore_backups() {
                     log "restore $bpath: current file carries no $NAME change; leaving it alone"
                     continue
                 fi
+                RESTORED_ENTRIES="$RESTORED_ENTRIES
+$bpath"
                 if [ "$DRY" = 1 ]; then
                     printf '[dry-run] restore %s from backup\n' "$bpath"
                     continue
@@ -425,6 +668,7 @@ restore_backups() {
                 cp "$borig" "$tmp"
                 [ -f "$real" ] && chmod --reference="$real" "$tmp" 2>/dev/null
                 mv -f "$tmp" "$real"
+                if command -v sync >/dev/null 2>&1; then sync 2>/dev/null || true; fi
                 log "restore $bpath: restored byte-for-byte from backup"
                 REMOVED=$((REMOVED + 1))
                 ;;
@@ -546,7 +790,7 @@ main() {
     state=$(rpath "/var/lib/$NAME")
     manifest="$state/manifest"
     if [ ! -f "$manifest" ]; then
-        warn "no manifest at $manifest (nothing installed, or the state dir is gone); only backups can be restored"
+        warn "no manifest at $manifest (nothing installed, or the state dir is gone); only backups and marked boot entries can be restored"
     fi
 
     if [ "$YES" != 1 ] && [ "$DRY" != 1 ]; then
@@ -562,8 +806,13 @@ main() {
     # 0. Live mounts (component power) go before the files behind them.
     release_power_mount
 
-    # 1. Restore saved originals (boot entry, rauc block).
+    # 1. Restore saved originals (boot entry, rauc block), then boot entries
+    #    that still carry our marker without any backup record (state dir
+    #    gone, e.g. after a factory reset): before the manifest walk, so the
+    #    early initrd an entry points at is removed only once nothing
+    #    references it any more.
     restore_backups
+    restore_orphan_entries
 
     # 2. Files and symlinks, newest first; 3. directories, deepest first.
     dirs=""
@@ -604,6 +853,15 @@ $path"
                         SKIPPED=$((SKIPPED + 1))
                         continue
                     fi
+                    case "$kind:$path" in
+                        file:/efi/* | file:/esp/*)
+                            if ref_by=$(entry_referencing "$path"); then
+                                warn "skip $path: boot entry $ref_by still loads it as early initrd (restore the entry first: uninstall component update too, or run a full uninstall)"
+                                SKIPPED=$((SKIPPED + 1))
+                                continue
+                            fi
+                            ;;
+                    esac
                     if [ "$kind" = file ]; then
                         remove_file "$path" "$sha"
                     else

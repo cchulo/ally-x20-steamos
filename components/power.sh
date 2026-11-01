@@ -87,7 +87,9 @@ _power_install_rendered() {
 }
 
 # power_write_settings [on|off] : rewrite power.conf with the given value,
-# or the current one.
+# or the current one. cmd/power.sh passes the argument; shellcheck sees only
+# this file.
+# shellcheck disable=SC2120
 power_write_settings() {
     local v=${1:-$(power_tdp_slider)}
     printf '%s\n' \

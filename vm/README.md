@@ -13,7 +13,6 @@ scripts, and the host options, are in [`docs/vm-testing.md`](../docs/vm-testing.
 | `guest/collect-hardware-data.sh` | VM or X20 | plan §7 command list into a tarball |
 | `guest/measure-etc-survival.sh` | VM | which `/etc` paths survive an A/B update → `docs/etc-survival.md` |
 | `guest/roundtrip-test.sh` | VM | install → status → uninstall must leave the system byte-identical |
-| `guest/measure-speaker-chain.sh` | X20 (as the desktop user) | peak dBFS and clipped samples of the speaker chain with a worst-case 7.1 file → `docs/audio-dsp.md` "Headroom" |
 | `ci/make-base-image.sh` | Fedora host | one-time, manual production of the CI base image |
 | `ci/vm-ci.sh` | CI / host | the steps `.github/workflows/vm-tests.yml` runs |
 

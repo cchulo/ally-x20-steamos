@@ -7,6 +7,8 @@
 # install time and works without this checkout.
 # shellcheck source=lib/component.sh
 . "$AX20_SRC/lib/component.sh"
+# shellcheck source=lib/retired.sh
+. "$AX20_SRC/lib/retired.sh"
 
 cmd_uninstall() {
     local superseded=0 force=0 keep_state=0 reboot=0 comps="" c rc st args
@@ -58,9 +60,19 @@ USAGE
     fi
     comps=${comps# }
 
+    # Components this version no longer ships (lib/retired.sh): they have no
+    # hook, but their own cleanup (state files, restarting the user's audio)
+    # runs here; whatever it keeps is left to the uninstaller below.
+    for c in ${comps:-$AX20_RETIRED_COMPONENTS}; do
+        component_exists "$c" && continue
+        retired_is "$c" || die 2 "unknown component: $c"
+        [ -n "$(manifest_paths "$c" | head -n 1)" ] || continue
+        retired_prune "$c" || true
+    done
+
     # Component hooks (stop services, remove caches) — only for installed ones.
     for c in ${comps:-$(component_list)}; do
-        component_exists "$c" || die 2 "unknown component: $c"
+        component_exists "$c" || continue
         if component_installed "$c"; then
             component_remove_hook "$c" || log_warn "$c: remove hook failed; continuing"
         fi

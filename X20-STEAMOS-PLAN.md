@@ -109,9 +109,18 @@ stoneharborent/aquarius-os PR #40, anatase-org/kernel-anatase 7.2.7-an22):
   `/etc/ld.so.conf.d/`; explicitly does not patch gamescope. ITM/auto-HDR and
   brightness differences in Game Mode are separate and not covered here.
 
-### 1.5 Virtual surround for headphones + speaker chain (PipeWire, userspace, /home only)
-**Required component, installed by default** (user can disable with
-`ally-x20-steamos.sh audio-dsp off`; it is not an opt-in extra).
+### 1.5 Virtual surround for headphones + speaker chain (PipeWire, userspace, /home only) — REMOVED 2026-11-01
+**Removed (2026-11-01, owner):** in a level-matched A/B at 80 % on the
+device (Resident Evil 2 and 9) the raw speakers beat `x20-speakers` and the
+raw jack beat the hybrid `x20-headphones`; raw is also what stock SteamOS,
+Anatase and Bazzite ship on this hardware. The component, its command, its
+overlay, the libmysofa fallback and their tests are gone; `apply` removes
+the files from older installs (`lib/retired.sh`). What follows is the
+original plan and its history, kept for reference; summary, lessons and the
+last commit with the code in docs/audio-dsp-history.md.
+
+**Was: required component, installed by default** (user could disable it
+with `ally-x20-steamos.sh audio-dsp off`).
 Goal: binaural 3D audio over headphones that renders exactly what the game
 outputs — stereo stays bit-identical stereo, 5.1 → virtual 5.1, 7.1 →
 virtual 7.1. Decided per stream, automatically. No vendor DSP (Dolby/Nahimic)
@@ -148,7 +157,8 @@ Pieces (all user-session config, survive updates, trivially reversible):
    (2026-10-31):** a parametric RACE version shipped briefly as
    `x20-speakers-surround`; the owner found it muffled on the device
    ("like sand in my ears") and `x20-speakers` crisper. Findings and what a
-   better attempt would need in docs/xtc-notes.md.
+   better attempt would need in docs/xtc-notes.md (now in git history, see
+   docs/audio-dsp-history.md).
 Requirements: SteamOS PipeWire built with `libmysofa` (check:
 `strings /usr/lib/pipewire-0.3/libpipewire-module-filter-chain.so | grep -i sofa`
 and `ls /usr/lib/libmysofa.so*`). If absent, ship libmysofa under
@@ -167,7 +177,7 @@ always wins; `speakers-precedence off` / `headphones-virtual-surround off`
 opt out. The speaker chain output is pinned to the hardware speaker sink,
 and the HRTF outputs only link to available headphones. Reason:
 an unpinned output followed the fallback to the unplugged jack sink
-(silence). Details in docs/audio-dsp.md.
+(silence). Details in docs/audio-dsp.md (git history).
 **Changed again (2026-10-31, owner):** one headphone sink, `x20-headphones`
 (7.1, conf `50-x20-headphones.conf`), replaces `x20-virtual-surround-71` and
 the 5.1 sink of item 1: a 5.1 stream on the 7.1 sink fills FL FR FC LFE
@@ -252,14 +262,8 @@ ally-x20-steamos/
 │   ├── systemd/inputplumber.service.d/50-ally-x20-steamos.conf  # FALLBACK ONLY: ExecStart override
 │   ├── ld.so.conf.d/00-ally-x20-steamos.conf      # selects /var/lib/ally-x20-steamos/lib (libdisplay-info)
 │   ├── bin/gamescope                         # wrapper: run our build if it accepts the session's flags, else stock
-│   ├── rauc/post-install.hook                # re-apply to freshly staged slot
-│   └── home/                                 # per-user files installed into ~ (audio DSP, required)
-│       ├── pipewire/pipewire.conf.d/50-x20-headphones.conf
-│       ├── pipewire/pipewire.conf.d/51-x20-speaker-chain.conf
-│       ├── pipewire/pipewire-pulse.conf.d/50-x20-no-upmix.conf
-│       ├── pipewire/client.conf.d/50-x20-no-upmix.conf
-│       ├── wireplumber/scripts/x20-route-by-channels.lua
-│       └── hrtf/*.sofa                       # 2–3 HRTF sets, licenses noted in LICENSE.md
+│   └── rauc/post-install.hook                # re-apply to freshly staged slot
+│                                             # (home/, the audio DSP files: removed 2026-11-01, §1.5)
 ├── acpi/
 │   ├── dump-dsdt.md                # how to dump from Windows (acpidump) or Linux
 │   ├── patch-acp-flag.py           # clears acp-audio-config-flag, rebuilds cpio for early initrd
@@ -271,7 +275,7 @@ ally-x20-steamos/
 │   ├── slots.sh                    # active/other slot, boot-entry save/restore
 │   ├── probes.sh                   # "does stock SteamOS now have X?" checks (see §5)
 │   └── modules.sh                  # version-gated substitution logic
-├── ally-x20-steamos.sh                       # install | apply | status | rebuild | probe | self-update | audio-dsp on|off | uninstall [--superseded]
+├── ally-x20-steamos.sh                       # install | apply | status | rebuild | probe | self-update | uninstall [--superseded]
 ├── vm/
 │   ├── README.md
 │   ├── setup-fedora-host.sh        # one-shot KVM/podman/tooling setup for the Fedora dev box
@@ -318,7 +322,7 @@ Consequences for each of our pieces:
 | Piece | Effect of an update | Survives? |
 |---|---|---|
 | `/var/lib/ally-x20-steamos/**` (modules, firmware, UCM, libs, cache, manifest) | `/var` is shared between slots | yes |
-| `/home/**` (audio DSP config, HRTFs) | `/home` is shared | yes |
+| `/home/**` (audio DSP config, HRTFs; removed 2026-11-01) | `/home` is shared | yes |
 | `/opt/ally-x20-steamos/**` (gamescope build; InputPlumber only in fallback) | `/opt` is on `/var` on SteamOS — confirm in VM; if not, move under `/var/lib/ally-x20-steamos` and symlink | yes (to confirm) |
 | `/etc/**` (modprobe.d, environment.d, ld.so.conf.d, systemd units) | new slot gets a fresh `/etc` from the image + a whitelist/overlay of the old one; which of our files survive must be measured in the VM, not assumed | partially |
 | `/usr/**` (never written by us) | replaced | n/a |
@@ -390,7 +394,7 @@ simply retried by the service on first boot.
 - The boot service checks for new tags at most once a day (opt-out flag),
   notifies, never auto-installs outside the update path above.
 - Decky plugin (later milestone, optional): thin UI over `status`,
-  `rebuild`, `self-update`, `audio-dsp on|off`, `update-policy`, so none of
+  `rebuild`, `self-update`, `update-policy`, so none of
   this needs Desktop Mode.
 
 ### 4.5 Build environment and build inputs on the device
@@ -605,8 +609,7 @@ distro kernel on Virtualization.framework and cannot boot the SteamOS ISO).
   `sudo dnf install -y qemu-kvm qemu-img edk2-ovmf virt-install libvirt
   podman git shellcheck bats python3-pytest acpica-tools swtpm`
   `sudo usermod -aG libvirt,kvm $USER` (re-login), verify `/dev/kvm` and
-  `podman info` as the user. Optional: `libmysofa`/`pipewire-utils` for
-  local audio-chain experiments outside the VM. Keep the SteamOS base disk
+  `podman info` as the user. Keep the SteamOS base disk
   image under `~/vms/ally-x20-steamos/` and snapshot it (`qemu-img create -b`)
   so every test starts from a known-clean install.
 - Any other x86 Linux box / cloud VM with nested virt: same as above.
@@ -677,13 +680,13 @@ inputplumber devices   # does the stock daemon pick up the X20 controller at all
 for e in /sys/class/drm/*/edid; do echo $e; cat $e > "edid-$(basename $(dirname $e)).bin"; done
 di-edid-decode edid-*.bin        # or edid-decode; confirm DisplayID 2 + HDR metadata block
 gamescope --version; pkg-config --modversion libdisplay-info 2>/dev/null || ls /usr/lib/libdisplay-info.so*
-pipewire --version; ls /usr/lib/libmysofa.so*; strings /usr/lib/pipewire-0.3/libpipewire-module-filter-chain.so | grep -i sofa
-ls /usr/lib/lv2 /usr/lib/ladspa 2>/dev/null       # which DSP plugins SteamOS already ships (LSP? Calf?)
+pipewire --version; wireplumber --version
 ```
 
 Before wiping Windows: record a reference of the X20 speakers (pink noise +
 a sine sweep + a familiar game clip) with a phone at normal playing distance,
-Dolby on and off. This is the tuning target for the speaker chain.
+Dolby on and off. This was the tuning target for the speaker chain (removed
+2026-11-01, §1.5).
 
 ---
 
@@ -700,10 +703,9 @@ Dolby on and off. This is the tuning target for the speaker chain.
 6. HDR: libdisplay-info overlay (Desktop), then gamescope build + wrapper with
    stock fallback (Game Mode); VM check 8.
 7. RAUC hook + boot service; A/B update survival in VM.
-8. Audio DSP (§1.5, required): headphone virtual surround (filter-chain +
-   no-upmix + WirePlumber hook for the headphone outputs; channel-count
-   routing dropped after on-device testing, see §1.5) and the speaker chain; VM-tested with 2ch/5.1/7.1 fixtures and jack-state
-   simulation. Ships in v0.1.
+8. ~~Audio DSP (§1.5)~~: built and shipped, then removed on 2026-11-01
+   after a level-matched A/B on the device (raw won; see §1.5 and
+   docs/audio-dsp-history.md).
 9. First on-device run: collect §7 data, adjust layout/LED findings, release
    v0.1 with CI-built artifacts.
 

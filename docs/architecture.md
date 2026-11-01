@@ -59,7 +59,6 @@ Planned components and the plan sections they implement:
 | `modules` | §1.3, §3 | version-gated kernel module substitution (`load-or-fallback`, generated modprobe.d), staging of built `.ko.zst`, lockdown detection; covers the RGB and Quick Access fixes, which are kernel-only, and the `asus-armoury` power limits ([docs/kernel-modules.md](kernel-modules.md), [docs/rgb.md](rgb.md)) |
 | `inputplumber` | §1.2 | upstream X20 `devices.d` profile (verbatim or adapted to the stock 0.78 daemon), hwdb autostart, opt-in ExecStart fallback ([docs/inputplumber.md](inputplumber.md)) |
 | `hdr` | §1.4 | libdisplay-info 0.3.0 + DisplayID 2 backport via ld.so.conf.d (Desktop Mode), gamescope Lua display profile for the X20 panel (Game Mode on stock gamescope), opt-in custom gamescope behind a stock-fallback wrapper ([docs/hdr.md](hdr.md)) |
-| `audio_dsp` | §1.5 | per-user PipeWire `filter-chain` sinks (speaker chain `x20-speakers` as the automatic default on the speakers, 7.1 headphone sink `x20-headphones`, HRTF on rears and sides, fronts dry), no-upmix, WirePlumber hooks for the automatic default sink, the headphone surround output and the hardware volume rule (sinks under our default at 100 %), HRTF sets ([docs/audio-dsp.md](audio-dsp.md)) |
 | `power` | §1.6 | steamos-manager RC74XA device entry under `/etc/ally-x20-steamos/steamos-manager/` (rendered: power profiles, no TDP slider unless `power tdp-slider on`, setting in `/etc/ally-x20-steamos/power.conf`), the bind-mount shim (`steamos-manager-devices-shim` + `ally-x20-steamos-power-devices.service`, copy in `/run`), status of the asus-armoury limits; the `asus-armoury` module itself is built and loaded by `modules` ([docs/power.md](power.md)) |
 | `update` | §4 | RAUC pre/post-install handlers, `system.conf` delimited block, boot service, user notifier, boot-entry reconcile ([docs/update-survival.md](update-survival.md)) |
 
@@ -67,7 +66,10 @@ Shared libraries behind them: `lib/slots.sh` (A/B slots, boot-entry
 save/edit/restore, other-slot mount), `lib/rauc.sh` (handler registration),
 `lib/modules.sh` (module staging/resolution), `lib/selfupdate.sh` and
 `lib/notify.sh` (release verification, notification queue), `lib/status.sh`
-(the single `status.json` writer).
+(the single `status.json` writer), `lib/retired.sh` (removal of components
+this version no longer ships: `audio_dsp`, removed 2026-11-01, see
+[audio-dsp-history.md](audio-dsp-history.md); `apply` and the boot service
+prune their manifest entries with the uninstaller's rules).
 
 ## 4. State directory and manifest
 

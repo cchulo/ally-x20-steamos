@@ -26,7 +26,6 @@ _status_render_text() {
     printf '  %-24s %s\n' "update policy:" "$_ST_POLICY"
     printf '  %-24s %s\n' "pending reboot check:" "$_ST_PENDING"
     printf '  %-24s %s\n' "last self-update check:" "$(_status_lastcheck_human)"
-    printf '  %-24s %s\n' "audio DSP:" "$_ST_DSP"
     printf '\n%-16s %-11s %s\n' COMPONENT STATUS DESCRIPTION
     if [ -z "$_ST_COMPONENTS" ]; then
         printf '(no components)\n'

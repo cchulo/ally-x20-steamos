@@ -1,7 +1,9 @@
 # Audio: the X20's internal speakers
 
 Component: `audio` (`components/audio.sh`). Kernel module side: `modules`.
-Headphone virtual surround and the speaker DSP chain: `audio_dsp`.
+Audio plays through the hardware sinks as on stock SteamOS (the headphone
+virtual surround and speaker DSP were removed on 2026-11-01, see
+[audio-dsp-history.md](audio-dsp-history.md)).
 
 On stock SteamOS the X20 shows "Dummy Output" or HDMI only. The speakers are
 two TI TAS2783 smart amps on the AMD audio coprocessor's (ACP 7.x) SoundWire

@@ -93,8 +93,7 @@ cap inputplumber-devices 'inputplumber devices; busctl tree org.shadowblip.Input
 cap edid "for e in /sys/class/drm/*/edid; do [ -s \"\$e\" ] || continue; c=\$(basename \"\$(dirname \"\$e\")\"); echo \"\$e\"; cat \"\$e\" > '$dir/edid/'\"edid-\$c.bin\"; done"
 cap edid-decode "for f in '$dir'/edid/*.bin; do [ -f \"\$f\" ] || continue; echo \"== \$f\"; di-edid-decode \"\$f\" 2>&1 || edid-decode \"\$f\"; done"
 cap gamescope-displayinfo 'gamescope --version; pkg-config --modversion libdisplay-info 2>/dev/null || ls -l /usr/lib/libdisplay-info.so*'
-cap pipewire 'pipewire --version; ls -l /usr/lib/libmysofa.so*; strings /usr/lib/pipewire-0.3/libpipewire-module-filter-chain.so | grep -i sofa'
-cap dsp-plugins 'ls /usr/lib/lv2 /usr/lib/ladspa'
+cap pipewire 'pipewire --version; wireplumber --version'
 cap lsmod 'lsmod'
 cap cmdline 'cat /proc/cmdline; bootctl status --no-pager 2>/dev/null | head -n 40'
 cap steamos-branch 'steamos-select-branch -c 2>/dev/null; cat /etc/steamos-release 2>/dev/null'

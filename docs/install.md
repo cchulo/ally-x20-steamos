@@ -1,7 +1,8 @@
 # Installing ally-x20-steamos
 
 This guide covers installing on a ROG Xbox Ally X20 (DMI board `RC74XA`)
-running stock SteamOS. What gets fixed and why is in
+running stock SteamOS. If you are new to the project, start with the
+[user guide](user-guide.md). What gets fixed and why is in
 [`X20-STEAMOS-PLAN.md`](../X20-STEAMOS-PLAN.md). How to undo everything is
 covered by `uninstall` (see the plan, §5).
 
@@ -117,8 +118,7 @@ ally-x20-steamos.sh probe             # has stock SteamOS caught up? (superseded
 
 The header shows the version and commit, the running kernel and whether
 modules are staged for it, the update policy (`block` by default), whether
-a post-update reboot check is pending, the last self-update check, and
-whether the audio DSP is on. Each component is `active` (installed and
+a post-update reboot check is pending, and the last self-update check. Each component is `active` (installed and
 intact), `stock` (not installed or drifted; the boot service re-applies),
 `superseded` (stock SteamOS now provides it; remove ours with
 `uninstall --superseded`), `n/a` (cannot tell on this machine) or `error`.

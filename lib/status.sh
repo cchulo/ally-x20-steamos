@@ -9,7 +9,6 @@
 #     "kernel": { "running": "<kver>", "modules_staged": true|false },
 #     "update_policy": "block|degrade", "pending_reboot_check": true|false,
 #     "last_update_check": { "ts", "result", "ref" } | null,
-#     "audio_dsp": "on|off|not configured|unknown",
 #     "kver": "<kver>", "slot": "A|B|",          # compatibility keys
 #     "<extra key>": "<extra value>", ...        # from the caller
 #     "components": [ { "name", "status", "description" }, ... ]
@@ -31,39 +30,7 @@
 
 # Collected facts, filled by status_collect (plain variables: bash 3.2).
 _ST_VERSION="" _ST_COMMIT="" _ST_KVER="" _ST_MODULES="" _ST_POLICY="" _ST_PENDING=""
-_ST_LASTCHECK="" _ST_DSP="" _ST_COMPONENTS=""
-
-# status_deck_home : home directory of the deck user inside the root.
-status_deck_home() {
-    local h=""
-    if [ -n "${AX20_DECK_HOME:-}" ]; then
-        printf '%s\n' "$AX20_DECK_HOME"
-        return 0
-    fi
-    if [ -f "$(ax20_path /etc/passwd)" ]; then
-        h=$(awk -F: '$1 == "deck" { print $6; exit }' "$(ax20_path /etc/passwd)")
-    fi
-    printf '%s\n' "${h:-/home/deck}"
-}
-
-# status_audio_dsp : on | off | not configured | unknown, from the file the
-# audio_dsp component writes (~deck/.config/ally-x20-steamos/audio-dsp.conf).
-# Accepted keys: enabled= / state= / dsp= with on|off|1|0|true|false|yes|no.
-status_audio_dsp() {
-    local f v
-    f=$(ax20_path "$(status_deck_home)/.config/${AX20_NAME}/audio-dsp.conf")
-    if [ ! -f "$f" ]; then
-        printf 'not configured\n'
-        return 0
-    fi
-    v=$(sed -nE 's/^[[:space:]]*(enabled|state|dsp)[[:space:]]*=[[:space:]]*"?([A-Za-z0-9]*).*/\2/p' "$f" | head -n1)
-    [ -n "$v" ] || v=$(sed -nE 's/^[[:space:]]*([A-Za-z0-9]+)[[:space:]]*$/\1/p' "$f" | head -n1)
-    case "$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')" in
-        on | 1 | true | yes | enabled) printf 'on\n' ;;
-        off | 0 | false | no | disabled) printf 'off\n' ;;
-        *) printf 'unknown\n' ;;
-    esac
-}
+_ST_LASTCHECK="" _ST_COMPONENTS=""
 
 status_collect() {
     local c st desc
@@ -85,7 +52,6 @@ status_collect() {
         _ST_PENDING=no
     fi
     _ST_LASTCHECK=$(su_read_state last-update-check "")
-    _ST_DSP=$(status_audio_dsp)
     # One "name<TAB>status<TAB>description" line per component. Each runs in
     # a subshell so a broken component cannot abort the whole report.
     _ST_COMPONENTS=""
@@ -120,7 +86,6 @@ status_render_json() {
     else
         printf '  "last_update_check": null,\n'
     fi
-    printf '  "audio_dsp": %s,\n' "$(su_json_str "$_ST_DSP")"
     # Compatibility keys used by apply/boot consumers and tests.
     printf '  "kver": %s,\n' "$(su_json_str "$_ST_KVER")"
     printf '  "slot": %s,\n' "$(su_json_str "$(slots_active 2>/dev/null || true)")"

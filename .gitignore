@@ -9,9 +9,8 @@ build/cache/
 *.img
 *.qcow2
 *.iso
-# Firmware blobs and HRTF sets are downloaded at install time, never committed
+# Firmware blobs are downloaded at install time, never committed
 firmware/*.bin
-overlay/home/hrtf/*.sofa
 # Tooling
 __pycache__/
 .pytest_cache/

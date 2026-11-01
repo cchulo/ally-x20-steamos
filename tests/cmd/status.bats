@@ -65,7 +65,7 @@ install_demo() {
     assert_output_contains "$AX20_KVER"
     assert_output_contains "update policy:           block"
     assert_output_contains "last self-update check:  never"
-    assert_output_contains "audio DSP:               not configured"
+    [[ "$output" != *"audio DSP"* ]]
     echo "$output" | grep -Eq '^demo +stock +demo component$'
 }
 
@@ -91,24 +91,18 @@ install_demo() {
     [[ "$output" != *"looked for demo-native"* ]]
 }
 
-@test "header reads policy, pending check, staged modules, last check, audio DSP" {
+@test "header reads policy, pending check, staged modules, last check" {
     fixture_file "$STATE/state/update-policy" "degrade
 "
     fixture_file "$STATE/state/pending-reboot-check" ""
     fixture_file "$STATE/modules/$AX20_KVER/BUILD-INFO" "commit=abc"
     fixture_file "$STATE/state/last-update-check" "$(printf '2026-10-30T10:00:00Z\t1793354400\tavailable\tv0.2.0')"
-    fixture_file /home/deck/.config/ally-x20-steamos/audio-dsp.conf "enabled=1
-"
     run "$CLI" status
     assert_success
     assert_output_contains "modules staged for it:   yes"
     assert_output_contains "update policy:           degrade"
     assert_output_contains "pending reboot check:    yes"
     assert_output_contains "2026-10-30T10:00:00Z (available v0.2.0)"
-    assert_output_contains "audio DSP:               on"
-    fixture_file /home/deck/.config/ally-x20-steamos/audio-dsp.conf "state=off"
-    run "$CLI" status
-    assert_output_contains "audio DSP:               off"
 }
 
 @test "--json is valid JSON with the same facts, and status.json is written" {
@@ -124,6 +118,8 @@ install_demo() {
     [ "$(json_get "$BATS_TEST_TMPDIR/out.json" .kernel.modules_staged)" = false ]
     [ "$(json_get "$BATS_TEST_TMPDIR/out.json" .update_policy)" = block ]
     [ "$(json_get "$BATS_TEST_TMPDIR/out.json" .last_update_check.result)" = up-to-date ]
+    # the audio DSP (removed 2026-11) has no key any more
+    ! grep -q '"audio_dsp"' "$BATS_TEST_TMPDIR/out.json" || false
     json_ok "$AX20_ROOT$STATE/state/status.json"
     [ "$(json_get "$AX20_ROOT$STATE/state/status.json" .components[0].status)" = active ]
 }

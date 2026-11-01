@@ -28,6 +28,16 @@ SPDX header check skips them.
 | `overlay/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml` | GPL-3.0-or-later | InputPlumber upstream `ally_type2.yaml` capability map (v0.83.0), renamed id |
 | `overlay/steamos-manager/devices/90-ally-x20-steamos-rc74xa.toml` | MIT | [holo/steamos-manager](https://gitlab.steamos.cloud/holo/steamos-manager) `data/devices/rog-ally-series.toml` RC74XA entry (commit `bfbb261ed6b2`), rewritten in the 26.4.1 schema (header in the file) |
 
+## Patches taken from upstream
+
+Kernel patches backported from other trees keep their original `From:`
+author, date and trailers: `0003`-`0006` (Matthew Schwartz, Valve
+`7.2.10-valve1`) and `0020` (Derek J. Clark, mainline `148794d9f0d2`). They
+are GPL-2.0, like the rest of `patches/kernel/`. The gamescope and
+libdisplay-info patches likewise keep their upstream authors and stay under
+the licenses in the table above. The full list of projects and people this
+repository builds on is in the [README's Credits section](README.md#credits).
+
 ## Things we deliberately do not commit
 
 - **TAS2783 amplifier tuning firmware**: downloaded at install time from

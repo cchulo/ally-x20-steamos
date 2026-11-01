@@ -40,7 +40,8 @@ status_collect() {
         _ST_COMMIT=$(git -C "$AX20_SRC" rev-parse --short HEAD)
     fi
     _ST_KVER=$(probe_running_kver 2>/dev/null || echo unknown)
-    if [ -f "$(ax20_path "${AX20_STATE_REL}/modules/${_ST_KVER}/BUILD-INFO")" ]; then
+    # Staged modules live in the early boot dir (/etc), not the state dir.
+    if [ -f "$(ax20_path "${AX20_EARLY_REL}/modules/${_ST_KVER}/BUILD-INFO")" ]; then
         _ST_MODULES=yes
     else
         _ST_MODULES=no

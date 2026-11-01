@@ -95,7 +95,7 @@ install_demo() {
     fixture_file "$STATE/state/update-policy" "degrade
 "
     fixture_file "$STATE/state/pending-reboot-check" ""
-    fixture_file "$STATE/modules/$AX20_KVER/BUILD-INFO" "commit=abc"
+    fixture_file "/etc/ally-x20-steamos/modules/$AX20_KVER/BUILD-INFO" "commit=abc"
     fixture_file "$STATE/state/last-update-check" "$(printf '2026-10-30T10:00:00Z\t1793354400\tavailable\tv0.2.0')"
     run "$CLI" status
     assert_success

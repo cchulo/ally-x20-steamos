@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-2.0-only
--- ally-x20-steamos: link target for the headphone surround outputs
+-- ally-x20-steamos: link target for the headphone surround output
 -- (WirePlumber 0.5).
 --
 -- Installed into ~/.local/share/wireplumber/scripts/ (WirePlumber 0.5 looks

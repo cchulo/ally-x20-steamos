@@ -9,9 +9,9 @@
 -- (default-nodes/find-best-default-node). This hook runs right after that
 -- choice and before it is applied (default-nodes/apply-default-node), and
 -- swaps a hardware choice for its processed counterpart:
---   built-in speakers       -> x20-speakers (x20-speakers-surround with
---                              `audio-dsp stereo-surround on`)
---   headphones: jack, USB,  -> x20-virtual-surround-71, whose output the
+--   built-in speakers       -> x20-speakers-surround (x20-speakers with
+--                              `audio-dsp stereo-surround off`)
+--   headphones: jack, USB,  -> x20-headphones, whose output the
 --   Bluetooth                  route-by-channels hook links to those same
 --                              headphones (one shared classification)
 --   anything else           -> unchanged
@@ -87,7 +87,7 @@ SimpleEventHook {
       {
         speakers_precedence = setting_bool ("x20.speakers_precedence", true),
         headphones_virtual_surround = setting_bool ("x20.headphones_virtual_surround", true),
-        stereo_surround = setting_bool ("x20.stereo_surround", false),
+        stereo_surround = setting_bool ("x20.stereo_surround", true),
         available = available,
       })
 

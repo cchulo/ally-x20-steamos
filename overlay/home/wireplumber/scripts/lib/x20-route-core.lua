@@ -13,11 +13,11 @@
 --
 -- Policy. The user picks the output (the default sink) by hand in Steam:
 -- the hardware speakers or headphones, "X20 Speakers", the speaker virtual
--- surround or one of the headphone surround sinks. Application streams are
+-- surround or the headphone virtual surround ("X20 Headphones"). Application streams are
 -- never routed here; they follow that choice. Only the outputs of our own
 -- filter chains need a target, because their sink is the hardware behind
 -- the virtual one:
---   x20-virtual-surround-71.output, x20-virtual-surround-51.output
+--   x20-headphones.output
 --       (binaural audio, only correct on headphones)
 --       -> the best headphone-class hardware sink: not an x20 sink, and
 --          either its active ALSA route is a headphone/headset route that
@@ -45,8 +45,7 @@
 
 local M = {}
 
-M.SINK_71 = "x20-virtual-surround-71"
-M.SINK_51 = "x20-virtual-surround-51"
+M.SINK_HEADPHONES = "x20-headphones"
 M.SINK_SPEAKERS = "x20-speakers"
 M.SINK_SPEAKERS_SURROUND = "x20-speakers-surround"
 
@@ -60,10 +59,10 @@ function M.is_x20_name (name)
   return type (name) == "string" and name:sub (1, 4) == "x20-"
 end
 
--- is_headphone_output_name (name) : the playback stream of one of the
--- headphone surround sinks.
+-- is_headphone_output_name (name) : the playback stream of the headphone
+-- surround sink.
 function M.is_headphone_output_name (name)
-  return name == M.SINK_71 .. ".output" or name == M.SINK_51 .. ".output"
+  return name == M.SINK_HEADPHONES .. ".output"
 end
 
 -- truthy (v) : WirePlumber property values are strings ("true", "1").
@@ -223,16 +222,16 @@ end
 --                sink = is_headphone_sink () table of that node }
 --   env = { speakers_precedence (bool, nil = true),
 --           headphones_virtual_surround (bool, nil = true),
---           stereo_surround (bool),
+--           stereo_surround (bool, nil = true),
 --           available = { [node.name] = true } (the selectable sinks) }
 -- Policy, automatic choices only (a manual pick always wins):
 --   built-in speakers, or one of our speaker sinks, chosen automatically
---       -> x20-speakers (x20-speakers-surround with stereo_surround), when
---          speakers_precedence; the other speaker sink when the preferred
+--       -> x20-speakers-surround (x20-speakers with stereo_surround
+--          false), when speakers_precedence; the other speaker sink when the preferred
 --          one is not loaded (no sofa plugin or HRTF data)
 --   headphones (jack with its route available, USB, Bluetooth)
---       -> x20-virtual-surround-71, when headphones_virtual_surround
---   anything else (HDMI/DP, line out, our headphone sinks) -> unchanged
+--       -> x20-headphones, when headphones_virtual_surround
+--   anything else (HDMI/DP, line out, x20-headphones itself) -> unchanged
 function M.decide_default (selected, env)
   selected = selected or {}
   env = env or {}
@@ -250,7 +249,7 @@ function M.decide_default (selected, env)
       return nil, "speakers, speakers-precedence off"
     end
     local want, other = M.SINK_SPEAKERS, M.SINK_SPEAKERS_SURROUND
-    if env.stereo_surround then
+    if env.stereo_surround ~= false then
       want, other = other, want
     end
     if available[want] then
@@ -272,17 +271,17 @@ function M.decide_default (selected, env)
     return speakers ()
   end
   if M.is_x20_name (name) then
-    return nil, "one of our headphone sinks"
+    return nil, "our headphone sink"
   end
   local sink = selected.sink or { name = name }
   if M.is_headphone_sink (sink) then
     if env.headphones_virtual_surround == false then
       return nil, "headphones, headphones-virtual-surround off"
     end
-    if not available[M.SINK_71] then
-      return nil, "headphones, but " .. M.SINK_71 .. " is not loaded"
+    if not available[M.SINK_HEADPHONES] then
+      return nil, "headphones, but " .. M.SINK_HEADPHONES .. " is not loaded"
     end
-    return M.SINK_71, "headphones: virtual surround 7.1"
+    return M.SINK_HEADPHONES, "headphones: virtual surround"
   end
   if M.is_speaker_sink (sink) then
     return speakers ()

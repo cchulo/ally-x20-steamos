@@ -199,7 +199,7 @@ the chain ends in a master gain (`audio-dsp.md`, "Headroom").
 
 ```
 stream (5.1/7.1) -> x20-speakers-surround
-    7 x sofa (7.1 angles, same as x20-virtual-surround-71) -> binaural L/R
+    7 x sofa (7.1 angles, same as x20-headphones) -> binaural L/R
     -> RACE (300 Hz - 5 kHz taps) + LFE
     -> x20-speakers (downmix: stereo at unity, width w = 1.4, EQ)
     -> hardware Speaker sink

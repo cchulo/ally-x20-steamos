@@ -121,7 +121,7 @@ speakers because of inter-aural crosstalk; transaural/XTC is a stretch goal,
 see below).
 
 Pieces (all user-session config, survive updates, trivially reversible):
-1. `~/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf` —
+1. `~/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf` —
    `filter-chain` creating a 7.1 virtual sink, each channel through the
    built-in `sofa` spatializer with an HRTF (SOFA file; ship 2–3 well-known
    ones, user picks). Distinct azimuth/elevation sets for 5.1 vs 7.1 layouts.
@@ -158,13 +158,25 @@ per-stream routing of item 3 and the automatic selection of item 4:** the
 user picks the output in Steam and every stream follows the default sink.
 With Steam's output on "Default", a WirePlumber hook on select-default-node
 swaps WirePlumber's automatic choice: built-in speakers -> x20-speakers (or
-x20-speakers-surround with `stereo-surround on`), any headphones (jack, USB,
-Bluetooth) -> x20-virtual-surround-71; plug/unplug switch; a manual pick
+x20-speakers-surround with `stereo-surround on`; on by default since the
+owner's decision below), any headphones (jack, USB,
+Bluetooth) -> x20-headphones; plug/unplug switch; a manual pick
 always wins; `speakers-precedence off` / `headphones-virtual-surround off`
 opt out. The speaker chain output is pinned to the hardware speaker sink,
 and the HRTF outputs only link to available headphones. Reason:
 an unpinned output followed the fallback to the unplugged jack sink
 (silence). Details in docs/audio-dsp.md.
+**Changed again (2026-10-31, owner):** one headphone sink, `x20-headphones`
+(7.1, conf `50-x20-headphones.conf`), replaces `x20-virtual-surround-71` and
+the 5.1 sink of item 1: a 5.1 stream on the 7.1 sink fills FL FR FC LFE
+RL RR and leaves the sides silent. While one of our sinks is the default,
+every sink under it (x20-speakers under x20-speakers-surround, the hardware
+sink at the end) is held at 100 % so Steam's slider is the only volume
+(`audio-dsp hardware-volume`, docs/audio-dsp.md "Volumes"). The first A/B
+against the raw speakers was unfair because of that stacking; with the
+hardware at 100 % the owner preferred the processed chain, so
+`stereo-surround` is on by default: x20-speakers-surround on the speakers,
+x20-headphones on headphones.
 
 ---
 
@@ -202,7 +214,7 @@ ally-x20-steamos/
 │   ├── bin/gamescope                         # wrapper: run our build if it accepts the session's flags, else stock
 │   ├── rauc/post-install.hook                # re-apply to freshly staged slot
 │   └── home/                                 # per-user files installed into ~ (audio DSP, required)
-│       ├── pipewire/pipewire.conf.d/50-x20-virtual-surround.conf
+│       ├── pipewire/pipewire.conf.d/50-x20-headphones.conf
 │       ├── pipewire/pipewire.conf.d/51-x20-speaker-chain.conf
 │       ├── pipewire/pipewire-pulse.conf.d/50-x20-no-upmix.conf
 │       ├── pipewire/client.conf.d/50-x20-no-upmix.conf

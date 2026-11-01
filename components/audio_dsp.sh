@@ -4,16 +4,19 @@
 # (X20-STEAMOS-PLAN.md section 1.5). Required component, on by default.
 #
 # Streams follow the default sink. With Steam's output on "Default", the
-# x20-select-default-sink hook makes it x20-speakers (or
-# x20-speakers-surround) on the built-in speakers and x20-virtual-surround-71
-# on any headphones; a sink picked by hand in Steam always wins.
+# x20-select-default-sink hook makes it x20-speakers-surround (or
+# x20-speakers) on the built-in speakers and x20-headphones on any
+# headphones; a sink picked by hand in Steam always wins.
 # x20-speakers.output is pinned to the hardware speaker sink in its conf; the
-# route-by-channels hook links the headphone surround outputs to an available
-# headphone sink (docs/audio-dsp.md, "Automatic output selection").
+# route-by-channels hook links the headphone surround output to an available
+# headphone sink (docs/audio-dsp.md, "Automatic output selection"). While
+# one of our sinks is the default, the x20-hardware-volume hook holds every
+# sink under it (down to the hardware) at 100 % (docs/audio-dsp.md,
+# "Volumes").
 #
 # Everything lives in the user's home (manifest slot "home"), so it survives
 # SteamOS updates untouched and never needs the read-only root:
-#   ~/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf  (rendered)
+#   ~/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf        (rendered)
 #   ~/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf      (rendered)
 #   ~/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf  (rendered)
 #   ~/.config/pipewire/pipewire-pulse.conf.d/50-x20-no-upmix.conf
@@ -22,8 +25,10 @@
 #   ~/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf      (rendered)
 #   ~/.local/share/wireplumber/scripts/x20-route-by-channels.lua
 #   ~/.local/share/wireplumber/scripts/x20-select-default-sink.lua
+#   ~/.local/share/wireplumber/scripts/x20-hardware-volume.lua
 #   ~/.local/share/wireplumber/scripts/lib/x20-route-core.lua
 #   ~/.local/share/wireplumber/scripts/lib/x20-sink-facts.lua
+#   ~/.local/share/wireplumber/scripts/lib/x20-volume-core.lua
 #   ~/.config/ally-x20-steamos/hrtf/<set>.sofa + current.sofa -> <set>.sofa
 #   ~/.config/ally-x20-steamos/audio-dsp.conf                          (settings)
 #
@@ -36,18 +41,21 @@
 #   enabled=1|0       0 = `audio-dsp off`: config files removed, HRTF data kept
 #   hrtf=<set>        set name from overlay/home/hrtf/hrtf.lock
 #   stereo_hrtf=0|1   kept for compatibility; no effect since streams follow
-#                     the default sink (pick a headphone surround sink in Steam)
+#                     the default sink (pick X20 Headphones in Steam)
 #   speaker_surround=1|0  kept for compatibility; no effect (same reason)
 #   speakers_precedence=1|0  1 (default): the automatic default on the
 #                     speakers is our chain (hook), and x20-speakers and
 #                     x20-speakers-surround get priority 750/740, above the
 #                     hardware Speaker sink (712); 0: neither (both at 50,
 #                     manual pick only)
-#   stereo_surround=0|1   1: the automatic default on the speakers is
-#                     x20-speakers-surround (hook; also swaps the priorities
-#                     to surround 750, speakers 740)
+#   stereo_surround=1|0   1 (default): the automatic default on the speakers
+#                     is x20-speakers-surround (hook; priorities surround
+#                     750, speakers 740); 0: x20-speakers (speakers 750,
+#                     surround 740)
 #   headphones_virtual_surround=1|0  1 (default): the automatic default on
-#                     headphones is x20-virtual-surround-71
+#                     headphones is x20-headphones
+#   hardware_volume=1|0  1 (default): while one of our sinks is the default,
+#                     the sinks under it are held at 100 % (hook)
 #   xtc_delay_us=<int>    crosstalk cancellation delay per tap (10..1000)
 #   xtc_attenuation_db=<num>  attenuation per tap in dB (0.5..30)
 #   xtc_taps=1..4         number of RACE taps
@@ -76,7 +84,7 @@ COMPONENT_DESCRIPTION="headphone virtual surround (HRTF) + speaker chain + speak
 AUDIO_DSP_COMPONENT=audio_dsp
 
 # Settings keys, in the order they are written to audio-dsp.conf.
-AUDIO_DSP_KEYS="enabled hrtf stereo_hrtf speaker_surround speakers_precedence headphones_virtual_surround stereo_surround xtc_delay_us xtc_attenuation_db xtc_taps lfe_cutoff_hz lfe_gain_db master_gain_db speakers_master_gain_db"
+AUDIO_DSP_KEYS="enabled hrtf stereo_hrtf speaker_surround speakers_precedence headphones_virtual_surround stereo_surround hardware_volume xtc_delay_us xtc_attenuation_db xtc_taps lfe_cutoff_hz lfe_gain_db master_gain_db speakers_master_gain_db"
 
 # priority.session of the two speaker sinks. Measured on the X20 (SteamOS
 # 3.9.5): hardware Speaker sink 712, headphone jack sink 1000; USB and
@@ -145,7 +153,7 @@ audio_dsp_hrtf_rel() { printf '%s/hrtf\n' "$(audio_dsp_state_rel)"; }
 audio_dsp_lock() { printf '%s\n' "${AX20_HRTF_LOCK:-$AX20_SRC/overlay/home/hrtf/hrtf.lock}"; }
 
 # Destinations of the rendered (not copied) files.
-audio_dsp_surround_rel() { printf '%s/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf\n' "$(audio_dsp_home)"; }
+audio_dsp_headphones_rel() { printf '%s/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf\n' "$(audio_dsp_home)"; }
 audio_dsp_speaker_chain_rel() { printf '%s/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf\n' "$(audio_dsp_home)"; }
 audio_dsp_speaker_surround_rel() { printf '%s/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf\n' "$(audio_dsp_home)"; }
 audio_dsp_wpsettings_rel() { printf '%s/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf\n' "$(audio_dsp_home)"; }
@@ -203,11 +211,11 @@ audio_dsp_setting_value() {
             audio_dsp_hrtf_current
             return 0
             ;;
-        enabled | speaker_surround | speakers_precedence | headphones_virtual_surround)
+        enabled | speaker_surround | speakers_precedence | headphones_virtual_surround | hardware_volume | stereo_surround)
             v=$(audio_dsp_setting "$1" 1)
             case "$v" in 0 | 1) ;; *) v=1 ;; esac
             ;;
-        stereo_hrtf | stereo_surround)
+        stereo_hrtf)
             v=$(audio_dsp_setting "$1" 0)
             case "$v" in 0 | 1) ;; *) v=0 ;; esac
             ;;
@@ -371,8 +379,10 @@ _audio_dsp_static_files() {
     printf 'home/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf\t%s/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf\t0644\thome\n' "$h"
     printf 'home/wireplumber/scripts/x20-route-by-channels.lua\t%s/.local/share/wireplumber/scripts/x20-route-by-channels.lua\t0644\thome\n' "$h"
     printf 'home/wireplumber/scripts/x20-select-default-sink.lua\t%s/.local/share/wireplumber/scripts/x20-select-default-sink.lua\t0644\thome\n' "$h"
+    printf 'home/wireplumber/scripts/x20-hardware-volume.lua\t%s/.local/share/wireplumber/scripts/x20-hardware-volume.lua\t0644\thome\n' "$h"
     printf 'home/wireplumber/scripts/lib/x20-route-core.lua\t%s/.local/share/wireplumber/scripts/lib/x20-route-core.lua\t0644\thome\n' "$h"
     printf 'home/wireplumber/scripts/lib/x20-sink-facts.lua\t%s/.local/share/wireplumber/scripts/lib/x20-sink-facts.lua\t0644\thome\n' "$h"
+    printf 'home/wireplumber/scripts/lib/x20-volume-core.lua\t%s/.local/share/wireplumber/scripts/lib/x20-volume-core.lua\t0644\thome\n' "$h"
 }
 
 audio_dsp_files() {
@@ -419,13 +429,14 @@ audio_dsp_write_settings() {
 _audio_dsp_bool() { if [ "$1" = 1 ]; then echo true; else echo false; fi; }
 
 # audio_dsp_render_wpsettings : WirePlumber settings fragment from the
-# current settings file (read by x20-select-default-sink.lua; stereo_hrtf and
-# speaker_surround are kept for compatibility only).
+# current settings file (read by x20-select-default-sink.lua and
+# x20-hardware-volume.lua; stereo_hrtf and speaker_surround are kept for
+# compatibility only).
 audio_dsp_render_wpsettings() {
     printf '%s\n' \
         "# SPDX-License-Identifier: GPL-2.0-only" \
         "# Generated by $AX20_NAME (audio-dsp speakers-precedence," \
-        "# headphones-virtual-surround, stereo-surround); do not edit." \
+        "# headphones-virtual-surround, stereo-surround, hardware-volume); do not edit." \
         "# See 50-x20-route-by-channels.conf." \
         "wireplumber.settings = {" \
         "  x20.speakers_precedence = $(_audio_dsp_bool "$(audio_dsp_setting_value speakers_precedence)")" \
@@ -433,6 +444,7 @@ audio_dsp_render_wpsettings() {
         "  x20.stereo_hrtf = $(_audio_dsp_bool "$(audio_dsp_setting_value stereo_hrtf)")" \
         "  x20.speaker_surround = $(_audio_dsp_bool "$(audio_dsp_setting_value speaker_surround)")" \
         "  x20.stereo_surround = $(_audio_dsp_bool "$(audio_dsp_setting_value stereo_surround)")" \
+        "  x20.hardware_volume = $(_audio_dsp_bool "$(audio_dsp_setting_value hardware_volume)")" \
         "}" \
         | _audio_dsp_install_rendered "$(audio_dsp_wpsettings_rel)"
 }
@@ -637,17 +649,18 @@ audio_dsp_render_speaker_surround() {
         | _audio_dsp_install_rendered "$(audio_dsp_speaker_surround_rel)"
 }
 
-# audio_dsp_render_surround : the virtual surround conf with the absolute
-# HRTF path (libmysofa does not expand "~"). /home is not part of the A/B
-# slots, so the live path is used even when applying to a staged slot.
-audio_dsp_render_surround() {
+# audio_dsp_render_headphones : the headphone virtual surround conf (sink
+# x20-headphones) with the absolute HRTF path (libmysofa does not expand
+# "~"). /home is not part of the A/B slots, so the live path is used even
+# when applying to a staged slot.
+audio_dsp_render_headphones() {
     local hrtf_file
     hrtf_file="$(audio_dsp_hrtf_rel)/current.sofa"
     sed -e "s#@X20_HRTF_FILE@#$hrtf_file#g" \
         -e "s#@X20_LFE_CUTOFF@#$(audio_dsp_setting_value lfe_cutoff_hz).0#g" \
         -e "s#@X20_LFE_GAIN@#$(audio_dsp_lfe_gain_lin)#g" \
-        "$AX20_SRC/overlay/home/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf" \
-        | _audio_dsp_install_rendered "$(audio_dsp_surround_rel)"
+        "$AX20_SRC/overlay/home/pipewire/pipewire.conf.d/50-x20-headphones.conf" \
+        | _audio_dsp_install_rendered "$(audio_dsp_headphones_rel)"
 }
 
 # _audio_dsp_fix_owner : files we created in the home must belong to the
@@ -720,7 +733,7 @@ audio_dsp_apply() {
 
     audio_dsp_render_speaker_chain
     if audio_dsp_hrtf_installed "$name" || [ "$AX20_DRY_RUN" = 1 ]; then
-        audio_dsp_render_surround
+        audio_dsp_render_headphones
         audio_dsp_render_speaker_surround
     else
         log_warn "audio_dsp: HRTF set '$name' unavailable; headphone and speaker virtual surround not installed (stereo passthrough and speaker chain still active)"
@@ -732,6 +745,9 @@ audio_dsp_apply() {
     if ! audio_dsp_probe_sofa_support >/dev/null 2>&1; then
         log_warn "audio_dsp: PipeWire sofa support (libmysofa) not detected; virtual surround sinks may not load (see docs/audio-dsp.md)"
     fi
+    # Upgrades: drop what an earlier version installed under another name
+    # (50-x20-virtual-surround.conf would load the old sinks next to the new).
+    audio_dsp_prune || true
     _audio_dsp_fix_owner
     audio_dsp_restart_services
     return 0
@@ -755,23 +771,95 @@ _audio_dsp_unlink() {
     return 0
 }
 
-# audio_dsp_disable : `audio-dsp off`. Removes every configuration file so
-# PipeWire/WirePlumber run exactly as stock (no virtual sinks in the output
-# picker, no routing script), keeps the downloaded HRTF data and records
+# _audio_dsp_known_paths : every path this version installs while enabled,
+# one per line, whether or not this apply could render it (a surround conf
+# withheld because the HRTF set is missing is still ours, not stale).
+_audio_dsp_known_paths() {
+    local dir n
+    _audio_dsp_static_files | cut -f2
+    audio_dsp_headphones_rel
+    audio_dsp_speaker_chain_rel
+    audio_dsp_speaker_surround_rel
+    audio_dsp_wpsettings_rel
+    audio_dsp_settings_rel
+    dir=$(audio_dsp_hrtf_rel)
+    printf '%s/current.sofa\n' "$dir"
+    for n in $(audio_dsp_hrtf_names); do
+        printf '%s/%s.sofa\n' "$dir" "$n"
+    done
+}
+
+# _audio_dsp_recorded <kind> : manifest paths of this component of that kind
+# (file, symlink, dir).
+_audio_dsp_recorded() {
+    manifest_entries | _manifest_select component "$AUDIO_DSP_COMPONENT" \
+        | _manifest_select kind "$1" | _manifest_field path
+}
+
+# _audio_dsp_prune_dirs : directories we created (recorded as kind dir) that
+# are empty now are removed, deepest first; vanished ones are forgotten.
+# Never the home directory itself, never anything outside it, never through
+# a symlink (the uninstaller's rules).
+_audio_dsp_prune_dirs() {
+    local home d real
+    home=$(audio_dsp_home)
+    _audio_dsp_recorded dir | awk '{ print length($0) "\t" $0 }' | sort -rn | cut -f2- \
+        | while IFS= read -r d; do
+            case "$d" in "$home"/?*) ;; *) continue ;; esac
+            real=$(ax20_path "$d")
+            [ -L "$real" ] && continue
+            if [ ! -d "$real" ]; then
+                manifest_forget "$d"
+                continue
+            fi
+            [ -z "$(find "$real" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ] || continue
+            ax20_run rmdir "$real" && manifest_forget "$d"
+        done
+}
+
+# audio_dsp_prune : remove the files and symlinks recorded for this
+# component that this version no longer installs (renamed or dropped in an
+# upgrade), then the directories we created that this left empty. Same
+# rules as the uninstaller: only paths in our manifest that carry an x20
+# marker, content checked against the recorded digest first; a modified
+# file is kept, reported and stays in the manifest. Returns 1 if anything
+# was kept.
+audio_dsp_prune() {
+    local known p rc=0
+    known=$(_audio_dsp_known_paths)
+    for p in $(_audio_dsp_recorded file) $(_audio_dsp_recorded symlink); do
+        printf '%s\n' "$known" | grep -Fxq -- "$p" && continue
+        case "$p" in *x20*) ;; *)
+            log_warn "audio_dsp: not pruning $p: no x20 marker in the path"
+            rc=1
+            continue
+            ;;
+        esac
+        log_info "audio_dsp: removing $p (no longer installed by this version)"
+        if ! _audio_dsp_unlink "$p"; then
+            log_warn "audio_dsp: PipeWire/WirePlumber still load $p; remove it by hand"
+            rc=1
+        fi
+    done
+    _audio_dsp_prune_dirs
+    return $rc
+}
+
+# audio_dsp_disable : `audio-dsp off`. Removes every configuration file we
+# recorded, including names from earlier versions, so PipeWire/WirePlumber
+# run exactly as stock (no virtual sinks in the output picker, no hook
+# scripts), keeps the downloaded HRTF data (and current.sofa) and records
 # enabled=0 so neither `apply` nor the boot service turns it back on.
 audio_dsp_disable() {
-    local dest rc=0
+    local p rc=0 settings hrtf
     audio_dsp_write_settings enabled=0
-    while IFS=$'\t' read -r _ dest _; do
-        [ -n "$dest" ] || continue
-        _audio_dsp_unlink "$dest" || rc=1
-    done <<EOF
-$(_audio_dsp_static_files)
-$(printf 'x\t%s\n' "$(audio_dsp_speaker_chain_rel)")
-$(printf 'x\t%s\n' "$(audio_dsp_surround_rel)")
-$(printf 'x\t%s\n' "$(audio_dsp_speaker_surround_rel)")
-$(printf 'x\t%s\n' "$(audio_dsp_wpsettings_rel)")
-EOF
+    settings=$(audio_dsp_settings_rel)
+    hrtf=$(audio_dsp_hrtf_rel)
+    for p in $(_audio_dsp_recorded file) $(_audio_dsp_recorded symlink); do
+        case "$p" in "$settings" | "$hrtf"/*) continue ;; esac
+        _audio_dsp_unlink "$p" || rc=1
+    done
+    _audio_dsp_prune_dirs
     _audio_dsp_fix_owner
     audio_dsp_restart_services
     return $rc
@@ -797,7 +885,7 @@ audio_dsp_status() {
         fi
     done
     if ! [ -f "$(ax20_path "$(audio_dsp_hrtf_rel)/current.sofa")" ] \
-        || ! [ -f "$(ax20_path "$(audio_dsp_surround_rel)")" ] \
+        || ! [ -f "$(ax20_path "$(audio_dsp_headphones_rel)")" ] \
         || ! [ -f "$(ax20_path "$(audio_dsp_speaker_surround_rel)")" ] \
         || ! [ -f "$(ax20_path "$(audio_dsp_speaker_chain_rel)")" ]; then
         printf 'stock\n'

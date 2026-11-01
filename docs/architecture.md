@@ -59,7 +59,7 @@ Planned components and the plan sections they implement:
 | `modules` | §1.3, §3 | version-gated kernel module substitution (`load-or-fallback`, generated modprobe.d), staging of built `.ko.zst`, lockdown detection; covers the RGB and Quick Access fixes, which are kernel-only ([docs/kernel-modules.md](kernel-modules.md), [docs/rgb.md](rgb.md)) |
 | `inputplumber` | §1.2 | upstream X20 `devices.d` profile (verbatim or adapted to the stock 0.78 daemon), hwdb autostart, opt-in ExecStart fallback ([docs/inputplumber.md](inputplumber.md)) |
 | `hdr` | §1.4 | libdisplay-info 0.3.0 + DisplayID 2 backport via ld.so.conf.d (Desktop Mode), gamescope Lua display profile for the X20 panel (Game Mode on stock gamescope), opt-in custom gamescope behind a stock-fallback wrapper ([docs/hdr.md](hdr.md)) |
-| `audio_dsp` | §1.5 | per-user PipeWire `filter-chain` sinks (speaker chain as the automatic default, speaker virtual surround, 5.1/7.1 HRTF), no-upmix, WirePlumber hooks for the automatic default sink and the headphone surround outputs, HRTF sets ([docs/audio-dsp.md](audio-dsp.md)) |
+| `audio_dsp` | §1.5 | per-user PipeWire `filter-chain` sinks (speaker chain as the automatic default, speaker virtual surround, 7.1 HRTF headphone sink `x20-headphones`), no-upmix, WirePlumber hooks for the automatic default sink, the headphone surround output and the hardware volume rule (sinks under our default at 100 %), HRTF sets ([docs/audio-dsp.md](audio-dsp.md)) |
 | `update` | §4 | RAUC pre/post-install handlers, `system.conf` delimited block, boot service, user notifier, boot-entry reconcile ([docs/update-survival.md](update-survival.md)) |
 
 Shared libraries behind them: `lib/slots.sh` (A/B slots, boot-entry

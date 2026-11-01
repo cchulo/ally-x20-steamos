@@ -1,0 +1,74 @@
+From 148794d9f0d29e25283978302c41533b81b20b8c Mon Sep 17 00:00:00 2001
+From: "Derek J. Clark" <derekjohn.clark@gmail.com>
+Date: Sun, 18 Oct 2026 16:06:03 +0000
+Subject: [PATCH] platform/x86: asus-armoury: Add XBOX ROG Ally X 20 Tunables
+
+Adds Tunable table for XBOX ROG Ally X 20.
+
+Signed-off-by: Derek J. Clark <derekjohn.clark@gmail.com>
+Link: https://patch.msgid.link/20261018160603.65449-1-derekjohn.clark@gmail.com
+Reviewed-by: Ilpo Järvinen <ilpo.jarvinen@linux.intel.com>
+Signed-off-by: Ilpo Järvinen <ilpo.jarvinen@linux.intel.com>
+
+ally-x20-steamos: backport of mainline commit
+148794d9f0d29e25283978302c41533b81b20b8c (torvalds/linux, merged for
+v7.3) to 7.2.7-valve2 (31504582a073). Without an RC74XA entry in
+power_limits[], init_rog_tunables() logs "No matching power limits
+found for this system", the ppt_pl1_spl, ppt_pl2_sppt and ppt_pl3_fppt
+firmware attributes are still registered, and every read of their
+current_value returns -ENODEV. steamos-manager's firmware_attribute
+TDP method reads exactly those files, so Steam shows no TDP slider.
+
+The added entry is byte-identical to mainline's. Only the hunk offset
+differs: 7.2.7-valve2 lacks the mainline entries for other models, so
+here the RC74XA entry follows RC73XA directly, as it does in Valve's
+7.2.10-valve1 (cf069f36e48d "[FOR-UPSTREAM] platform/x86:
+asus-armoury: Add XBOX ROG Ally X 20 Tunables"). The patch therefore
+reverse-applies on 7.2.10-valve1, and build/build-modules.sh records
+asus-armoury as superseded there.
+
+Valve-Upstream: 7.2.10-valve1
+Derived from: torvalds/linux 148794d9f0d2 "platform/x86: asus-armoury:
+  Add XBOX ROG Ally X 20 Tunables" by Derek J. Clark; evlaV/linux-integration
+  cf069f36e48d (the same change in Valve's 7.2.10-valve1)
+---
+ drivers/platform/x86/asus-armoury.h | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/drivers/platform/x86/asus-armoury.h b/drivers/platform/x86/asus-armoury.h
+index 322bfa647c2d..3b46a05e2453 100644
+--- a/drivers/platform/x86/asus-armoury.h
++++ b/drivers/platform/x86/asus-armoury.h
+@@ -2400,6 +2400,32 @@ static const struct dmi_system_id power_limits[] = {
+ 			},
+ 		},
+ 	},
++	{
++		.matches = {
++			DMI_MATCH(DMI_BOARD_NAME, "RC74XA"),
++		},
++		.driver_data = &(struct power_data) {
++			.ac_data = &(struct power_limits) {
++				.ppt_pl1_spl_min = 7,
++				.ppt_pl1_spl_max = 35,
++				.ppt_pl2_sppt_min = 13,
++				.ppt_pl2_sppt_max = 45,
++				.ppt_pl3_fppt_min = 19,
++				.ppt_pl3_fppt_max = 55,
++			},
++			.dc_data = &(struct power_limits) {
++				.ppt_pl1_spl_min = 7,
++				.ppt_pl1_spl_def = 17,
++				.ppt_pl1_spl_max = 35,
++				.ppt_pl2_sppt_min = 13,
++				.ppt_pl2_sppt_def = 21,
++				.ppt_pl2_sppt_max = 45,
++				.ppt_pl3_fppt_min = 19,
++				.ppt_pl3_fppt_def = 26,
++				.ppt_pl3_fppt_max = 55,
++			},
++		},
++	},
+ 	{}
+ };
+ 

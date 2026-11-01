@@ -8,18 +8,25 @@
 #   --missing-only   skip components whose files all verify (boot service).
 #   --verify-only    report drift, write nothing; exit 1 if anything drifted.
 # Components whose probe says stock SteamOS provides them, and that are not
-# installed, are skipped (never installed on top of a native fix).
+# installed, are skipped (never installed on top of a native fix). Files of
+# components this version no longer ships are removed (lib/retired.sh),
+# except with --slot.
 # Writes state/status.json at the end.
 
 # shellcheck source=lib/component.sh
 . "$AX20_SRC/lib/component.sh"
 # shellcheck source=lib/status.sh
 . "$AX20_SRC/lib/status.sh"
+# shellcheck source=lib/retired.sh
+. "$AX20_SRC/lib/retired.sh"
 
 # Results of the last apply_components run (space separated names).
 APPLY_DONE=""
 APPLY_FAILED=""
 APPLY_SKIPPED=""
+# 1 = do not prune retired components (apply --slot: the files of a retired
+# component live in the user's home, which a mounted slot does not carry).
+APPLY_NO_RETIRE=${APPLY_NO_RETIRE:-0}
 
 # apply_verify <component> : print drift lines, return 1 on drift.
 apply_verify() {
@@ -52,11 +59,26 @@ apply_components() {
     APPLY_DONE=""
     APPLY_FAILED=""
     APPLY_SKIPPED=""
+    if [ -n "$only" ] && ! component_exists "$only" && retired_is "$only"; then
+        log_info "$only is no longer part of $AX20_NAME; removing its files"
+        if retired_prune "$only"; then
+            APPLY_DONE=$only
+            return 0
+        fi
+        APPLY_FAILED=$only
+        return 1
+    fi
     if [ -n "$only" ]; then
         component_exists "$only" || die 2 "unknown component '$only' (see: $AX20_NAME components)"
         list=$only
     else
         list=$(component_list)
+    fi
+    # Components this version no longer ships (lib/retired.sh): remove their
+    # recorded files first, on every apply and boot run, so an upgrade
+    # cleans up without an uninstall. A kept (modified) file only warns.
+    if [ "$APPLY_NO_RETIRE" != 1 ]; then
+        (retired_prune_all) || log_warn "retired components: some files were kept; see above"
     fi
     for c in $list; do
         prc=0
@@ -132,7 +154,7 @@ cmd_apply() {
             --missing-only) missing=1 ;;
             --verify-only) verify=1 ;;
             -h | --help)
-                sed -n '3,12s/^# \{0,1\}//p' "$AX20_SRC/cmd/apply.sh"
+                sed -n '3,14s/^# \{0,1\}//p' "$AX20_SRC/cmd/apply.sh"
                 return 0
                 ;;
             *) die 2 "apply: unknown argument '$1'" ;;
@@ -143,6 +165,7 @@ cmd_apply() {
         [ -d "$slot_root" ] || die "apply --slot: not a directory: $slot_root"
         AX20_ROOT=${slot_root%/}
         export AX20_ROOT
+        APPLY_NO_RETIRE=1
         # The new slot's var must reach the shared state (symlink into /home).
         ax20_state_dir_ensure >/dev/null
         if [ -z "${AX20_KVER:-}" ]; then

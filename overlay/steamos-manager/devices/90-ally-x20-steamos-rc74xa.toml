@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # ally-x20-steamos: steamos-manager device entry for the ROG Xbox Ally X20
-# (board RC74XA). Installed to /etc/ally-x20-steamos/steamos-manager/ and
-# merged into /usr/share/steamos-manager/devices by
+# (board RC74XA). Rendered to /etc/ally-x20-steamos/steamos-manager/ by
+# component power and merged into /usr/share/steamos-manager/devices by
 # ally-x20-steamos-power-devices.service only while no stock file there
 # mentions RC74XA (docs/power.md).
 #
@@ -11,6 +11,16 @@
 # [performance_profile.driver.acpi] table came later). The X20 reports
 # sys_vendor "ASUS", not "ASUSTeK COMPUTER INC." like the older Allys, so it
 # needs its own file instead of a [[device]] block in rog-ally-series.toml.
+#
+# Differences from upstream, measured on the X20 (BIOS RC74XA.303):
+#   - no [tdp_limit]: the firmware ignores PPT writes, so Steam's slider
+#     would change nothing. `ally-x20-steamos power tdp-slider on` appends
+#     upstream's [tdp_limit] tables for testing after a BIOS update.
+#   - no [gpu_power_profile]: this APU has no pp_power_profile_mode, so
+#     steamos-manager only logged "Error getting GPU power profile".
+#   - suggested_default "balanced" (upstream "performance", which only
+#     existed so the slider would show): the firmware's own boot profile,
+#     and better battery life on battery.
 
 [[device]]
 dmi.sys_vendor = "ASUS"
@@ -19,24 +29,14 @@ device = "rog_xbox_ally_x_20"
 variant = "RC74XA"
 friendly_name = "ROG Xbox Ally"
 
+# Steam's manual GPU clock fails with EINVAL on this APU; kept as upstream
+# has it (harmless otherwise, docs/power.md).
 [gpu_performance]
-driver = "amdgpu"
-
-[gpu_power_profile]
 driver = "amdgpu"
 
 [performance_profile]
 platform_profile_name = "asus-wmi"
-# until custom mode is added
-suggested_default = "performance"
-
-[tdp_limit]
-method = "firmware_attribute"
-
-[tdp_limit.firmware_attribute]
-attribute = "asus-armoury"
-# until custom mode is added
-performance_profile = "performance"
+suggested_default = "balanced"
 
 [battery_charge_limit]
 method = "acpi_sb"

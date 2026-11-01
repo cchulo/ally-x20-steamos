@@ -216,6 +216,7 @@ Two fixes, both required (docs/power.md):
 TDP values are watts on `ppt_pl1_spl`; steamos-manager sets sPPT and fPPT
 to max(limit, their min). The slider exists only in the `performance`
 platform profile (upstream device-file setting).
+**Changed (2026-10-31, measured on the device):** BIOS `RC74XA.303` ignores every PPT write while the ASUS profiles do cap power, so the entry has no `[tdp_limit]` (no slider; profiles only, `power tdp-slider on` to re-test) and no `[gpu_power_profile]`; 0020 stays in the build (docs/power.md §1).
 
 ---
 

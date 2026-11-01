@@ -345,3 +345,64 @@ prio_of() { sed -n 's/^ *priority.session = //p' "$AX20_ROOT$1" | head -n1; }
     run ax audio-dsp hardware-volume loud
     assert_failure 2
 }
+
+hpconf="$H/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf"
+spatializers() { grep -c 'label = spatializer' "$AX20_ROOT$hpconf"; }
+
+@test "headphones-fronts dry|hrtf: default dry, re-renders the headphone conf, persisted, shown in status" {
+    ax audio-dsp on
+    settings | grep -qx 'headphones_fronts=dry'
+    [ "$(spatializers)" = 4 ]
+    ! grep -Eq 'name = sp(FL|FR|FC)$' "$AX20_ROOT$hpconf" || false
+    grep -q 'inputs  = \[ "mixL:In 1" "mixR:In 2" "cpFC:In" ' "$AX20_ROOT$hpconf"
+    run ax audio-dsp status
+    assert_output_contains "headphones_fronts: dry (FL/FR/FC without HRTF"
+    run ax audio-dsp headphones-fronts
+    assert_success
+    assert_output_contains "headphones_fronts=dry"
+    run ax audio-dsp headphones-fronts hrtf
+    assert_success
+    assert_output_contains "headphones-fronts: hrtf"
+    settings | grep -qx 'headphones_fronts=hrtf'
+    [ "$(spatializers)" = 7 ]
+    grep -q 'inputs  = \[ "spFL:In" "spFR:In" "spFC:In" ' "$AX20_ROOT$hpconf"
+    run ax audio-dsp status
+    assert_output_contains "headphones_fronts: hrtf (all seven directions through the HRTF)"
+    assert_output_contains "status:          active"
+    # survives a re-apply; the other settings are untouched
+    ax audio-dsp on
+    settings | grep -qx 'headphones_fronts=hrtf'
+    [ "$(spatializers)" = 7 ]
+    settings | grep -qx 'headphones_virtual_surround=1'
+    run ax audio-dsp headphones-fronts dry
+    assert_success
+    [ "$(spatializers)" = 4 ]
+    run ax audio-dsp help
+    assert_output_contains "headphones-fronts [dry|hrtf]"
+}
+
+@test "headphones-fronts rejects other values and changes nothing" {
+    ax audio-dsp on
+    local before conf
+    before=$(settings)
+    conf=$(cat "$AX20_ROOT$hpconf")
+    run ax audio-dsp headphones-fronts maybe
+    assert_failure 2
+    assert_output_contains "usage: ally-x20-steamos audio-dsp headphones-fronts dry|hrtf"
+    run ax audio-dsp headphones-fronts on
+    assert_failure 2
+    [ "$(settings)" = "$before" ]
+    [ "$(cat "$AX20_ROOT$hpconf")" = "$conf" ]
+}
+
+@test "headphones-fronts while off only records the choice" {
+    ax audio-dsp on
+    ax audio-dsp off
+    run ax audio-dsp headphones-fronts hrtf
+    assert_success
+    [ ! -e "$AX20_ROOT$hpconf" ]
+    settings | grep -qx 'headphones_fronts=hrtf'
+    settings | grep -qx 'enabled=0'
+    ax audio-dsp on
+    [ "$(spatializers)" = 7 ]
+}

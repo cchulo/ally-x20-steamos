@@ -165,9 +165,9 @@ spkconf="$H/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf"
     assert_success
     [ -f "$AX20_ROOT$spkconf" ]
     settings | grep -qx 'speaker_surround=1'
-    settings | grep -qx 'stereo_surround=0'
+    settings | grep -qx 'stereo_surround=1'
     wpset | grep -q 'x20.speaker_surround = true'
-    wpset | grep -q 'x20.stereo_surround = false'
+    wpset | grep -q 'x20.stereo_surround = true'
 }
 
 @test "speaker-surround off|on: one command each way, persisted, other settings kept" {
@@ -195,13 +195,13 @@ spkconf="$H/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf"
 
 @test "stereo-surround on|off toggles its setting" {
     ax audio-dsp on
-    run ax audio-dsp stereo-surround on
-    assert_success
-    settings | grep -qx 'stereo_surround=1'
-    wpset | grep -q 'x20.stereo_surround = true'
     run ax audio-dsp stereo-surround off
+    assert_success
     settings | grep -qx 'stereo_surround=0'
     wpset | grep -q 'x20.stereo_surround = false'
+    run ax audio-dsp stereo-surround on
+    settings | grep -qx 'stereo_surround=1'
+    wpset | grep -q 'x20.stereo_surround = true'
 }
 
 @test "xtc set renders the parameters and persists them; reset restores defaults" {
@@ -268,7 +268,7 @@ spkconf="$H/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf"
     run ax audio-dsp status
     assert_success
     assert_output_contains "speaker_surround: 1"
-    assert_output_contains "stereo_surround: 0"
+    assert_output_contains "stereo_surround: 1"
     assert_output_contains "xtc:             xtc_delay_us=117 (6 samples at 48 kHz = 125 us) xtc_attenuation_db=4 (g=0.6310) xtc_taps=4"
 }
 
@@ -351,10 +351,10 @@ prio_of() { sed -n 's/^ *priority.session = //p' "$AX20_ROOT$1" | head -n1; }
 
 @test "speakers-precedence off|on re-renders the speaker sink priorities; status shows it" {
     ax audio-dsp on
-    [ "$(prio_of "$chainconf")" = 750 ]
-    [ "$(prio_of "$spkconf")" = 740 ]
+    [ "$(prio_of "$chainconf")" = 740 ]
+    [ "$(prio_of "$spkconf")" = 750 ]
     run ax audio-dsp status
-    assert_output_contains "speakers_precedence: 1 (priority.session x20-speakers 750, x20-speakers-surround 740)"
+    assert_output_contains "speakers_precedence: 1 (priority.session x20-speakers 740, x20-speakers-surround 750)"
     run ax audio-dsp speakers-precedence off
     assert_success
     settings | grep -qx 'speakers_precedence=0'
@@ -367,20 +367,22 @@ prio_of() { sed -n 's/^ *priority.session = //p' "$AX20_ROOT$1" | head -n1; }
     [ "$(prio_of "$chainconf")" = 50 ]
     run ax audio-dsp speakers-precedence on
     assert_success
-    [ "$(prio_of "$chainconf")" = 750 ]
+    [ "$(prio_of "$chainconf")" = 740 ]
     run ax audio-dsp speakers-precedence sometimes
     assert_failure 2
 }
 
-@test "stereo-surround on swaps the priorities: the surround sink becomes the automatic default" {
+@test "stereo-surround: on by default (surround sink first); off swaps the priorities back" {
     ax audio-dsp on
-    run ax audio-dsp stereo-surround on
-    assert_success
     [ "$(prio_of "$chainconf")" = 740 ]
     [ "$(prio_of "$spkconf")" = 750 ]
     run ax audio-dsp stereo-surround off
+    assert_success
     [ "$(prio_of "$chainconf")" = 750 ]
     [ "$(prio_of "$spkconf")" = 740 ]
+    run ax audio-dsp stereo-surround on
+    [ "$(prio_of "$chainconf")" = 740 ]
+    [ "$(prio_of "$spkconf")" = 750 ]
 }
 
 @test "speakers-precedence while off only records the choice" {
@@ -448,7 +450,7 @@ prio_of() { sed -n 's/^ *priority.session = //p' "$AX20_ROOT$1" | head -n1; }
     wpset | grep -q 'x20.hardware_volume = false'
     settings | grep -qx 'speakers_precedence=1'
     settings | grep -qx 'headphones_virtual_surround=1'
-    settings | grep -qx 'stereo_surround=0'
+    settings | grep -qx 'stereo_surround=1'
     run ax audio-dsp hardware-volume on
     assert_success
     wpset | grep -q 'x20.hardware_volume = true'

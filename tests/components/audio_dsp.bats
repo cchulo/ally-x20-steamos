@@ -96,14 +96,14 @@ setup() {
     grep -qx 'hrtf=set-a' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     grep -qx 'stereo_hrtf=0' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     grep -qx 'speaker_surround=1' "$r/.config/ally-x20-steamos/audio-dsp.conf"
-    grep -qx 'stereo_surround=0' "$r/.config/ally-x20-steamos/audio-dsp.conf"
+    grep -qx 'stereo_surround=1' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     grep -qx 'speakers_precedence=1' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     grep -qx 'xtc_delay_us=117' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     grep -qx 'xtc_attenuation_db=4' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     grep -qx 'xtc_taps=4' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     grep -q 'x20.stereo_hrtf = false' "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
     grep -q 'x20.speaker_surround = true' "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
-    grep -q 'x20.stereo_surround = false' "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
+    grep -q 'x20.stereo_surround = true' "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
     grep -q 'x20.speakers_precedence = true' "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
     grep -q 'x20.headphones_virtual_surround = true' "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
     grep -qx 'headphones_virtual_surround=1' "$r/.config/ally-x20-steamos/audio-dsp.conf"
@@ -154,31 +154,34 @@ prio() {
         "$(sed -n 's/^ *priority.driver  = //p' "$f" | tr '\n' ' ' | sed 's/ $//')"
 }
 
-@test "priorities: speakers 750, surround 740 by default; x20-headphones 50" {
-    component_apply audio_dsp
-    [ "$(prio 51-x20-speaker-chain.conf)" = "750 750" ]
-    [ "$(prio 52-x20-speaker-surround.conf)" = "740 740" ]
-    [ "$(prio 50-x20-headphones.conf)" = "50 " ]
-    [ "$(audio_dsp_priorities)" = "750 740" ]
-}
-
-@test "priorities: stereo_surround=1 swaps them (surround 750, speakers 740)" {
-    component_apply audio_dsp
-    audio_dsp_write_settings stereo_surround=1
+@test "priorities: surround 750, speakers 740 by default (stereo_surround=1); x20-headphones 50" {
     component_apply audio_dsp
     [ "$(prio 51-x20-speaker-chain.conf)" = "740 740" ]
     [ "$(prio 52-x20-speaker-surround.conf)" = "750 750" ]
+    [ "$(prio 50-x20-headphones.conf)" = "50 " ]
+    [ "$(audio_dsp_priorities)" = "740 750" ]
+}
+
+@test "priorities: stereo_surround=0 swaps them (speakers 750, surround 740)" {
+    component_apply audio_dsp
+    audio_dsp_write_settings stereo_surround=0
+    component_apply audio_dsp
+    [ "$(prio 51-x20-speaker-chain.conf)" = "750 750" ]
+    [ "$(prio 52-x20-speaker-surround.conf)" = "740 740" ]
     [ "$(prio 50-x20-headphones.conf)" = "50 " ]
 }
 
 @test "WirePlumber settings: precedence and headphone surround rendered from audio-dsp.conf" {
     component_apply audio_dsp
-    audio_dsp_write_settings speakers_precedence=0 headphones_virtual_surround=0 stereo_surround=1
+    audio_dsp_write_settings speakers_precedence=0 headphones_virtual_surround=0 stereo_surround=0
     audio_dsp_render_wpsettings
     local w="$AX20_ROOT$H/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
     grep -q 'x20.speakers_precedence = false' "$w"
     grep -q 'x20.headphones_virtual_surround = false' "$w"
-    grep -q 'x20.stereo_surround = true' "$w"
+    grep -q 'x20.stereo_surround = false' "$w"
+    # invalid values fall back to the default (on)
+    audio_dsp_write_settings stereo_surround=maybe
+    [ "$(audio_dsp_setting_value stereo_surround)" = 1 ]
     # every rendered key has a schema entry in the loader
     for k in $(sed -n 's/^  \(x20\.[a-z_]*\) = .*/\1/p' "$w"); do
         grep -q "^  $k = {" "$REPO_ROOT/overlay/home/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf"

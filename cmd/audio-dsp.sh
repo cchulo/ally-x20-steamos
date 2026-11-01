@@ -23,9 +23,9 @@ usage: $AX20_NAME audio-dsp <command>
                         x20-headphones; off: the bare headphone sink.
                         Applied to the running session at once
   stereo-surround on|off
-                        on: the automatic default on the speakers is the
-                        speaker virtual surround instead of the plain speaker
-                        chain (default off; restarts PipeWire)
+                        on (default): the automatic default on the speakers
+                        is the speaker virtual surround; off: the plain
+                        speaker chain (restarts PipeWire)
   hardware-volume on|off
                         on (default): while one of our sinks is the default,
                         every sink under it (x20-speakers, the hardware
@@ -485,8 +485,8 @@ PY
     sleep 1
     _audio_dsp_links
     wait "$pid71" "$pid20" 2>/dev/null || true
-    printf '   expected: both streams -> the default sink (Steam on "Default": x20-speakers,\n'
-    printf '             or x20-speakers-surround with stereo-surround on; with headphones\n'
+    printf '   expected: both streams -> the default sink (Steam on "Default": x20-speakers-surround,\n'
+    printf '             or x20-speakers with stereo-surround off; with headphones\n'
     printf '             x20-headphones; a manual pick in Steam wins);\n'
     printf '             x20-speakers.output -> the hardware Speaker sink;\n'
     printf '             x20-headphones.output -> a headphone sink, or unlinked\n'

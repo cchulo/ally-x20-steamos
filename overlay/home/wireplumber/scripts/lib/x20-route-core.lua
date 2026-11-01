@@ -222,12 +222,12 @@ end
 --                sink = is_headphone_sink () table of that node }
 --   env = { speakers_precedence (bool, nil = true),
 --           headphones_virtual_surround (bool, nil = true),
---           stereo_surround (bool),
+--           stereo_surround (bool, nil = true),
 --           available = { [node.name] = true } (the selectable sinks) }
 -- Policy, automatic choices only (a manual pick always wins):
 --   built-in speakers, or one of our speaker sinks, chosen automatically
---       -> x20-speakers (x20-speakers-surround with stereo_surround), when
---          speakers_precedence; the other speaker sink when the preferred
+--       -> x20-speakers-surround (x20-speakers with stereo_surround
+--          false), when speakers_precedence; the other speaker sink when the preferred
 --          one is not loaded (no sofa plugin or HRTF data)
 --   headphones (jack with its route available, USB, Bluetooth)
 --       -> x20-headphones, when headphones_virtual_surround
@@ -249,7 +249,7 @@ function M.decide_default (selected, env)
       return nil, "speakers, speakers-precedence off"
     end
     local want, other = M.SINK_SPEAKERS, M.SINK_SPEAKERS_SURROUND
-    if env.stereo_surround then
+    if env.stereo_surround ~= false then
       want, other = other, want
     end
     if available[want] then

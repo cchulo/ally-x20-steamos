@@ -120,6 +120,10 @@ check ("default/nothing-selected", core.decide_default (nil, nil), nil)
 -- precedence and headphone settings default to on when absent (nil)
 check ("default/settings-absent-speakers", core.decide_default (
   { name = core.X20_SPEAKER_SINK, priority = 712 },
+  { available = { [core.SINK_SPEAKERS] = true, [core.SINK_SPEAKERS_SURROUND] = true } }),
+  core.SINK_SPEAKERS_SURROUND)
+check ("default/settings-absent-surround-not-loaded", core.decide_default (
+  { name = core.X20_SPEAKER_SINK, priority = 712 },
   { available = { [core.SINK_SPEAKERS] = true } }), core.SINK_SPEAKERS)
 check ("default/settings-absent-headphones", core.decide_default (
   { name = "bluez_output.x", priority = 1010, sink = { name = "bluez_output.x", api = "bluez5" } },

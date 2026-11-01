@@ -4,8 +4,8 @@
 # (X20-STEAMOS-PLAN.md section 1.5). Required component, on by default.
 #
 # Streams follow the default sink. With Steam's output on "Default", the
-# x20-select-default-sink hook makes it x20-speakers (or
-# x20-speakers-surround) on the built-in speakers and x20-headphones on any
+# x20-select-default-sink hook makes it x20-speakers-surround (or
+# x20-speakers) on the built-in speakers and x20-headphones on any
 # headphones; a sink picked by hand in Steam always wins.
 # x20-speakers.output is pinned to the hardware speaker sink in its conf; the
 # route-by-channels hook links the headphone surround output to an available
@@ -48,9 +48,10 @@
 #                     x20-speakers-surround get priority 750/740, above the
 #                     hardware Speaker sink (712); 0: neither (both at 50,
 #                     manual pick only)
-#   stereo_surround=0|1   1: the automatic default on the speakers is
-#                     x20-speakers-surround (hook; also swaps the priorities
-#                     to surround 750, speakers 740)
+#   stereo_surround=1|0   1 (default): the automatic default on the speakers
+#                     is x20-speakers-surround (hook; priorities surround
+#                     750, speakers 740); 0: x20-speakers (speakers 750,
+#                     surround 740)
 #   headphones_virtual_surround=1|0  1 (default): the automatic default on
 #                     headphones is x20-headphones
 #   hardware_volume=1|0  1 (default): while one of our sinks is the default,
@@ -210,11 +211,11 @@ audio_dsp_setting_value() {
             audio_dsp_hrtf_current
             return 0
             ;;
-        enabled | speaker_surround | speakers_precedence | headphones_virtual_surround | hardware_volume)
+        enabled | speaker_surround | speakers_precedence | headphones_virtual_surround | hardware_volume | stereo_surround)
             v=$(audio_dsp_setting "$1" 1)
             case "$v" in 0 | 1) ;; *) v=1 ;; esac
             ;;
-        stereo_hrtf | stereo_surround)
+        stereo_hrtf)
             v=$(audio_dsp_setting "$1" 0)
             case "$v" in 0 | 1) ;; *) v=0 ;; esac
             ;;

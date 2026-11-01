@@ -158,7 +158,8 @@ per-stream routing of item 3 and the automatic selection of item 4:** the
 user picks the output in Steam and every stream follows the default sink.
 With Steam's output on "Default", a WirePlumber hook on select-default-node
 swaps WirePlumber's automatic choice: built-in speakers -> x20-speakers (or
-x20-speakers-surround with `stereo-surround on`), any headphones (jack, USB,
+x20-speakers-surround with `stereo-surround on`; on by default since the
+owner's decision below), any headphones (jack, USB,
 Bluetooth) -> x20-headphones; plug/unplug switch; a manual pick
 always wins; `speakers-precedence off` / `headphones-virtual-surround off`
 opt out. The speaker chain output is pinned to the hardware speaker sink,
@@ -171,7 +172,11 @@ the 5.1 sink of item 1: a 5.1 stream on the 7.1 sink fills FL FR FC LFE
 RL RR and leaves the sides silent. While one of our sinks is the default,
 every sink under it (x20-speakers under x20-speakers-surround, the hardware
 sink at the end) is held at 100 % so Steam's slider is the only volume
-(`audio-dsp hardware-volume`, docs/audio-dsp.md "Volumes").
+(`audio-dsp hardware-volume`, docs/audio-dsp.md "Volumes"). The first A/B
+against the raw speakers was unfair because of that stacking; with the
+hardware at 100 % the owner preferred the processed chain, so
+`stereo-surround` is on by default: x20-speakers-surround on the speakers,
+x20-headphones on headphones.
 
 ---
 

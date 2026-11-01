@@ -12,8 +12,8 @@ sinks.
 
 | Sink (Steam name) | `node.name` | Use | Processing | Automatic default? |
 |---|---|---|---|---|
-| X20 Speakers (downmix + width + EQ) | `x20-speakers` | built-in speakers, stereo | surround downmixed to stereo, stereo width, EQ, LFE low-pass, master gain | on the speakers (default) |
-| X20 Speakers (virtual surround) | `x20-speakers-surround` | built-in speakers, surround | each channel through an HRTF at its 7.1 angle, crosstalk cancellation, then the `x20-speakers` chain | on the speakers with `stereo-surround on` |
+| X20 Speakers (downmix + width + EQ) | `x20-speakers` | built-in speakers, stereo | surround downmixed to stereo, stereo width, EQ, LFE low-pass, master gain | on the speakers with `stereo-surround off` |
+| X20 Speakers (virtual surround) | `x20-speakers-surround` | built-in speakers, surround | each channel through an HRTF at its 7.1 angle, crosstalk cancellation, then the `x20-speakers` chain | on the speakers (default) |
 | X20 Headphones (virtual surround) | `x20-headphones` | headphones | each channel through an HRTF at its 7.1 angle, summed to 2 ears | on any headphones (default) |
 
 The headphone sink was called `x20-virtual-surround-71` until 2026-10, with
@@ -74,7 +74,7 @@ experience:
 
 | Situation | WirePlumber's own choice | Automatic default with our hook | Processing |
 |---|---|---|---|
-| nothing plugged in | speaker sink (or `x20-speakers`, 750) | `x20-speakers` (`x20-speakers-surround` with `stereo-surround on`) | speaker chain (or speaker virtual surround) |
+| nothing plugged in | speaker sink (or `x20-speakers-surround`, 750) | `x20-speakers-surround` (`x20-speakers` with `stereo-surround off`) | speaker virtual surround (or the plain speaker chain) |
 | jack plugged in | jack sink (1000) | `x20-headphones` -> jack | 7.1 HRTF |
 | USB headset/headphones | USB sink | `x20-headphones` -> USB sink | 7.1 HRTF |
 | Bluetooth headphones | `bluez_output...` sink | `x20-headphones` -> Bluetooth sink | 7.1 HRTF |
@@ -113,15 +113,23 @@ Settings:
 |---|---|---|
 | `sudo ally-x20-steamos audio-dsp speakers-precedence on\|off` | on | off: the speakers stay on the bare hardware sink in automatic mode (no substitution, both speaker sinks at priority 50). Re-renders the confs and restarts PipeWire |
 | `sudo ally-x20-steamos audio-dsp headphones-virtual-surround on\|off` | on | off: headphones stay on the bare headphone sink in automatic mode. Applied to the running session at once (`wpctl settings`) |
-| `sudo ally-x20-steamos audio-dsp stereo-surround on\|off` | off | on: `x20-speakers-surround` instead of `x20-speakers` on the speakers. Restarts PipeWire (it also swaps the priorities) |
+| `sudo ally-x20-steamos audio-dsp stereo-surround on\|off` | on | off: `x20-speakers` instead of `x20-speakers-surround` on the speakers. Restarts PipeWire (it also swaps the priorities) |
 | `sudo ally-x20-steamos audio-dsp hardware-volume on\|off` | on | off: the sinks under our default keep their own volumes (see "Volumes"). Applied to the running session at once |
 
 Raw hardware output: pick the hardware "Speakers" or "Headphones" in Steam
 by hand, or turn the matching setting off.
 
-Priorities: with `speakers-precedence on`, `x20-speakers` has
-`priority.session` 750 and `x20-speakers-surround` 740 (swapped with
-`stereo-surround on`): above the hardware speakers (712) and below every
+Why surround is the default on both outputs (owner decision, 2026-10-31):
+the first A/B of the speaker chain against the raw speakers was unfair.
+The hardware Speaker sink sat at 55 % under our sink at 100 %, so the chain
+played about 15.6 dB quieter (see "Volumes"). With the hardware at 100 %
+the owner preferred the processed chain and asked for surround by default
+on the speakers (`x20-speakers-surround`) as on headphones
+(`x20-headphones`). `stereo-surround off` goes back to the plain chain.
+
+Priorities: with `speakers-precedence on`, `x20-speakers-surround` has
+`priority.session` 750 and `x20-speakers` 740 (swapped with
+`stereo-surround off`): above the hardware speakers (712) and below every
 headphone output (1000 or more). The hook alone decides between the two
 speaker sinks; the priorities only help tools that look at priorities, and
 keep the DSP the automatic default if the hook fails to load. They are
@@ -300,7 +308,8 @@ applies it:
   Steam puts the Speaker sink back to 55 %; going from
   `x20-speakers-surround` back to `x20-speakers` restores `x20-speakers`
   while the hardware stays at 100 %; unplugging headphones restores the jack
-  while the default moves to `x20-speakers` (which raises the speakers).
+  while the default moves to `x20-speakers-surround` (which raises
+  `x20-speakers` and the speakers).
   A saved sink that is not present (a Bluetooth headset that went away) keeps
   its entry until it is back.
 - The default sink itself is never raised: its slider is the user's.
@@ -432,7 +441,7 @@ one.
 | Pick the output | Steam's output setting (or KDE, pavucontrol, `wpctl set-default`): "Default" (automatic), an X20 sink, or a hardware output |
 | Pick an HRTF set | `ally-x20-steamos audio-dsp hrtf list`, `sudo ally-x20-steamos audio-dsp hrtf <name>` |
 | Automatic default: X20 speaker DSP or bare speakers | `sudo ally-x20-steamos audio-dsp speakers-precedence on` (default) / `off` (re-renders the priorities, restarts PipeWire) |
-| Automatic default: plain chain or speaker virtual surround | `sudo ally-x20-steamos audio-dsp stereo-surround off` (default: `x20-speakers`) / `on` (`x20-speakers-surround`); restarts PipeWire |
+| Automatic default: speaker virtual surround or plain chain | `sudo ally-x20-steamos audio-dsp stereo-surround on` (default: `x20-speakers-surround`) / `off` (`x20-speakers`); restarts PipeWire |
 | Automatic default on headphones: virtual surround or bare | `sudo ally-x20-steamos audio-dsp headphones-virtual-surround on` (default) / `off` (live, no restart) |
 | Sinks under our default at 100 % (Steam's slider is the only volume) | `sudo ally-x20-steamos audio-dsp hardware-volume on` (default) / `off` (live, restores what it raised) |
 | `stereo-hrtf`, `speaker-surround` | recorded for compatibility, no effect: they steered the removed per-stream router. Pick the sink in Steam instead |
@@ -446,7 +455,7 @@ one.
 `~/.config/ally-x20-steamos/audio-dsp.conf` holds `enabled`, `hrtf`,
 `stereo_hrtf` and `speaker_surround` (no effect), `speakers_precedence`
 (default 1), `headphones_virtual_surround` (default 1), `stereo_surround`
-(default 0), `hardware_volume` (default 1),
+(default 1), `hardware_volume` (default 1),
 `xtc_delay_us` (117), `xtc_attenuation_db` (4), `xtc_taps` (4),
 `lfe_cutoff_hz` (120), `lfe_gain_db` (-6), `master_gain_db` (auto) and
 `speakers_master_gain_db` (auto). The commands rewrite it. Out-of-range values fall back to the defaults. `apply` and the boot service read it,
@@ -516,8 +525,8 @@ virtual surround below cancels the crosstalk first.
 [`52-x20-speaker-surround.conf`](../overlay/home/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf),
 sink `x20-speakers-surround` ("X20 Speakers (virtual surround)" in Steam).
 This is the open counterpart of the "Dolby Atmos for built-in speakers" mode
-the X20 ships with on Windows. Pick it in Steam, or make it the automatic
-default with `stereo-surround on`. Every stream on it goes through the
+the X20 ships with on Windows. It is the automatic default on the speakers
+(`stereo-surround on`, the default); it can also be picked in Steam. Every stream on it goes through the
 virtual surround, stereo included (FL/FR rendered at +-30 deg).
 
 1. **Binaural render**: the same sofa spatializers, HRTF set
@@ -787,7 +796,7 @@ level at runtime with `wpctl set-log-level`.
 Simulating a jack plug in the VM (plan section 6): change the active route
 with `wpctl set-route` or pavucontrol's port selector. WirePlumber rescans:
 the automatic default moves to `x20-headphones` (output linked to
-the jack) and back to `x20-speakers`. TODO(vm).
+the jack) and back to `x20-speakers-surround`. TODO(vm).
 
 ## Turning it off and removing it
 
@@ -827,9 +836,10 @@ core would carry over unchanged.
 - Measured on the X20 (SteamOS 3.9.5): UCM routes `[Out] Headphones` and
   `[Out] Speaker`; the unplugged jack reports `not available`; priorities
   1000 (jack) and 712 (speakers).
-- TODO(hw) automatic default: `x20-speakers` without headphones,
-  `x20-headphones` -> jack while plugged, back on unplug; the same
-  with a USB and a Bluetooth headset; a manual pick in Steam is kept.
+- TODO(hw) automatic default: `x20-speakers-surround` without headphones
+  (`x20-speakers` with `stereo-surround off`), `x20-headphones` -> jack
+  while plugged, back on unplug; the same with a USB and a Bluetooth
+  headset; a manual pick in Steam is kept.
 - TODO(hw) hardware volume hook: the Speaker sink goes to 100 % when
   `x20-speakers` becomes the default and back to its old volume on a manual
   pick of the hardware speakers; `x20-speakers` too under

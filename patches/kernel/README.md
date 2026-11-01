@@ -10,7 +10,7 @@ This file documents the speaker-audio patches, listed in `modules.list`:
 backported from Valve's `7.2.10-valve1` kernel. The `hid-asus-ally` patches (`0010`–`0015`,
 joystick-ring RGB in Steam, Aura effects, X20 top-right key `0xa0`, unbind fixes) are documented
 in [`README-hid.md`](README-hid.md) and listed in `modules-hid.list`. The
-`asus-armoury` power-limits patch (`0020`, Steam's TDP slider, see
+`asus-armoury` power-limits patch (`0020`, for Steam's TDP slider, which is not exposed because BIOS `RC74XA.303` ignores PPT writes; see
 [0020](#0020-asus-armoury-rc74xa-power-limits) and
 [`docs/power.md`](../../docs/power.md)) is listed in `modules-power.list`.
 The build script reads every `modules*.list` file. Note the difference in source
@@ -286,6 +286,14 @@ for this system"), so every read of their `current_value` returns `-ENODEV`
 reads exactly those files. With the entry: AC SPL 7..35 W, SPPT 13..45 W,
 FPPT 19..55 W; DC the same ranges with defaults 17/21/26 W. The driver
 caches `current_value` and starts at the AC maxima (no AC defaults).
+
+**Status on the device (2026-10-31):** with 0020 loaded the attributes
+read and accept values, but BIOS `RC74XA.303` ignores the writes (package
+power stays where the platform profile puts it; measurements in
+[`docs/power.md`](../../docs/power.md) §1.2). The `power` component
+therefore leaves `[tdp_limit]` out of the steamos-manager entry unless
+`power tdp-slider on`. The module stays in the build: it is cheap and a
+later BIOS may honour the writes.
 
 **Upstream in Valve's tree:** `7.2.10-valve1` carries the same change as
 `cf069f36e48d` ("[FOR-UPSTREAM] platform/x86: asus-armoury: Add XBOX ROG

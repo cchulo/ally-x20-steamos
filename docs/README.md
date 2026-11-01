@@ -10,7 +10,7 @@ User-facing:
 | [inputplumber.md](inputplumber.md) | controller profile, hwdb autostart, fallback daemon |
 | [rgb.md](rgb.md) | joystick ring RGB in Steam, effect/speed sysfs |
 | [hdr.md](hdr.md) | Desktop and Game Mode HDR, the gamescope profile and wrapper |
-| [power.md](power.md) | Steam's TDP slider and power profiles: asus-armoury limits, the steamos-manager device file shim, how to verify |
+| [power.md](power.md) | Steam's power profiles (measured wattages), why there is no TDP slider (firmware ignores PPT writes), the steamos-manager device file shim, re-testing after a BIOS update |
 | [kernel-modules.md](kernel-modules.md) | what is rebuilt, when, lockdown, forcing a rebuild |
 | [update-survival.md](update-survival.md) | what a SteamOS update does to us and how we survive it; update policy |
 | [self-update.md](self-update.md) | channels, signed tags, rollback, migrations |

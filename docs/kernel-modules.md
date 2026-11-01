@@ -12,7 +12,7 @@ listed in `patches/kernel/modules*.list`. Today that is:
 | `snd-soc-acpi-amd-match` | X20 (`RC74XA`) speaker link layout | `make M=sound/soc/amd/acp` |
 | `snd-acp-config` | ACP config quirk (alternative to the ACPI override) | `make M=sound/soc/amd` |
 | `hid-asus-ally` | joystick ring LEDs visible to Steam, effects, X20 top-right (capture) key `0xa0` | `make M=drivers/hid` |
-| `asus-armoury` | X20 (`RC74XA`) PPT power limits, needed by Steam's TDP slider ([power.md](power.md)) | `make M=drivers/platform/x86 asus-armoury.ko` |
+| `asus-armoury` | X20 (`RC74XA`) PPT power limits for Steam's TDP slider, which is off because BIOS `RC74XA.303` ignores PPT writes; kept for a later BIOS ([power.md](power.md)) | `make M=drivers/platform/x86 asus-armoury.ko` |
 
 Nothing else in the kernel is touched. The rest of the system keeps
 Valve's stock modules.

@@ -47,7 +47,19 @@ sudo sh /var/lib/ally-x20-steamos/uninstall.sh --root /mnt/other-slot --yes
    `component=`).
    - `type=file`: restored byte-for-byte, only if `original` still hashes to
      the recorded sha256. A corrupt or missing backup is reported, never
-     guessed.
+     guessed, except for a boot entry that carries the `lib/slots.sh`
+     marker: that one is regenerated from the marker (below).
+   - Boot entries (`backup/<slot>/` layout, and also a marked
+     `/efi/EFI/steamos/grub.cfg` or `/esp/loader/entries/*.conf` with no
+     backup record at all): when the saved copy is missing, corrupt or older
+     than the live entry, the original is rebuilt the way
+     `slots_entry_restore` does it: drop the `# ally-x20-steamos…` marker
+     lines, remove the kernel args and the early-initrd token the marker
+     records, honour its `noeol` flag, and compare the result with its
+     `orig-sha256`. A match is written (temp file + rename, `sync`); a
+     mismatch is written too, since it no longer carries anything of ours,
+     with a warning that it differs from the recorded original digest. A
+     file without the marker is never touched.
    - `type=block`: the `# >>> ally-x20-steamos` … `# <<< ally-x20-steamos`
      block is stripped from the live file. If the result equals the saved
      original, the file is back to stock; if not (Valve changed it since),
@@ -60,7 +72,12 @@ sudo sh /var/lib/ally-x20-steamos/uninstall.sh --root /mnt/other-slot --yes
    - a symlink is removed only if its target still matches; the target is
      never followed;
    - a path that is missing is fine ("already gone"), so a partial manifest
-     from an interrupted install is handled.
+     from an interrupted install is handled;
+   - the early initrd on the efi partition / ESP (the ACPI override image,
+     component `audio`) is skipped while a boot entry still loads it
+     through our marker (e.g. `--component audio` without `update`), so an
+     entry never points at a missing initrd. On a full run step 1 has
+     already restored the entry, so the image goes.
 3. **Remove directories** we created, deepest first, only while empty.
    Top-level and system directories are never removed even if a manifest
    claims we created them.
@@ -75,6 +92,23 @@ sudo sh /var/lib/ally-x20-steamos/uninstall.sh --root /mnt/other-slot --yes
 
 Exit codes: `0` everything removed, `1` finished with skipped items (the
 messages say why), `2` usage error or fatal condition.
+
+## Factory reset and leftovers
+
+A SteamOS factory reset wipes the `var` partitions of both slots (and with
+them the `/etc` overlay, whose upper dir lives on `var`) and `/home`, so our
+state directory, manifest, backups and the standalone uninstaller copy are
+gone. It does not touch the efi partitions: the slot's
+`/efi/EFI/steamos/grub.cfg` can still carry our marker lines, kernel args
+and early-initrd token, and the ACPI override image
+`/efi/EFI/steamos/ally-x20-steamos-acpi.img` can still sit next to it (the
+same applies to anyone who deleted the state directory by hand). Both
+`ally-x20-steamos.sh uninstall` and the standalone uninstaller rebuild the
+original entry from the marker when no usable backup exists, as described
+in step 1; without a manifest the leftover image has to be deleted by hand
+once the entry no longer references it. Run the uninstaller before a
+factory reset anyway: with the state directory still there everything,
+including the image, is removed and verified against its recorded hashes.
 
 ## Deny-list (applied even to manifest entries)
 
@@ -118,7 +152,9 @@ Clean audits print a one-line summary and exit 0; any problem exits 1.
 `tests/uninstall/standalone.bats` covers the broken states from the plan
 (§5.2 rule 6): partial manifest, modified files, mid-update, running from the
 state-dir copy with the checkout gone, foreign symlink targets, crafted
-manifests against the deny-list, corrupt/missing backups, block stripping
+manifests against the deny-list, corrupt/missing backups, boot entries
+regenerated from the marker with no backup (grub, BLS, no final newline,
+digest mismatch, dry-run, the early initrd kept while referenced), block stripping
 with and without upstream changes, byte-identical before/after snapshots and
 idempotent re-runs. `tests/uninstall/cmd.bats` covers `--superseded`,
 component hooks, `--dry-run`, the read-only-root refusal and `audit`.

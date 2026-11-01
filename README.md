@@ -20,6 +20,7 @@ testable in a VM before it ever touches the device.
 | **Joystick ring RGB** missing from Steam's Customization menu. | `hid-asus-ally` registers the LED under a name Steam knows, with a fixed R/G/B channel layout and effect/speed attributes | `modules` · [docs/rgb.md](docs/rgb.md) |
 | **HDR not detected** (panel metadata lives in a DisplayID 2 block). | libdisplay-info 0.3.0 + DisplayID 2 backport via `ld.so.conf.d` (Desktop Mode); gamescope Lua display profile for the panel, loaded by stock gamescope (Game Mode); optional custom gamescope behind a stock-fallback wrapper | `hdr` · [docs/hdr.md](docs/hdr.md) |
 | **No headphone virtual surround / speaker DSP.** | PipeWire `filter-chain` sinks: on Steam's "Default" output the speakers play through the X20 speaker DSP (downmix, width, EQ) and any headphones (jack, USB, Bluetooth) through 7.1 HRTF virtual surround, switching on plug/unplug; manual picks in Steam always win; while an X20 sink is the default the sinks under it stay at 100 %, so Steam's slider is the only volume; all in `~/.config` | `audio_dsp` · [docs/audio-dsp.md](docs/audio-dsp.md) |
+| **No TDP slider or power profile in Steam's Performance menu.** Valve's `asus-armoury` has no RC74XA power limits (the PPT attributes return `ENODEV`), and steamos-manager 26.4.1 has no X20 device file. | Mainline `asus-armoury` RC74XA table entry (rebuilt module); the upstream steamos-manager RC74XA entry, merged into `/usr/share/steamos-manager/devices` by a boot-time bind mount of a copy in `/run` (nothing written to `/usr`), which steps aside once SteamOS ships the entry | `power`, `modules` · [docs/power.md](docs/power.md) |
 | **SteamOS updates wipe out-of-tree changes.** | RAUC pre/post-install handlers, boot service, user notifier; `block`/`degrade` policy when modules cannot be built for an incoming kernel | `update` · [docs/update-survival.md](docs/update-survival.md) |
 
 ## Principles
@@ -86,9 +87,9 @@ against a fixture tree, which is how the test suite works.
 
 ```
 ally-x20-steamos.sh   CLI dispatcher            lib/          common, manifest, probes, component, slots, rauc, modules, selfupdate, status, notify
-cmd/                  one file per command      components/   audio, audio_dsp, hdr, inputplumber, modules, update
+cmd/                  one file per command      components/   audio, audio_dsp, hdr, inputplumber, modules, power, update
 overlay/              files installed on the device (manifest-tracked)   uninstall/   standalone POSIX uninstaller
-patches/kernel/       0001-0002 ASoC (audio), 0010-0013 hid-asus-ally     patches/{gamescope,libdisplay-info}/
+patches/kernel/       0001-0006 ASoC (audio), 0010-0015 hid-asus-ally, 0020 asus-armoury   patches/{gamescope,libdisplay-info}/
 build/                Containerfile, build-modules.sh, build-hdr.sh, build-inputplumber.sh, build-libmysofa.sh, kernel-sources.md
 acpi/                 patch-acp-flag.py (DSDT flag patch + early initrd), dump-dsdt.md, fixtures/, tests/
 firmware/             tas2783.lock, fetch-tas2783.sh, speaker-id.map       keys/        release signing key placeholders

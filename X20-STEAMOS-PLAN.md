@@ -183,6 +183,36 @@ surround `x20-speakers-surround` (item 5) is removed: it sounded muffled,
 speakers is `x20-speakers`; `stereo-surround`, `speaker-surround` and `xtc`
 are gone (docs/xtc-notes.md).
 
+### 1.6 TDP limit slider and power profiles in Steam (added 2026-10-31)
+Owner request: Steam's Performance menu TDP Limit slider and power profile
+switch must work on stock SteamOS 3.9.5, with no Decky plugin and no
+replacement daemon (Steam → steamos-manager → asus-armoury, all stock).
+Measured on the device: `asus_armoury` loads and registers
+`ppt_pl1_spl`/`ppt_pl2_sppt`/`ppt_pl3_fppt`, but every read returns
+`ENODEV` ("No matching power limits found for this system"); amdgpu hwmon
+has no `power1_cap`; steamos-manager 26.4.1 has no RC74XA device file
+(the X20 reports `sys_vendor` `ASUS`), so it exposes no `TdpLimit1`.
+Two fixes, both required (docs/power.md):
+1. Kernel: `patches/kernel/0020` = mainline `148794d9f0d2` (RC74XA entry in
+   `power_limits[]`), built as `asus-armoury.ko` from
+   `patches/kernel/modules-power.list` by the `modules` machinery. Valve's
+   `7.2.10-valve1` already has it (`cf069f36e48d`); the build marks it
+   superseded there.
+2. steamos-manager reads device files only from the read-only
+   `/usr/share/steamos-manager/devices`. Component `power` installs the
+   upstream RC74XA entry (steamos-manager `bfbb261ed6b2`, rewritten in the
+   26.4.1 schema) under `/etc/ally-x20-steamos/steamos-manager/`, and
+   `ally-x20-steamos-power-devices.service` (before both steamos-manager
+   daemons and any login) copies the stock directory to `/run`, adds the
+   entry and bind-mounts the copy over the stock directory. A bind mount is
+   not a write to `/usr` (§5.2 rule 2 holds: nothing is copied, installed or
+   linked there, and the stock files reappear when the mount goes). The shim
+   mounts nothing once a stock file lists RC74XA; the probe then reports
+   `superseded`.
+TDP values are watts on `ppt_pl1_spl`; steamos-manager sets sPPT and fPPT
+to max(limit, their min). The slider exists only in the `performance`
+platform profile (upstream device-file setting).
+
 ---
 
 ## 2. Repository layout
@@ -525,6 +555,8 @@ drop-ins or they are already there. The plan handles both (§4.2).
 | HDR: libdisplay-info | stock `libdisplay-info.so` version ≥ 0.4.0 (`pkg-config --modversion` or soname/`strings`) |
 | HDR: gamescope | stock `/usr/bin/gamescope` contains the X20 known-device entry (`AMS740LS02`) AND links libdisplay-info ≥ 0.4.0 — likely the first component to retire, since PR #2493 is already in Valve master |
 | InputPlumber profile | stock `/usr/share/inputplumber/devices/` contains an `RC74XA` match → drop our devices.d profile + hwdb |
+| TDP / power profiles: steamos-manager device file | a stock `/usr/share/steamos-manager/devices/*.toml` (not ours) lists `RC74XA` → the shim mounts nothing; drop the `power` component |
+| TDP / power profiles: asus-armoury limits | stock `asus-armoury.ko` contains `RC74XA`, or `0020` reverse-applies on the kernel's Valve tag (build marks it superseded) |
 | InputPlumber daemon override (fallback only) | stock `inputplumber --version` ≥ the version our profile needs → drop the ExecStart drop-in |
 
 Special case — gamescope wrapper: on every Game Mode start the wrapper checks

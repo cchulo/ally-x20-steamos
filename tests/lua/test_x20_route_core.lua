@@ -81,7 +81,7 @@ local NAMES = {
   spk = core.X20_SPEAKER_SINK,
   jack = "alsa_output.pci-0000_64_00.5-platform-amd_sdw.HiFi__Headphones__sink",
 }
-local ALL_X20 = { core.SINK_SPEAKERS, core.SINK_SPEAKERS_SURROUND, core.SINK_71, core.SINK_51 }
+local ALL_X20 = { core.SINK_SPEAKERS, core.SINK_SPEAKERS_SURROUND, core.SINK_HEADPHONES }
 fh = assert (io.open (root .. "/tests/fixtures/audio_dsp/default-cases.txt", "r"))
 local dcases = 0
 for line in fh:lines () do
@@ -123,10 +123,10 @@ check ("default/settings-absent-speakers", core.decide_default (
   { available = { [core.SINK_SPEAKERS] = true } }), core.SINK_SPEAKERS)
 check ("default/settings-absent-headphones", core.decide_default (
   { name = "bluez_output.x", priority = 1010, sink = { name = "bluez_output.x", api = "bluez5" } },
-  { available = { [core.SINK_71] = true } }), core.SINK_71)
+  { available = { [core.SINK_HEADPHONES] = true } }), core.SINK_HEADPHONES)
 
 -- 3. Non-playback streams are never touched.
-check ("decide/capture", core.decide ({ media_class = "Stream/Input/Audio", node_name = "x20-virtual-surround-71.output" },
+check ("decide/capture", core.decide ({ media_class = "Stream/Input/Audio", node_name = "x20-headphones.output" },
   { sinks = { parse_sink ("jack:1000:-:hp:yes") } }), nil)
 check ("decide/empty", core.decide (nil, nil), nil)
 
@@ -157,7 +157,9 @@ check ("spk/hdmi", core.is_speaker_sink (parse_sink ("h:1:-:hdmi:yes")), false)
 -- 5. Helpers.
 check ("x20-name", core.is_x20_name ("x20-speakers"), true)
 check ("x20-name/other", core.is_x20_name ("alsa_output.x20"), false)
-check ("hp-output-name/71", core.is_headphone_output_name ("x20-virtual-surround-71.output"), true)
+check ("hp-output-name/headphones", core.is_headphone_output_name ("x20-headphones.output"), true)
+check ("hp-output-name/old-71", core.is_headphone_output_name ("x20-virtual-surround-71.output"), false)
+check ("sink-name", core.SINK_HEADPHONES, "x20-headphones")
 check ("hp-output-name/speakers", core.is_headphone_output_name ("x20-speakers.output"), false)
 check ("truthy/true-string", core.truthy ("true"), true)
 check ("truthy/zero", core.truthy ("0"), false)

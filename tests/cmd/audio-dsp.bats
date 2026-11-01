@@ -68,7 +68,7 @@ loader="$H/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf"
     run ax audio-dsp off
     assert_success
     [ ! -e "$AX20_ROOT$loader" ]
-    [ ! -e "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf" ]
+    [ ! -e "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf" ]
     [ -f "$AX20_ROOT$H/.config/ally-x20-steamos/hrtf/set-a.sofa" ]
     settings | grep -qx 'enabled=0'
     run ax audio-dsp status
@@ -284,7 +284,7 @@ chainconf="$H/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf"
     settings | grep -qx 'lfe_gain_db=-9'
     grep -q '"Freq" = 90.0' "$AX20_ROOT$chainconf"
     grep -q '"Freq" = 90.0' "$AX20_ROOT$spkconf"
-    grep -q '"Freq" = 90.0' "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf"
+    grep -q '"Freq" = 90.0' "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf"
     local before
     before=$(settings)
     run ax audio-dsp lfe set 20 -6

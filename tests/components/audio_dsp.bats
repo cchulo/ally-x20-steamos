@@ -68,7 +68,7 @@ setup() {
     [ "$(component_status audio_dsp)" = stock ]
     component_apply audio_dsp
     local r="$AX20_ROOT$H"
-    [ -f "$r/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf" ]
+    [ -f "$r/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf" ]
     [ -f "$r/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf" ]
     [ -f "$r/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf" ]
     [ -f "$r/.config/pipewire/pipewire-pulse.conf.d/50-x20-no-upmix.conf" ]
@@ -104,9 +104,9 @@ setup() {
 
 @test "apply renders the absolute HRTF path into the surround conf" {
     component_apply audio_dsp
-    local f="$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf"
+    local f="$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf"
     ! grep -q '@X20_HRTF_FILE@' "$f"
-    [ "$(grep -c "filename = \"$H/.config/ally-x20-steamos/hrtf/current.sofa\"" "$f")" = 12 ]
+    [ "$(grep -c "filename = \"$H/.config/ally-x20-steamos/hrtf/current.sofa\"" "$f")" = 7 ]
     f="$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf"
     [ "$(grep -c "filename = \"$H/.config/ally-x20-steamos/hrtf/current.sofa\"" "$f")" = 7 ]
 }
@@ -146,11 +146,11 @@ prio() {
         "$(sed -n 's/^ *priority.driver  = //p' "$f" | tr '\n' ' ' | sed 's/ $//')"
 }
 
-@test "priorities: speakers 750, surround 740 by default; headphone surround 50" {
+@test "priorities: speakers 750, surround 740 by default; x20-headphones 50" {
     component_apply audio_dsp
     [ "$(prio 51-x20-speaker-chain.conf)" = "750 750" ]
     [ "$(prio 52-x20-speaker-surround.conf)" = "740 740" ]
-    [ "$(prio 50-x20-virtual-surround.conf)" = "50 50 " ]
+    [ "$(prio 50-x20-headphones.conf)" = "50 " ]
     [ "$(audio_dsp_priorities)" = "750 740" ]
 }
 
@@ -160,7 +160,7 @@ prio() {
     component_apply audio_dsp
     [ "$(prio 51-x20-speaker-chain.conf)" = "740 740" ]
     [ "$(prio 52-x20-speaker-surround.conf)" = "750 750" ]
-    [ "$(prio 50-x20-virtual-surround.conf)" = "50 50 " ]
+    [ "$(prio 50-x20-headphones.conf)" = "50 " ]
 }
 
 @test "WirePlumber settings: precedence and headphone surround rendered from audio-dsp.conf" {
@@ -249,18 +249,17 @@ pwconf() { printf '%s\n' "$AX20_ROOT$H/.config/pipewire/pipewire.conf.d/$1"; }
 @test "LFE: low-passed (2 cascaded biquads at 120 Hz) and folded at -6 dB in every chain" {
     component_apply audio_dsp
     local f
-    for f in 50-x20-virtual-surround.conf 51-x20-speaker-chain.conf 52-x20-speaker-surround.conf; do
+    for f in 50-x20-headphones.conf 51-x20-speaker-chain.conf 52-x20-speaker-surround.conf; do
         ! grep -q '@X20_' "$(pwconf "$f")"
         ! grep -q 'name = cpLFE' "$(pwconf "$f")"
     done
-    # two graphs in the headphone conf, one each in the speaker confs
-    [ "$(grep -c 'label = bq_lowpass name = lfeLP[12]' "$(pwconf 50-x20-virtual-surround.conf)")" = 4 ]
-    [ "$(grep -c '"Freq" = 120.0 "Q" = 0.707' "$(pwconf 50-x20-virtual-surround.conf)")" = 4 ]
+    # one graph in each conf
+    [ "$(grep -c 'label = bq_lowpass name = lfeLP[12]' "$(pwconf 50-x20-headphones.conf)")" = 2 ]
+    [ "$(grep -c '"Freq" = 120.0 "Q" = 0.707' "$(pwconf 50-x20-headphones.conf)")" = 2 ]
     [ "$(grep -c '"Freq" = 120.0 "Q" = 0.707' "$(pwconf 51-x20-speaker-chain.conf)")" = 2 ]
     [ "$(grep -c '"Freq" = 120.0 "Q" = 0.707' "$(pwconf 52-x20-speaker-surround.conf)")" = 2 ]
     [ "$(grep -c '"Gain 5" = 0.501187' "$(pwconf 51-x20-speaker-chain.conf)")" = 2 ]
-    [ "$(grep -c '"Gain 8" = 0.501187' "$(pwconf 50-x20-virtual-surround.conf)")" = 2 ]
-    [ "$(grep -c '"Gain 6" = 0.501187' "$(pwconf 50-x20-virtual-surround.conf)")" = 2 ]
+    [ "$(grep -c '"Gain 8" = 0.501187' "$(pwconf 50-x20-headphones.conf)")" = 2 ]
     grep -q '{ output = "lfeLP1:Out" input = "lfeLP2:In" }' "$(pwconf 51-x20-speaker-chain.conf)"
     grep -q 'inputs  = \[ "dmL:In 1" "dmR:In 1" "cpFC:In" "lfeLP1:In"' "$(pwconf 51-x20-speaker-chain.conf)"
 }
@@ -397,7 +396,7 @@ PY
     local r="$AX20_ROOT$H"
     [ ! -e "$r/.config/ally-x20-steamos/hrtf/set-a.sofa" ]
     [ -f "$r/.config/ally-x20-steamos/hrtf/set-b.sofa" ]
-    [ ! -e "$r/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf" ]
+    [ ! -e "$r/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf" ]
     [ ! -e "$r/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf" ]
     [ -f "$r/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf" ]
     [ "$(component_status audio_dsp)" = stock ]
@@ -427,7 +426,7 @@ PY
     component_apply audio_dsp
     audio_dsp_disable
     local r="$AX20_ROOT$H"
-    [ ! -e "$r/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf" ]
+    [ ! -e "$r/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf" ]
     [ ! -e "$r/.config/pipewire/pipewire.conf.d/51-x20-speaker-chain.conf" ]
     [ ! -e "$r/.config/pipewire/pipewire.conf.d/52-x20-speaker-surround.conf" ]
     [ ! -e "$r/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf" ]
@@ -546,16 +545,20 @@ PY
     done
 }
 
-@test "surround conf: per-layout azimuths and channel maps" {
-    local f="$REPO_ROOT/overlay/home/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf"
-    grep -q 'node.name        = "x20-virtual-surround-71"' "$f"
-    grep -q 'node.name        = "x20-virtual-surround-51"' "$f"
+@test "headphone conf: one 7.1 sink x20-headphones, 7.1 azimuths, no 5.1 sink" {
+    local f="$REPO_ROOT/overlay/home/pipewire/pipewire.conf.d/50-x20-headphones.conf"
+    [ "$(grep -c 'name = libpipewire-module-filter-chain' "$f")" = 1 ]
+    grep -q 'node.name        = "x20-headphones"' "$f"
+    grep -q 'node.name        = "x20-headphones.output"' "$f"
+    ! grep -q 'node.name *= "x20-virtual-surround' "$f"
     grep -q 'audio.position   = \[ FL FR FC LFE RL RR SL SR \]' "$f"
-    grep -q 'audio.position   = \[ FL FR FC LFE RL RR \]' "$f"
-    # 7.1 rears at 150/210, 5.1 surrounds at 110/250, sides at 90/270
-    for a in 30.0 330.0 0.0 90.0 270.0 150.0 210.0 110.0 250.0; do
+    ! grep -q 'audio.position   = \[ FL FR FC LFE RL RR \]' "$f"
+    # 7.1 rears at 150/210, sides at 90/270; no 5.1 angles
+    for a in 30.0 330.0 0.0 90.0 270.0 150.0 210.0; do
         grep -q "\"Azimuth\"   = $a\$" "$f"
     done
+    ! grep -q '"Azimuth"   = 110.0$' "$f"
+    [ ! -e "$REPO_ROOT/overlay/home/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf" ]
 }
 
 @test "speaker surround template: 7.1 angles, XTC network wiring, LFE after the canceller" {
@@ -580,10 +583,9 @@ PY
     grep -q 'outputs = \[ "mgL:Out" "mgR:Out" \]' "$f"
 }
 
-@test "headphone sinks are labelled headphones-only" {
-    local f="$REPO_ROOT/overlay/home/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf"
-    [ "$(grep -c 'node.description = "X20 headphone surround 7.1 (headphones only)"' "$f")" = 2 ]
-    [ "$(grep -c 'node.description = "X20 headphone surround 5.1 (headphones only)"' "$f")" = 2 ]
+@test "headphone sink is labelled X20 Headphones" {
+    local f="$REPO_ROOT/overlay/home/pipewire/pipewire.conf.d/50-x20-headphones.conf"
+    [ "$(grep -c 'node.description = "X20 Headphones (virtual surround)"' "$f")" = 2 ]
 }
 
 # --- Lua decision core (tests/lua/test_x20_route_core.lua) -----------------
@@ -622,5 +624,5 @@ lua_bin() {
     for f in "$AX20_ROOT$H"/.config/pipewire/pipewire.conf.d/5*-x20-*.conf; do
         ! grep -E '^\s*media.class' "$f" | grep -q 'Audio/Sink/Internal' || { echo "internal sink in $f"; false; }
     done
-    [ "$(grep -h 'media.class' "$AX20_ROOT$H"/.config/pipewire/pipewire.conf.d/5*-x20-*.conf | grep -cE 'Audio/Sink\s*$')" -ge 4 ]
+    [ "$(grep -h 'media.class' "$AX20_ROOT$H"/.config/pipewire/pipewire.conf.d/5*-x20-*.conf | grep -cE 'Audio/Sink\s*$')" -ge 3 ]
 }

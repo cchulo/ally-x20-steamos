@@ -20,7 +20,7 @@ usage: $AX20_NAME audio-dsp <command>
   headphones-virtual-surround on|off
                         on (default): with Steam's output on "Default", any
                         headphones (jack, USB, Bluetooth) play through
-                        x20-virtual-surround-71; off: the bare headphone sink.
+                        x20-headphones; off: the bare headphone sink.
                         Applied to the running session at once
   stereo-surround on|off
                         on: the automatic default on the speakers is the
@@ -51,7 +51,7 @@ usage: $AX20_NAME audio-dsp <command>
 
 Streams follow the default sink: Steam's "Default" (automatic, see above) or
 the output picked there by hand ("X20 Speakers", "X20 Speakers (virtual
-surround)", "X20 headphone surround 5.1/7.1", or the hardware outputs). A
+surround)", "X20 Headphones (virtual surround)", or the hardware outputs). A
 manual pick always wins.
 
 The user whose session is configured is \$SUDO_USER (or deck); override with
@@ -194,7 +194,7 @@ _audio_dsp_cmd_hrtf() {
     audio_dsp_write_settings "hrtf=$name"
     if audio_dsp_enabled; then
         # The confs may be missing if the previous set never downloaded.
-        [ -f "$(ax20_path "$(audio_dsp_surround_rel)")" ] || audio_dsp_render_surround
+        [ -f "$(ax20_path "$(audio_dsp_headphones_rel)")" ] || audio_dsp_render_headphones
         [ -f "$(ax20_path "$(audio_dsp_speaker_surround_rel)")" ] || audio_dsp_render_speaker_surround
         _audio_dsp_fix_owner
         audio_dsp_restart_services pipewire.service
@@ -318,7 +318,7 @@ _audio_dsp_rerender() {
     audio_dsp_enabled || return 0
     audio_dsp_render_speaker_chain
     if audio_dsp_hrtf_installed "$(audio_dsp_hrtf_current)"; then
-        audio_dsp_render_surround
+        audio_dsp_render_headphones
         audio_dsp_render_speaker_surround
     fi
     _audio_dsp_fix_owner
@@ -475,9 +475,9 @@ PY
     wait "$pid71" "$pid20" 2>/dev/null || true
     printf '   expected: both streams -> the default sink (Steam on "Default": x20-speakers,\n'
     printf '             or x20-speakers-surround with stereo-surround on; with headphones\n'
-    printf '             x20-virtual-surround-71; a manual pick in Steam wins);\n'
+    printf '             x20-headphones; a manual pick in Steam wins);\n'
     printf '             x20-speakers.output -> the hardware Speaker sink;\n'
-    printf '             x20-virtual-surround-*.output -> a headphone sink, or unlinked\n'
+    printf '             x20-headphones.output -> a headphone sink, or unlinked\n'
 
     printf '2. speaker virtual surround, channel by channel (listen on the built-in speakers):\n'
     printf '   FL FR FC LFE RL RR SL SR, 0.7 s each\n'

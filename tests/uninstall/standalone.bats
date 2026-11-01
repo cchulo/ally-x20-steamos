@@ -144,7 +144,7 @@ install_demo() {
 
 @test "every ancestor directory we created is recorded and removed again" {
     mkdir -p "$AX20_ROOT/home/deck"
-    manifest_install_file "$SRC" /home/deck/.config/pipewire/pipewire.conf.d/50-x20-virtual-surround.conf audio_dsp 0644 home
+    manifest_install_file "$SRC" /home/deck/.config/pipewire/pipewire.conf.d/50-x20-headphones.conf audio_dsp 0644 home
     manifest_has /home/deck/.config
     manifest_has /home/deck/.config/pipewire
     manifest_has /home/deck/.config/pipewire/pipewire.conf.d

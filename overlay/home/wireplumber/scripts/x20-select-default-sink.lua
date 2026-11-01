@@ -11,7 +11,7 @@
 -- swaps a hardware choice for its processed counterpart:
 --   built-in speakers       -> x20-speakers (x20-speakers-surround with
 --                              `audio-dsp stereo-surround on`)
---   headphones: jack, USB,  -> x20-virtual-surround-71, whose output the
+--   headphones: jack, USB,  -> x20-headphones, whose output the
 --   Bluetooth                  route-by-channels hook links to those same
 --                              headphones (one shared classification)
 --   anything else           -> unchanged

@@ -5,7 +5,7 @@
 # (alsa_output.pci-0000_64_00.5-platform-amd_sdw.HiFi__Speaker__sink), jack =
 # the X20 headphone jack sink; other names are used as given. route uses the
 # shorthands of routing-cases.txt (hp, spk, acphp, hdmi). sinks-present: comma
-# list of the x20 sinks that are loaded (all = the four). Expected "nil" =
+# list of the x20 sinks that are loaded (all = the three). Expected "nil" =
 # keep WirePlumber's choice.
 
 # --- built-in speakers
@@ -18,17 +18,17 @@ x20-speakers-auto-kept                 x20-speakers           750    -          
 x20-speakers-auto-stereo-surround      x20-speakers           750    -          -      -        -       yes  yes  yes  all                                          x20-speakers-surround
 x20-surround-auto-stereo-surround-off  x20-speakers-surround  750    -          -      -        -       yes  yes  no   all                                          x20-speakers
 x20-speakers-precedence-off            x20-speakers           750    -          -      -        -       no   yes  yes  all                                          nil
-surround-preferred-not-loaded          spk                    712    -          spk    unknown  alsa    yes  yes  yes  x20-speakers,x20-virtual-surround-71         x20-speakers
-plain-preferred-not-loaded             spk                    712    -          spk    unknown  alsa    yes  yes  no   x20-speakers-surround,x20-virtual-surround-71  nil
-no-speaker-sinks-loaded                spk                    712    -          spk    unknown  alsa    yes  yes  no   x20-virtual-surround-71                      nil
+surround-preferred-not-loaded          spk                    712    -          spk    unknown  alsa    yes  yes  yes  x20-speakers,x20-headphones                  x20-speakers
+plain-preferred-not-loaded             spk                    712    -          spk    unknown  alsa    yes  yes  no   x20-speakers-surround,x20-headphones           nil
+no-speaker-sinks-loaded                spk                    712    -          spk    unknown  alsa    yes  yes  no   x20-headphones                               nil
 
 # --- headphones
-jack-available                         jack                   1000   -          hp     yes      alsa    yes  yes  no   all                                          x20-virtual-surround-71
-jack-available-precedence-off          jack                   1000   -          hp     yes      alsa    no   yes  no   all                                          x20-virtual-surround-71
-acp-headphones                         alsa_output.analog     1000   -          acphp  yes      alsa    yes  yes  no   all                                          x20-virtual-surround-71
-usb-headset-form-factor                alsa_output.usb        1010   headset    -      -        alsa    yes  yes  no   all                                          x20-virtual-surround-71
-usb-headphone-form-factor              alsa_output.usb        1010   headphone  -      -        alsa    yes  yes  no   all                                          x20-virtual-surround-71
-bluez5-sink                            bluez_output.aa        1010   -          -      -        bluez5  yes  yes  no   all                                          x20-virtual-surround-71
+jack-available                         jack                   1000   -          hp     yes      alsa    yes  yes  no   all                                          x20-headphones
+jack-available-precedence-off          jack                   1000   -          hp     yes      alsa    no   yes  no   all                                          x20-headphones
+acp-headphones                         alsa_output.analog     1000   -          acphp  yes      alsa    yes  yes  no   all                                          x20-headphones
+usb-headset-form-factor                alsa_output.usb        1010   headset    -      -        alsa    yes  yes  no   all                                          x20-headphones
+usb-headphone-form-factor              alsa_output.usb        1010   headphone  -      -        alsa    yes  yes  no   all                                          x20-headphones
+bluez5-sink                            bluez_output.aa        1010   -          -      -        bluez5  yes  yes  no   all                                          x20-headphones
 bluez5-speaker-untouched               bluez_output.bb        1010   speaker    -      -        bluez5  yes  yes  no   all                                          nil
 headphones-virtual-surround-off        jack                   1000   -          hp     yes      alsa    yes  no   no   all                                          nil
 hrtf-sink-not-loaded                   jack                   1000   -          hp     yes      alsa    yes  yes  no   x20-speakers,x20-speakers-surround           nil
@@ -38,5 +38,4 @@ manual-pick-speakers                   spk                    30712  -          
 manual-pick-jack                       jack                   31000  -          hp     yes      alsa    yes  yes  no   all                                          nil
 stored-history-pick                    jack                   20000  -          hp     yes      alsa    yes  yes  no   all                                          nil
 hdmi-untouched                         alsa_output.hdmi       600    -          hdmi   yes      alsa    yes  yes  no   all                                          nil
-hrtf-sink-already-selected             x20-virtual-surround-71 50    -          -      -        -       yes  yes  no   all                                          nil
-hrtf-51-already-selected               x20-virtual-surround-51 50    -          -      -        -       yes  yes  no   all                                          nil
+hrtf-sink-already-selected             x20-headphones         50     -          -      -        -       yes  yes  no   all                                          nil

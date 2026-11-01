@@ -12,9 +12,9 @@
 -- decide_default () (the automatic default sink, see its comment).
 --
 -- Policy. The user picks the output (the default sink) by hand in Steam:
--- the hardware speakers or headphones, "X20 Speakers", the speaker virtual
--- surround or the headphone virtual surround ("X20 Headphones"). Application streams are
--- never routed here; they follow that choice. Only the outputs of our own
+-- the hardware speakers or headphones, "X20 Speakers" or the headphone
+-- virtual surround ("X20 Headphones"). Application streams are never routed
+-- here; they follow that choice. Only the outputs of our own
 -- filter chains need a target, because their sink is the hardware behind
 -- the virtual one:
 --   x20-headphones.output
@@ -29,10 +29,10 @@
 --       -> nothing qualifies: stay unlinked (M.UNLINKED). Never the speaker
 --          sink, never an x20 sink, never a jack whose route is
 --          unavailable, never a blind fallback to the default sink.
---   x20-speakers.output, x20-speakers-surround.output
---       pinned in their PipeWire confs (target.object: the hardware speaker
---       sink, x20-speakers); WirePlumber's find-defined-target hook links
---       them before this hook runs. Left alone here.
+--   x20-speakers.output
+--       pinned in its PipeWire conf (target.object: the hardware speaker
+--       sink); WirePlumber's find-defined-target hook links it before this
+--       hook runs. Left alone here.
 -- Never touched: streams with an explicit target (set by the application or
 -- moved by the user), capture streams, other filters, application streams.
 --
@@ -47,7 +47,6 @@ local M = {}
 
 M.SINK_HEADPHONES = "x20-headphones"
 M.SINK_SPEAKERS = "x20-speakers"
-M.SINK_SPEAKERS_SURROUND = "x20-speakers-surround"
 
 -- Returned by decide () when the stream must stay unlinked: the glue stops
 -- the select-target event so the default-sink hooks do not link it either.
@@ -222,13 +221,10 @@ end
 --                sink = is_headphone_sink () table of that node }
 --   env = { speakers_precedence (bool, nil = true),
 --           headphones_virtual_surround (bool, nil = true),
---           stereo_surround (bool, nil = true),
 --           available = { [node.name] = true } (the selectable sinks) }
 -- Policy, automatic choices only (a manual pick always wins):
---   built-in speakers, or one of our speaker sinks, chosen automatically
---       -> x20-speakers-surround (x20-speakers with stereo_surround
---          false), when speakers_precedence; the other speaker sink when the preferred
---          one is not loaded (no sofa plugin or HRTF data)
+--   built-in speakers chosen automatically
+--       -> x20-speakers, when speakers_precedence and it is loaded
 --   headphones (jack with its route available, USB, Bluetooth)
 --       -> x20-headphones, when headphones_virtual_surround
 --   anything else (HDMI/DP, line out, x20-headphones itself) -> unchanged
@@ -248,30 +244,17 @@ function M.decide_default (selected, env)
     if env.speakers_precedence == false then
       return nil, "speakers, speakers-precedence off"
     end
-    local want, other = M.SINK_SPEAKERS, M.SINK_SPEAKERS_SURROUND
-    if env.stereo_surround ~= false then
-      want, other = other, want
+    if not available[M.SINK_SPEAKERS] then
+      return nil, "speakers, but " .. M.SINK_SPEAKERS .. " is not loaded"
     end
-    if available[want] then
-      if want == name then
-        return nil, "already the preferred speaker sink"
-      end
-      return want, "speakers: preferred speaker sink"
-    end
-    if want == M.SINK_SPEAKERS_SURROUND and available[other] then
-      if other == name then
-        return nil, "already the speaker chain (surround sink not loaded)"
-      end
-      return other, "speakers: " .. want .. " not loaded"
-    end
-    return nil, "speakers, but " .. want .. " is not loaded"
+    return M.SINK_SPEAKERS, "speakers: speaker chain"
   end
 
-  if name == M.SINK_SPEAKERS or name == M.SINK_SPEAKERS_SURROUND then
-    return speakers ()
+  if name == M.SINK_SPEAKERS then
+    return nil, "already the speaker chain"
   end
   if M.is_x20_name (name) then
-    return nil, "our headphone sink"
+    return nil, "one of our other sinks"
   end
   local sink = selected.sink or { name = name }
   if M.is_headphone_sink (sink) then

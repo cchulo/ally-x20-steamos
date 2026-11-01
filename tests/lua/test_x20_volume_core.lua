@@ -119,13 +119,15 @@ local speaker_sink = { name = SPK, priority = 712,
   routes = { { name = "[Out] Speaker", direction = "Output", available = "unknown" } } }
 local outputs = {
   { name = "x20-speakers.output", target = SPK },
-  { name = "x20-speakers-surround.output", target = "x20-speakers" },
+  -- synthetic intermediate stage (no such sink ships): keeps chains of more
+  -- than one x20 sink covered
+  { name = "x20-stage.output", target = "x20-speakers" },
   { name = "x20-headphones.output" },
   { name = "game.output", target = "x" },
 }
 local t = vcore.targets (outputs, { jack ("yes"), speaker_sink })
 check ("targets/speakers", t["x20-speakers"], SPK)
-check ("targets/surround", t["x20-speakers-surround"], "x20-speakers")
+check ("targets/stage", t["x20-stage"], "x20-speakers")
 check ("targets/headphones-jack", t["x20-headphones"], JACK)
 check ("targets/not-x20", t["game"], nil)
 t = vcore.targets (outputs, { jack ("no"), speaker_sink })
@@ -138,18 +140,18 @@ check ("targets/nil", next (vcore.targets (nil, nil)), nil)
 -- 3. Chains.
 t = vcore.targets (outputs, { jack ("yes"), speaker_sink })
 check ("chain/speakers", table.concat (vcore.chain ("x20-speakers", t), ","), "x20-speakers," .. SPK)
-check ("chain/surround", table.concat (vcore.chain ("x20-speakers-surround", t), ","),
-  "x20-speakers-surround,x20-speakers," .. SPK)
+check ("chain/stage", table.concat (vcore.chain ("x20-stage", t), ","),
+  "x20-stage,x20-speakers," .. SPK)
 check ("chain/headphones", table.concat (vcore.chain ("x20-headphones", t), ","), "x20-headphones," .. JACK)
 check ("chain/hardware", table.concat (vcore.chain (SPK, t), ","), SPK)
 check ("chain/no-headphones", table.concat (vcore.chain ("x20-headphones", {}), ","), "x20-headphones")
 check ("chain/nil", #vcore.chain (nil, t), 0)
 check ("chain/loop", table.concat (vcore.chain ("x20-a", { ["x20-a"] = "x20-b", ["x20-b"] = "x20-a" }), ","), "x20-a,x20-b")
 -- a sink removed from the confs simply has no output and no target: the
--- chain of the remaining sinks is unchanged (removing x20-speakers-surround)
+-- chain of the remaining sinks is unchanged (removing x20-stage)
 local without = vcore.targets ({ outputs[1], outputs[3] }, { jack ("yes"), speaker_sink })
-check ("chain/without-surround", table.concat (vcore.chain ("x20-speakers", without), ","), "x20-speakers," .. SPK)
-check ("chain/removed-sink-alone", table.concat (vcore.chain ("x20-speakers-surround", without), ","), "x20-speakers-surround")
+check ("chain/without-stage", table.concat (vcore.chain ("x20-speakers", without), ","), "x20-speakers," .. SPK)
+check ("chain/removed-sink-alone", table.concat (vcore.chain ("x20-stage", without), ","), "x20-stage")
 
 io.stdout:write (string.format ("%d checks, %d failures\n", count, failures))
 os.exit (failures == 0 and 0 or 1)

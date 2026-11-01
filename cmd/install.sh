@@ -12,6 +12,25 @@
 # shellcheck source=lib/selfupdate.sh
 . "$AX20_SRC/lib/selfupdate.sh"
 
+# _install_stage_modules <src> : stage the patched modules for the running
+# kernel right away (release artifact, cache or container build) so one
+# reboot is enough. Only on a real system; the boot service retries later
+# if this fails (no network, no artifact yet), so a failure is not fatal.
+_install_stage_modules() {
+    local src=$1 kver
+    [ -n "$AX20_ROOT" ] && return 0
+    [ -f "$src/cmd/rebuild.sh" ] || return 0
+    kver=$(probe_running_kver 2>/dev/null || uname -r)
+    [ -n "$kver" ] || return 0
+    if [ -d "${AX20_EARLY_REL}/modules/$kver" ]; then
+        return 0
+    fi
+    log_info "staging the patched kernel modules for $kver (release artifact, cache or local build)"
+    su_run_cli "$src" rebuild --kver "$kver" --no-self-update \
+        || log_warn "could not stage the modules now; the boot service retries after the reboot (or run: $AX20_NAME rebuild)"
+    return 0
+}
+
 _install_usage() {
     cat <<USAGE
 usage: $AX20_NAME install [options]
@@ -203,5 +222,6 @@ cmd_install() {
         return 0
     fi
     su_run_cli "$target" apply || die "apply failed; see ${AX20_LOG_REL}. Re-running install is safe"
+    _install_stage_modules "$target"
     su_run_cli "$target" status || true
 }

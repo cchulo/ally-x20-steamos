@@ -10,7 +10,10 @@ This file documents the speaker-audio patches, listed in `modules.list`:
 backported from Valve's `7.2.10-valve1` kernel. The `hid-asus-ally` patches (`0010`–`0015`,
 joystick-ring RGB in Steam, Aura effects, X20 top-right key `0xa0`, unbind fixes) are documented
 in [`README-hid.md`](README-hid.md) and listed in `modules-hid.list`. The
-build script reads every `modules*.list` file. Note the difference in source
+`asus-armoury` power-limits patch (`0020`, Steam's TDP slider, see
+[0020](#0020-asus-armoury-rc74xa-power-limits) and
+[`docs/power.md`](../../docs/power.md)) is listed in `modules-power.list`.
+The build script reads every `modules*.list` file. Note the difference in source
 trees: `0001`/`0002` apply to linux-stable `v7.2.7` and Valve's tree
 alike, `0003`–`0006` were checked against Valve's `7.2.7-valve2` only, and
 `hid-asus-ally.c` exists only in Valve's tree.
@@ -263,6 +266,48 @@ prepare write. Applies on top of 0004 and 0005.
 `M=sound/soc/codecs`, built alone as a single target (the directory has
 hundreds of codecs, and `rt1320-sdw.h` includes
 `../../../drivers/soundwire/bus.h`, which the sparse checkout does not have).
+
+## 0020: asus-armoury RC74XA power limits
+
+`0020-asus-armoury-add-ROG-Xbox-Ally-X20-RC74XA-power-limits.patch`, listed
+in `modules-power.list`, is mainline commit `148794d9f0d2`
+"platform/x86: asus-armoury: Add XBOX ROG Ally X 20 Tunables" (Derek J.
+Clark, merged for v7.3), with its author, date and trailers. The added
+`power_limits[]` entry is byte-identical to mainline's; only the hunk offset
+differs, because `7.2.7-valve2` lacks the mainline entries for other models
+and the RC74XA entry follows RC73XA directly.
+
+**What it fixes:** on `7.2.7-valve2` the `asus-armoury` driver loads on the
+X20 and registers `ppt_pl1_spl`, `ppt_pl2_sppt` and `ppt_pl3_fppt` under
+`/sys/class/firmware-attributes/asus-armoury/attributes/`, but
+`init_rog_tunables()` finds no DMI match ("No matching power limits found
+for this system"), so every read of their `current_value` returns `-ENODEV`
+(measured on the device). steamos-manager's `firmware_attribute` TDP method
+reads exactly those files. With the entry: AC SPL 7..35 W, SPPT 13..45 W,
+FPPT 19..55 W; DC the same ranges with defaults 17/21/26 W. The driver
+caches `current_value` and starts at the AC maxima (no AC defaults).
+
+**Upstream in Valve's tree:** `7.2.10-valve1` carries the same change as
+`cf069f36e48d` ("[FOR-UPSTREAM] platform/x86: asus-armoury: Add XBOX ROG
+Ally X 20 Tunables"), also right after RC73XA. The patch reverse-applies
+there (checked with `git apply --check --reverse` on that tag's header), so
+`build/build-modules.sh` records `asus-armoury` as superseded on that kernel.
+The description also carries `Valve-Upstream: 7.2.10-valve1` as a fallback.
+
+**Validation:** `git apply --check` against `drivers/platform/x86/asus-armoury.h`
+from `7.2.7-valve2` (blob `322bfa647c2d`, the same as the evlaV tag).
+Not compiled on this host; the `build-modules` CI job compiles it.
+
+**Module:** `asus-armoury.ko` (`CONFIG_ASUS_ARMOURY`), `M=drivers/platform/x86`,
+built alone as a kbuild single target (the directory configures dozens of
+modules and subdirectories). It includes `firmware_attributes_class.h` from
+the same directory and `<linux/platform_data/x86/asus-wmi.h>` from the
+headers, imports the `ASUS_WMI` namespace and links against `asus-wmi` and
+`firmware_attributes_class`, both in the kernel's `Module.symvers`.
+`load-or-fallback` loads those dependencies through modprobe first. It
+exports nothing, so no other module depends on our build. `TODO(hw)`:
+whether SteamOS loads `asus_armoury` from the initramfs (then the stock
+module wins until it is reloaded).
 
 ## `modules.list`
 

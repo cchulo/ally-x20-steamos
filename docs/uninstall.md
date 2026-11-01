@@ -33,6 +33,13 @@ sudo sh /var/lib/ally-x20-steamos/uninstall.sh --root /mnt/other-slot --yes
 
 ## What the standalone uninstaller does, in order
 
+0. **Drop the `power` bind mount** (live root only, when `power` is
+   selected or everything is removed): stop
+   `ally-x20-steamos-power-devices.service` and unmount every layer on
+   `/usr/share/steamos-manager/devices` whose source is under
+   `/ally-x20-steamos/` (our copy in `/run`). Anyone else's mount there is
+   left alone. Nothing under `/usr` is written either way; see
+   [power.md](power.md).
 1. **Restore saved originals** from `/var/lib/ally-x20-steamos/backup/<id>/`
    (the two documented exceptions: boot entries and the RAUC
    `system.conf` block). Each backup has `original` and `meta`

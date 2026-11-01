@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: MIT
+# ally-x20-steamos: steamos-manager device entry for the ROG Xbox Ally X20
+# (board RC74XA). Installed to /etc/ally-x20-steamos/steamos-manager/ and
+# merged into /usr/share/steamos-manager/devices by
+# ally-x20-steamos-power-devices.service only while no stock file there
+# mentions RC74XA (docs/power.md).
+#
+# Values from upstream steamos-manager commit bfbb261ed6b2 ("fix: Add XBox
+# ROG Ally X 20", 2026-10-16), written in the schema of the stock
+# steamos-manager 26.4.1 ([performance_profile] platform_profile_name; the
+# [performance_profile.driver.acpi] table came later). The X20 reports
+# sys_vendor "ASUS", not "ASUSTeK COMPUTER INC." like the older Allys, so it
+# needs its own file instead of a [[device]] block in rog-ally-series.toml.
+
+[[device]]
+dmi.sys_vendor = "ASUS"
+dmi.board_name = "RC74XA"
+device = "rog_xbox_ally_x_20"
+variant = "RC74XA"
+friendly_name = "ROG Xbox Ally"
+
+[gpu_performance]
+driver = "amdgpu"
+
+[gpu_power_profile]
+driver = "amdgpu"
+
+[performance_profile]
+platform_profile_name = "asus-wmi"
+# until custom mode is added
+suggested_default = "performance"
+
+[tdp_limit]
+method = "firmware_attribute"
+
+[tdp_limit.firmware_attribute]
+attribute = "asus-armoury"
+# until custom mode is added
+performance_profile = "performance"
+
+[battery_charge_limit]
+method = "acpi_sb"

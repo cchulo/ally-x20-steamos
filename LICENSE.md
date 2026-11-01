@@ -26,6 +26,7 @@ SPDX header check skips them.
 | `overlay/inputplumber/devices.d/50-rog_xbox_ally_x20.yaml` | GPL-3.0-or-later | InputPlumber upstream device profile (PR #756) |
 | `overlay/inputplumber/devices.d/50-rog_xbox_ally_x20.stock.yaml` | GPL-3.0-or-later | the same profile adapted for older InputPlumber daemons (changes listed in its header) |
 | `overlay/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml` | GPL-3.0-or-later | InputPlumber upstream `ally_type2.yaml` capability map (v0.83.0), renamed id |
+| `overlay/steamos-manager/devices/90-ally-x20-steamos-rc74xa.toml` | MIT | [holo/steamos-manager](https://gitlab.steamos.cloud/holo/steamos-manager) `data/devices/rog-ally-series.toml` RC74XA entry (commit `bfbb261ed6b2`), rewritten in the 26.4.1 schema (header in the file) |
 
 ## Things we deliberately do not commit
 

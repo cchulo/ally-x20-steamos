@@ -1,0 +1,168 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# steamos-manager-devices-shim — ExecStart/ExecStop of
+# ally-x20-steamos-power-devices.service (component power, docs/power.md).
+#
+# steamos-manager reads its device files only from
+# /usr/share/steamos-manager/devices (read-only SteamOS image). The stock
+# 26.4.1 files have no ROG Xbox Ally X20 (RC74XA) entry, so steamos-manager
+# exposes no TdpLimit1 interface and Steam shows no TDP slider.
+#
+#   start   1. unmount our earlier bind mount on the stock directory, so
+#              the next steps see the real stock files (a mount made by
+#              anything else is left alone and the shim does nothing);
+#           2. if a stock file already mentions RC74XA, do nothing more:
+#              SteamOS has caught up and the shim steps aside;
+#           3. copy every stock file into /run/ally-x20-steamos/
+#              steamos-manager-devices and add our RC74XA file
+#              (/etc/ally-x20-steamos/steamos-manager/*.toml);
+#           4. bind-mount that directory over the stock one (read-only).
+#   stop    unmount and delete the copy.
+#   status  print the state word written by the last start
+#           (mounted | stock-has-board | no-stock-dir | missing-config |
+#           foreign-mount | stopped).
+#
+# A bind mount changes nothing on the /usr filesystem: the stock files stay
+# untouched and reappear when the mount goes away (stop, or reboot). The copy
+# lives in /run (tmpfs), so nothing persists outside the manifest.
+#
+# POSIX sh. AX20_ROOT prefixes every path so tests can run against a fixture
+# tree with stub mount/umount commands; it is empty on a real system.
+set -eu
+
+NAME=ally-x20-steamos
+BOARD=RC74XA
+ROOT=${AX20_ROOT:-}
+STOCK_REL=/usr/share/steamos-manager/devices
+OURS_REL=/etc/$NAME/steamos-manager
+RUN_REL=/run/$NAME
+MERGED_REL=$RUN_REL/steamos-manager-devices
+STATE_REL=$RUN_REL/steamos-manager-devices.state
+MOUNTINFO=${AX20_MOUNTINFO:-$ROOT/proc/self/mountinfo}
+
+STOCK=$ROOT$STOCK_REL
+OURS=$ROOT$OURS_REL
+MERGED=$ROOT$MERGED_REL
+STATE=$ROOT$STATE_REL
+
+log() {
+    printf '%s: steamos-manager-devices: %s\n' "$NAME" "$*" >&2
+}
+
+set_state() {
+    mkdir -p "$ROOT$RUN_REL"
+    printf '%s\n' "$1" >"$STATE"
+}
+
+# top_layer : the source root (mountinfo field 4) of the newest mount on the
+# stock directory, or nothing when it is not a mount point. Field 5 is the
+# mount point; our paths need no octal escaping.
+top_layer() {
+    [ -r "$MOUNTINFO" ] || return 0
+    awk -v mp="$STOCK_REL" '$5 == mp { top = $4 } END { if (top != "") print top }' "$MOUNTINFO"
+}
+
+# release : unmount our layers on the stock directory (repeated starts
+# without a stop could have stacked them). A layer whose source is not under
+# /ally-x20-steamos/ belongs to someone else and is left alone: returns 2.
+release() {
+    n=0
+    while :; do
+        top=$(top_layer)
+        [ -n "$top" ] || return 0
+        case "$top" in
+            */"$NAME"/*) ;;
+            *)
+                log "$STOCK_REL carries a mount that is not ours (source $top); leaving it alone"
+                return 2
+                ;;
+        esac
+        n=$((n + 1))
+        if [ "$n" -gt 8 ]; then
+            log "still mounted after 8 unmounts; giving up"
+            return 1
+        fi
+        umount "$STOCK" || umount -l "$STOCK" || return 1
+    done
+}
+
+# stock_has_board : a stock device file (not one of ours) names RC74XA.
+stock_has_board() {
+    for f in "$STOCK"/*.toml; do
+        [ -f "$f" ] || continue
+        case "${f##*/}" in *"$NAME"*) continue ;; esac
+        grep -q "\"$BOARD\"" "$f" && return 0
+    done
+    return 1
+}
+
+do_start() {
+    rc=0
+    release || rc=$?
+    if [ "$rc" = 2 ]; then
+        set_state foreign-mount
+        return 0
+    fi
+    [ "$rc" = 0 ] || exit 1
+    if [ ! -d "$STOCK" ]; then
+        log "$STOCK_REL does not exist (no steamos-manager); nothing to do"
+        set_state no-stock-dir
+        return 0
+    fi
+    if stock_has_board; then
+        log "a stock device file already lists $BOARD; using the stock files unchanged"
+        rm -rf "$MERGED"
+        set_state stock-has-board
+        return 0
+    fi
+    set -- "$OURS"/*.toml
+    if [ ! -f "$1" ]; then
+        log "no device file in $OURS_REL; run: $NAME apply --only power"
+        set_state missing-config
+        exit 1
+    fi
+    mkdir -p "$ROOT$RUN_REL"
+    rm -rf "$MERGED.tmp"
+    mkdir -m 0755 "$MERGED.tmp"
+    # Every stock entry, so the bind mount hides nothing.
+    for f in "$STOCK"/* "$STOCK"/.[!.]*; do
+        [ -e "$f" ] || continue
+        cp -pR "$f" "$MERGED.tmp/"
+    done
+    for f in "$OURS"/*.toml; do
+        cp "$f" "$MERGED.tmp/"
+        chmod 0644 "$MERGED.tmp/${f##*/}"
+    done
+    rm -rf "$MERGED"
+    mv "$MERGED.tmp" "$MERGED"
+    mount --bind "$MERGED" "$STOCK"
+    mount -o remount,bind,ro "$STOCK" || log "read-only remount failed; the bind mount stays read-write"
+    set_state mounted
+    log "added $BOARD to steamos-manager's device files (bind mount on $STOCK_REL)"
+}
+
+do_stop() {
+    rc=0
+    release || rc=$?
+    [ "$rc" != 1 ] || exit 1
+    rm -rf "$MERGED" "$MERGED.tmp"
+    set_state stopped
+}
+
+do_status() {
+    if [ -f "$STATE" ]; then
+        cat "$STATE"
+    else
+        printf 'stopped\n'
+    fi
+}
+
+case "${1:-}" in
+    start) do_start ;;
+    stop) do_stop ;;
+    status) do_status ;;
+    *)
+        printf 'usage: %s start|stop|status\n' "$0" >&2
+        exit 2
+        ;;
+esac

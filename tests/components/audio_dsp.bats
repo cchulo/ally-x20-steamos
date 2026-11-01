@@ -36,7 +36,7 @@ setup() {
 @test "files: every destination is in the deck home, x20-prefixed, slot home" {
     run audio_dsp_files
     assert_success
-    [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" = 7 ]
+    [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" = 9 ]
     while IFS=$'\t' read -r src dest mode slot; do
         [ -f "$REPO_ROOT/overlay/$src" ]
         case "$dest" in "$H"/*) ;; *) false ;; esac
@@ -79,7 +79,15 @@ setup() {
     [ -f "$r/.local/share/wireplumber/scripts/lib/x20-route-core.lua" ]
     [ -f "$r/.local/share/wireplumber/scripts/x20-select-default-sink.lua" ]
     [ -f "$r/.local/share/wireplumber/scripts/lib/x20-sink-facts.lua" ]
+    [ -f "$r/.local/share/wireplumber/scripts/x20-hardware-volume.lua" ]
+    [ -f "$r/.local/share/wireplumber/scripts/lib/x20-volume-core.lua" ]
+    manifest_has "$H/.local/share/wireplumber/scripts/x20-hardware-volume.lua"
+    manifest_has "$H/.local/share/wireplumber/scripts/lib/x20-volume-core.lua"
     grep -q 'name = x20-select-default-sink.lua, type = script/lua' "$r/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf"
+    grep -q 'name = x20-hardware-volume.lua, type = script/lua' "$r/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf"
+    grep -q 'custom.x20-hardware-volume \]' "$r/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf"
+    grep -q 'x20.hardware_volume = true' "$r/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
+    grep -qx 'hardware_volume=1' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     for n in set-a set-b set-c; do
         cmp "$r/.config/ally-x20-steamos/hrtf/$n.sofa" "$AX20_HRTF_SOURCE_DIR/$n.sofa"
     done
@@ -185,6 +193,8 @@ prio() {
     [ ! -e "$r/.local/share/wireplumber/scripts/x20-select-default-sink.lua" ]
     [ ! -e "$r/.local/share/wireplumber/scripts/lib/x20-sink-facts.lua" ]
     [ ! -e "$r/.local/share/wireplumber/scripts/x20-route-by-channels.lua" ]
+    [ ! -e "$r/.local/share/wireplumber/scripts/x20-hardware-volume.lua" ]
+    [ ! -e "$r/.local/share/wireplumber/scripts/lib/x20-volume-core.lua" ]
     [ ! -e "$r/.config/wireplumber/wireplumber.conf.d/50-x20-route-by-channels.conf" ]
 }
 
@@ -435,6 +445,8 @@ PY
     [ ! -e "$r/.local/share/wireplumber/scripts/x20-select-default-sink.lua" ]
     [ ! -e "$r/.local/share/wireplumber/scripts/lib/x20-sink-facts.lua" ]
     [ ! -e "$r/.local/share/wireplumber/scripts/lib/x20-route-core.lua" ]
+    [ ! -e "$r/.local/share/wireplumber/scripts/x20-hardware-volume.lua" ]
+    [ ! -e "$r/.local/share/wireplumber/scripts/lib/x20-volume-core.lua" ]
     [ -f "$r/.config/ally-x20-steamos/hrtf/set-a.sofa" ]
     grep -qx 'enabled=0' "$r/.config/ally-x20-steamos/audio-dsp.conf"
     [ -z "$(audio_dsp_files)" ]
@@ -693,6 +705,25 @@ lua_bin() {
     run "$lua" "$REPO_ROOT/tests/lua/test_x20_route_core.lua" "$REPO_ROOT"
     assert_success
     assert_output_contains " 0 failures"
+}
+
+@test "lua: hardware volume rule (fixtures in tests/fixtures/audio_dsp/volume-cases.txt)" {
+    local lua
+    lua=$(lua_bin) || skip "no Lua interpreter (lua, lua5.4, lua5.3, luajit) installed; volume rule tests not run"
+    run "$lua" "$REPO_ROOT/tests/lua/test_x20_volume_core.lua" "$REPO_ROOT"
+    assert_success
+    assert_output_contains " 0 failures"
+}
+
+@test "WirePlumber settings: hardware_volume rendered, default on, invalid falls back to on" {
+    component_apply audio_dsp
+    local w="$AX20_ROOT$H/.config/wireplumber/wireplumber.conf.d/51-x20-settings.conf"
+    grep -q 'x20.hardware_volume = true' "$w"
+    audio_dsp_write_settings hardware_volume=0
+    audio_dsp_render_wpsettings
+    grep -q 'x20.hardware_volume = false' "$w"
+    audio_dsp_write_settings hardware_volume=maybe
+    [ "$(audio_dsp_setting_value hardware_volume)" = 1 ]
 }
 
 @test "lua: hook glue and core parse" {

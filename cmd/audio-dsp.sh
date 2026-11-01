@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# summary: headphone/speaker virtual surround + speaker chain: on|off|status|hrtf|speakers-precedence|headphones-virtual-surround|stereo-surround|stereo-hrtf|speaker-surround|xtc|lfe|master-gain|test
+# summary: headphone/speaker virtual surround + speaker chain: on|off|status|hrtf|speakers-precedence|headphones-virtual-surround|stereo-surround|hardware-volume|stereo-hrtf|speaker-surround|xtc|lfe|master-gain|test
 # shellcheck source=lib/component.sh
 . "$AX20_SRC/lib/component.sh"
 
@@ -26,6 +26,12 @@ usage: $AX20_NAME audio-dsp <command>
                         on: the automatic default on the speakers is the
                         speaker virtual surround instead of the plain speaker
                         chain (default off; restarts PipeWire)
+  hardware-volume on|off
+                        on (default): while one of our sinks is the default,
+                        every sink under it (x20-speakers, the hardware
+                        speaker or headphone sink) is held at 100 %, so
+                        Steam's slider is the only volume; off: restores
+                        what it raised. Applied to the running session at once
   stereo-hrtf on|off
   speaker-surround on|off
                         no effect any more: streams follow the sink picked in
@@ -98,6 +104,10 @@ cmd_audio_dsp() {
             shift
             _audio_dsp_cmd_setting headphones-virtual-surround headphones_virtual_surround "$@"
             ;;
+        hardware-volume)
+            shift
+            _audio_dsp_cmd_setting hardware-volume hardware_volume "$@"
+            ;;
         xtc)
             shift
             _audio_dsp_cmd_xtc "$@"
@@ -154,6 +164,7 @@ _audio_dsp_cmd_status() {
         "$(audio_dsp_setting_value speakers_precedence)" \
         "$(audio_dsp_priorities | cut -d' ' -f1)" "$(audio_dsp_priorities | cut -d' ' -f2)"
     printf 'headphones_virtual_surround: %s\n' "$(audio_dsp_setting_value headphones_virtual_surround)"
+    printf 'hardware_volume: %s (sinks under our default held at 100 %%)\n' "$(audio_dsp_setting_value hardware_volume)"
     printf 'xtc:             %s\n' "$(audio_dsp_xtc_describe)"
     printf 'x20-speakers:    %s\n' "$(AX20_GAIN_CHAIN=speakers audio_dsp_gain_describe)"
     printf 'speaker surround: %s\n' "$(audio_dsp_gain_describe)"
@@ -244,7 +255,8 @@ _audio_dsp_cmd_toggle() {
 # _audio_dsp_cmd_setting <command> <key> on|off : a WirePlumber setting:
 # persisted in audio-dsp.conf and 51-x20-settings.conf, and applied to the
 # running session with `wpctl settings` (x20-select-default-sink.lua
-# re-evaluates the default sink when its settings change).
+# re-evaluates the default sink, x20-hardware-volume.lua the volumes, when
+# their settings change).
 _audio_dsp_cmd_setting() {
     local cmd=$1 key=$2 v
     v=$(_audio_dsp_on_off "$cmd" "${3:-}") || return 2

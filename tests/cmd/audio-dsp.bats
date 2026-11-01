@@ -430,3 +430,28 @@ prio_of() { sed -n 's/^ *priority.session = //p' "$AX20_ROOT$1" | head -n1; }
     ax audio-dsp speakers-precedence off
     wpset | grep -q 'x20.speakers_precedence = false'
 }
+
+@test "hardware-volume off|on: default on, persisted, rendered for the hook, shown in status" {
+    ax audio-dsp on
+    settings | grep -qx 'hardware_volume=1'
+    wpset | grep -q 'x20.hardware_volume = true'
+    run ax audio-dsp status
+    assert_output_contains "hardware_volume: 1"
+    run ax audio-dsp hardware-volume off
+    assert_success
+    settings | grep -qx 'hardware_volume=0'
+    wpset | grep -q 'x20.hardware_volume = false'
+    run ax audio-dsp status
+    assert_output_contains "hardware_volume: 0"
+    # survives a re-apply; the other defaults are untouched
+    ax audio-dsp on
+    wpset | grep -q 'x20.hardware_volume = false'
+    settings | grep -qx 'speakers_precedence=1'
+    settings | grep -qx 'headphones_virtual_surround=1'
+    settings | grep -qx 'stereo_surround=0'
+    run ax audio-dsp hardware-volume on
+    assert_success
+    wpset | grep -q 'x20.hardware_volume = true'
+    run ax audio-dsp hardware-volume loud
+    assert_failure 2
+}

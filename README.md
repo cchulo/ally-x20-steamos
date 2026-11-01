@@ -11,6 +11,15 @@ testable in a VM before it ever touches the device.
 > X20. It ships patched kernel modules and an ACPI table override: read what
 > you run, back up what matters to you, and use it at your own risk. Issues
 > and reports are welcome.
+>
+> **Use at your own discretion.** This is a hobby project by one owner for
+> one device. The owner is not responsible for a broken, bricked or
+> warranty-voided Ally X20, lost data, or anything else that follows from
+> using it. If you are not comfortable with patched kernel modules, boot
+> entry edits and an ACPI override on your handheld, wait for official
+> SteamOS support for the X20 instead, or use a distribution that already
+> targets it, such as [Anatase](https://github.com/anatase-org/anatase),
+> if you absolutely need Linux on it today.
 
 **New here? Read the [user guide](docs/user-guide.md)**: what it fixes and
 what not yet, how to install, check, update and remove it, and how to report

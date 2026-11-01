@@ -42,7 +42,8 @@ cmd_boot() {
     apply_components 1 "" || true
 
     kver=$(probe_running_kver)
-    if [ -f "$AX20_SRC/cmd/rebuild.sh" ] && ! [ -d "$(ax20_state_dir)/modules/$kver" ]; then
+    # Staged modules live under the early boot dir (/etc), not the state dir.
+    if [ -f "$AX20_SRC/cmd/rebuild.sh" ] && ! [ -d "$(ax20_path "${AX20_EARLY_REL}/modules/$kver")" ]; then
         pending="kernel modules for $kver"
         boot_kick_rebuild "$kver"
     fi

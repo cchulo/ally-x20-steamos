@@ -328,7 +328,12 @@ db_lists_newer_rel() {
     GNUPGHOME="$gh" gpg --batch --quiet --import "$REPO_ROOT/build/keys/steamos-package-signing.asc"
     GNUPGHOME="$gh" gpg --batch --with-colons --list-keys | grep -q '^fpr:::::::::889B5EBDDD505A683621900DAF1D2199EF0A3CCF:'
     GNUPGHOME="$gh" gpgconf --kill all 2>/dev/null || true
-    [ "$(basename "$BM_PKG_KEYRING")" = steamos-package-signing.asc ]
+    # Found next to the script in a checkout, and through PATCHES_DIR when
+    # the script runs from elsewhere (the container's /usr/local/bin).
+    BM_PKG_KEYRING=""
+    [ "$(bm_pkg_keyring)" = "$REPO_ROOT/build/keys/steamos-package-signing.asc" ]
+    PATCHES_DIR="$REPO_ROOT/patches/kernel" BASH_SOURCE=/usr/local/bin/build-modules.sh bm_pkg_keyring >/dev/null 2>&1 || true
+    [ "$(PATCHES_DIR="$REPO_ROOT/patches/kernel" bm_pkg_keyring)" = "$REPO_ROOT/build/keys/steamos-package-signing.asc" ]
 }
 
 @test "step 2 explains a kver without the -g<commit> suffix" {

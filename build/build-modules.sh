@@ -56,8 +56,9 @@ BM_FULL_BUILD="${BM_FULL_BUILD:-1}"
 # Valve's package signing key (GitLab CI Package Builder, steamos.cloud,
 # fingerprint 889B5EBDDD505A683621900DAF1D2199EF0A3CCF), used only when a
 # package has to be fetched by name because the repo database no longer
-# lists that pkgrel.
-BM_PKG_KEYRING="${BM_PKG_KEYRING:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keys/steamos-package-signing.asc}"
+# lists that pkgrel. BM_PKG_KEYRING overrides; see bm_pkg_keyring.
+BM_PKG_KEYRING="${BM_PKG_KEYRING:-}"
+BM_PKG_KEYRING_NAME=steamos-package-signing.asc
 BM_SYMBOL_IGNORE="${BM_SYMBOL_IGNORE:-^$}"
 
 bm_log() { printf 'build-modules: %s\n' "$*" >&2; }
@@ -329,12 +330,32 @@ bm_fetch_repo_db() {
     bm_fetch "$BM_MIRROR_BASE/$1/os/x86_64/$1.db" "$2"
 }
 
+# bm_pkg_keyring : BM_PKG_KEYRING, or build/keys/<name> next to this script
+# (checkout) or under the checkout PATCHES_DIR points into (the container
+# runs /usr/local/bin/build-modules.sh with /src mounted).
+bm_pkg_keyring() {
+    local d
+    if [ -n "$BM_PKG_KEYRING" ]; then
+        printf '%s\n' "$BM_PKG_KEYRING"
+        return 0
+    fi
+    for d in "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keys" \
+        "$(cd "${PATCHES_DIR:-.}/../.." 2>/dev/null && pwd)/build/keys"; do
+        if [ -s "$d/$BM_PKG_KEYRING_NAME" ]; then
+            printf '%s\n' "$d/$BM_PKG_KEYRING_NAME"
+            return 0
+        fi
+    done
+    printf '%s\n' "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keys/$BM_PKG_KEYRING_NAME"
+}
+
 # bm_verify_pkg_sig <file> <sig> : the detached signature is good and was
-# made by a key in BM_PKG_KEYRING (a throwaway GNUPGHOME holds nothing else).
+# made by a key in the keyring (a throwaway GNUPGHOME holds nothing else).
 bm_verify_pkg_sig() {
-    local f=$1 sig=$2 gh rc=1
-    [ -s "$BM_PKG_KEYRING" ] || {
-        bm_warn "no package signing keyring at $BM_PKG_KEYRING"
+    local f=$1 sig=$2 gh rc=1 keyring
+    keyring=$(bm_pkg_keyring)
+    [ -s "$keyring" ] || {
+        bm_warn "no package signing keyring at $keyring"
         return 1
     }
     bm_have gpg || {
@@ -344,7 +365,7 @@ bm_verify_pkg_sig() {
     gh=$(mktemp -d "${TMPDIR:-/tmp}/bm-gnupg.XXXXXX") || return 1
     chmod 0700 "$gh"
     : >"$gh/common.conf"
-    if GNUPGHOME="$gh" gpg --batch --quiet --import "$BM_PKG_KEYRING" >/dev/null 2>&1 \
+    if GNUPGHOME="$gh" gpg --batch --quiet --import "$keyring" >/dev/null 2>&1 \
         && GNUPGHOME="$gh" gpg --batch --verify "$sig" "$f" >/dev/null 2>&1; then
         rc=0
     fi
@@ -368,7 +389,7 @@ bm_fetch_package_direct() {
         return 1
     fi
     if ! bm_verify_pkg_sig "$dest/$fn" "$dest/$fn.sig"; then
-        bm_warn "$fn: signature does not verify against $(basename "$BM_PKG_KEYRING"); not trusting it"
+        bm_warn "$fn: signature does not verify against $(basename "$(bm_pkg_keyring)"); not trusting it"
         rm -f "$dest/$fn" "$dest/$fn.sig"
         return 1
     fi

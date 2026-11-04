@@ -13,7 +13,17 @@ setup() {
     mkdir -p "$AX20_PATCHES_DIR"
     printf '0001-a.patch\tsound/soc/amd/acp\tsnd-soc-acpi-amd-match.ko\n' >"$AX20_PATCHES_DIR/modules.list"
     printf '0010-h.patch\tdrivers/hid\thid-asus-ally.ko\n0011-h.patch\tdrivers/hid\thid-asus-ally.ko\n' >"$AX20_PATCHES_DIR/modules-hid.list"
+    for p in 0001-a 0010-h 0011-h; do printf '%s v1\n' "$p" >"$AX20_PATCHES_DIR/$p.patch"; done
     export AX20_OFFLINE=0
+}
+
+# build_info_patches : patch.<name>=<sha256> for the listed patches, as
+# build/build-modules.sh records them (builds without them are refused).
+build_info_patches() {
+    local p
+    for p in 0001-a.patch 0010-h.patch 0011-h.patch; do
+        printf 'patch.%s=%s\n' "$p" "$(ax20_sha256 "$AX20_PATCHES_DIR/$p")"
+    done
 }
 
 # make_build <dir> <kver> [module...] : a fake build output directory.
@@ -21,7 +31,7 @@ make_build() {
     local d=$1 k=$2 m
     shift 2
     mkdir -p "$d"
-    printf 'format=1\nkver=%s\nvermagic=%s SMP\n' "$k" "$k" >"$d/BUILD-INFO"
+    { printf 'format=1\nkver=%s\nvermagic=%s SMP\n' "$k" "$k"; build_info_patches; } >"$d/BUILD-INFO"
     [ $# -gt 0 ] || set -- hid-asus-ally snd-soc-acpi-amd-match
     for m in "$@"; do
         printf 'ko %s %s' "$m" "$k" >"$d/$m.ko.zst"

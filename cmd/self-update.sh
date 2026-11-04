@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # summary: update this ally-x20-steamos checkout to the newest signed release (or beta), with rollback
 #
-# Plan §4.4, docs/self-update.md. Operates on the git checkout at AX20_SRC
-# (normally /var/lib/ally-x20-steamos/src). Every git call is
-# `git -C "$AX20_SRC"`. Exit codes: 0 ok / nothing to do, 1 error,
+# Plan §4.4, docs/self-update.md. Operates on the installed git checkout
+# (/var/lib/ally-x20-steamos/src) when there is one, else on the checkout
+# this script runs from (AX20_SRC). Every git call is `git -C "$AX20_SRC"`
+# after AX20_SRC has been pointed at that checkout. Exit codes: 0 ok / nothing to do, 1 error,
 # 2 usage, 3 cannot reach origin (callers such as rebuild and the RAUC
 # pre-install handler treat 3 as "offline, carry on").
 # shellcheck source=lib/selfupdate.sh
@@ -94,6 +95,17 @@ cmd_self_update() {
 
     require_root self-update
     ax20_have git || die "git is required for self-update"
+    # Update the installed checkout, whichever copy of the script was run:
+    # the clone someone installed from is often deleted later, and the boot
+    # service, the update handler and the next self-update all use the
+    # installed one. The logic of this (possibly newer) copy drives the
+    # update; apply and migrations run from the installed checkout's code.
+    local installed
+    installed=$(ax20_path "$SU_SRC_REL")
+    if su_is_git_checkout "$installed" && ! su_same_dir "$installed" "$AX20_SRC"; then
+        log_info "updating the installed checkout at $SU_SRC_REL (this copy at $AX20_SRC is left as it is)"
+        AX20_SRC=$installed
+    fi
     su_is_git_checkout "$AX20_SRC" \
         || die "$AX20_SRC is not a git checkout; self-update only works on an installation made by 'install' (or a git clone)"
     if [ "$explicit_channel" = 1 ] && [ "$check" = 0 ] && [ "$rollback" = 0 ]; then

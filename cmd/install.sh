@@ -68,11 +68,6 @@ _install_current_ref() {
         || su_git "$AX20_SRC" symbolic-ref -q --short HEAD 2>/dev/null || true
 }
 
-# _install_same_dir <a> <b>
-_install_same_dir() {
-    [ -d "$1" ] && [ -d "$2" ] && [ "$(cd "$1" && pwd -P)" = "$(cd "$2" && pwd -P)" ]
-}
-
 # _install_update_existing <target> <ref> : fetch and move an existing
 # checkout to <ref> (fast-forward only for branches).
 _install_update_existing() {
@@ -197,7 +192,7 @@ cmd_install() {
         url=$(su_git "$AX20_SRC" remote get-url origin 2>/dev/null || true)
     fi
 
-    if _install_same_dir "$target" "$AX20_SRC"; then
+    if su_same_dir "$target" "$AX20_SRC"; then
         log_info "running from $SU_SRC_REL already; not cloning"
         [ -n "$url" ] || url=unknown
     elif su_is_git_checkout "$target"; then

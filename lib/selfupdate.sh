@@ -85,6 +85,11 @@ su_require_clean() {
 }
 
 # su_head <repo> : full commit id of HEAD.
+# su_same_dir <a> <b> : both exist and resolve to the same directory.
+su_same_dir() {
+    [ -d "$1" ] && [ -d "$2" ] && [ "$(cd "$1" && pwd -P)" = "$(cd "$2" && pwd -P)" ]
+}
+
 su_head() { su_git "$1" rev-parse --verify -q 'HEAD^{commit}'; }
 
 # su_describe <repo> : nearest v* tag description of HEAD, or the short commit.

@@ -12,8 +12,8 @@
 #   breathe on / off  5a d1 21 02 01 08 / 00 08  feature report
 #
 # 0x09 is the "power LED mask" g-helper uses for the rings (low four bits);
-# bit 0x10 is the Xbox button. The MCU keeps the setting, so "on" is only
-# needed once. Nothing here touches the joystick rings.
+# bit 0x10 is the Xbox button. The MCU keeps the settings while powered but
+# not across a reboot. Nothing here touches the joystick rings.
 
 _xbox_led_usage() {
     cat <<USAGE
@@ -26,8 +26,8 @@ usage: $AX20_NAME xbox-led [--hidraw <dev>] <command>
 
   --hidraw <dev>        use this hidraw node instead of auto-detecting it
 
-Needs root (the hidraw node is root-only). The MCU remembers the settings.
-See docs/rgb.md, "Xbox button light".
+Needs root (the hidraw node is root-only). The setting lasts until the next
+reboot. See docs/rgb.md, "Xbox button light".
 USAGE
 }
 

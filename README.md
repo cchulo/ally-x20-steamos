@@ -100,7 +100,7 @@ ally-x20-steamos.sh [--root <dir>] [--dry-run] [--verbose] [--yes] [--i-know] <c
 | `rebuild [--kver <v>]` | fetch or build the patched kernel modules (cache → release asset → container build) |
 | `self-update [--channel stable\|beta] [--check] [--rollback]` | signed-tag update of the checkout, migrations, re-apply |
 | `power status\|tdp-slider [on\|off]` | power profiles; the TDP slider test switch (default off) |
-| `xbox-led on\|off\|brightness <0-3>\|breathe on\|off\|node` | the Xbox button light (root; the controller keeps the setting) |
+| `xbox-led on\|off\|brightness <0-3>\|breathe on\|off\|node` | the Xbox button light (root; lasts until the next reboot) |
 | `update-policy show\|block\|degrade [--once]` | what an update does if modules cannot be built |
 | `boot-entry show\|set\|clear\|apply\|restore` | the boot-entry exception (early initrd, cmdline args) |
 | `audit [--json]` | manifest vs filesystem: modified, missing, unexpected |

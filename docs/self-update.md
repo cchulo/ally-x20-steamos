@@ -51,6 +51,20 @@ staged or untracked files), self-update stops and lists them. It never
 runs `reset --hard`, `stash` or `clean`. Commit your change on a branch,
 move it elsewhere, or remove it, then retry.
 
+## Which checkout is updated
+
+Always the installed one, `/var/lib/ally-x20-steamos/src`, whichever copy
+of the script you run. The clone you installed from (in your home
+directory, say) is left as it is, and may be deleted. That clone's code
+drives the update, so a freshly pulled clone can rescue an installed copy
+whose own self-update is too old to cope (for example, one installed before
+v0.1.4, whose code rejects every tag when only placeholder keys are
+pinned). Only when there is no installed checkout does self-update act on
+the clone it runs from.
+
+`apply`, by contrast, installs the code of the copy you run it from. Run it
+from `/var/lib/ally-x20-steamos/src` unless you mean to test a clone.
+
 ## Signing and the pinned key
 
 Release tags are signed by the project owner, with either an OpenPGP key or

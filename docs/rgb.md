@@ -85,15 +85,19 @@ exposes it, so Steam's Customization page cannot drive it (steamos-manager
 handles one LED, the rings). The command that does:
 
 ```sh
-sudo ally-x20-steamos xbox-led on              # or off
-sudo ally-x20-steamos xbox-led brightness 3    # 0 (dark) .. 3 (brightest)
-sudo ally-x20-steamos xbox-led breathe on      # or off for a steady light
-sudo ally-x20-steamos xbox-led node            # which /dev/hidrawN it uses
+cd /var/lib/ally-x20-steamos/src
+sudo ./ally-x20-steamos.sh xbox-led on              # or off
+sudo ./ally-x20-steamos.sh xbox-led brightness 3    # 0 (dark) .. 3 (brightest)
+sudo ./ally-x20-steamos.sh xbox-led breathe on      # or off for a steady light
+sudo ./ally-x20-steamos.sh xbox-led node            # which /dev/hidrawN it sends to
 ```
 
-The light is single-colour (green); there is no colour command. The MCU
-keeps the settings, so `on` is needed once, not at every boot. Whether it
-also survives a full power-off has not been checked yet (`TODO(hw)`).
+The light is single-colour (green); there is no colour command. `off` and
+`on` leave the brightness level alone. The controller keeps the settings
+while the system runs but **not across a reboot** (measured 2026-11-04:
+dark again after `reboot`), so `on` has to be repeated after every boot
+until a boot-time restore ships. Suspend/resume has not been checked yet
+(`TODO(hw)`).
 
 The reports were captured from Armoury Crate on Windows
 ([xbox-led-capture.md](xbox-led-capture.md)) and verified on an X20 on

@@ -26,7 +26,7 @@ risk.
 | The Armoury Crate button (top left) and the capture button (top right) do nothing. | **Armoury Crate** opens Steam's **Quick Access** menu. **Capture** takes a **screenshot**. |
 | Rumble at 100 % feels weak, and strong rumble makes the speakers hiss. | Rumble uses its full range, and the static from the speakers during strong rumble is gone. |
 | The joystick-ring lights cannot be changed from Steam. | **Settings → Customization** in Game Mode shows the joystick-ring lighting (colour and brightness). |
-| The Xbox button light is dark. | `sudo ally-x20-steamos xbox-led on` lights it (green, as on Windows); `brightness 0-3` and `breathe on\|off` as well. The controller remembers the setting. There is no Steam menu for it. |
+| The Xbox button light is dark. | `sudo ./ally-x20-steamos.sh xbox-led on` lights it (green, as on Windows); `brightness 0-3` and `breathe on\|off` as well. The setting lasts until the next reboot; there is no Steam menu for it. |
 | Game Mode does not detect HDR on the OLED screen and only offers 60 and 120 Hz. | **HDR** is available in Game Mode, and the refresh rate can be set anywhere from 30 to 120 Hz. |
 | Steam's **Performance** tab has no power profile switch. | **Low power**, **Balanced** and **Performance** profiles are there (about 12, 16-21 and 25-30 W for the processor on battery). Balanced is the default. |
 | Steam's controller screens show a generic handheld outline. | They show the Xbox Ally X, which has the same shell, screen and controls. |
@@ -37,8 +37,9 @@ risk.
   limit it is sent, so a slider would move and change nothing. Use the
   three power profiles instead. Details, and how to re-test after a BIOS
   update: [power.md](power.md).
-- **The Xbox button light has no menu.** It is switched from the command
-  line only ([rgb.md](rgb.md#xbox-button-light)).
+- **The Xbox button light has no menu and forgets its setting at reboot.**
+  It is switched from the command line only, and has to be switched on
+  again after every boot for now ([rgb.md](rgb.md#xbox-button-light)).
 - **HDR in Desktop Mode** needs an extra build step that the installer does
   not run for you ([hdr.md](hdr.md)). Game Mode HDR works without it.
 - **Bluetooth and USB headsets** are left as SteamOS sets them up: their
@@ -199,12 +200,30 @@ sudo ./ally-x20-steamos.sh self-update           # install it
 sudo ./ally-x20-steamos.sh self-update --rollback   # go back if the new one misbehaves
 ```
 
-`self-update` only installs releases signed with the project's key, and it
-refuses to run if you changed files in the installed copy. If it says it
-cannot verify a release, install the new release the same way as the first
-time instead: clone (or `git pull` in your clone), check out the newest tag,
-and run `sudo ./ally-x20-steamos.sh install` again. Re-running `install` is
-safe; it moves the installed copy to that release and re-applies.
+What the two commands do:
+
+- `self-update` fetches the newest release signed with the project's key,
+  moves the **installed copy** (`/var/lib/ally-x20-steamos/src`) to it, and
+  then runs `apply`. It updates the installed copy even when you run it
+  from another clone, so the clone you installed from can be deleted.
+- `apply` installs the code of the copy you run it from onto the system.
+  You need it on its own only after changing the checkout by hand. It is
+  safe to run as often as you like.
+
+`self-update` refuses to run if you changed files in the installed copy.
+If it says it cannot verify a release, or rejects every tag (installs made
+before v0.1.4 have placeholder keys and old code that does not understand
+them), update from a fresh clone instead:
+
+```sh
+git clone https://github.com/cchulo/ally-x20-steamos.git ~/ally-x20-steamos
+cd ~/ally-x20-steamos
+git checkout v0.1.6                    # the newest release tag
+sudo ./ally-x20-steamos.sh self-update   # updates the installed copy with this clone's code
+```
+
+or run `sudo ./ally-x20-steamos.sh install` from that clone; re-running
+`install` is safe and moves the installed copy to that release.
 Details: [self-update.md](self-update.md).
 
 ## Uninstall

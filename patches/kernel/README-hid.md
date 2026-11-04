@@ -263,8 +263,9 @@ the ring colour (`5a b3 …`, `5a b4`, `5a b5`) after every mask write, but
 on the X20 the rings kept their colour without that. The byte `08` in the
 `0x21` report did not change between breathe and steady in the capture
 (speed, or a fixed field). Nothing in the capture suggests an RGB colour
-for the button. The MCU keeps the settings across the command's exit;
-`TODO(hw)` whether they survive a full power-off.
+for the button. The MCU keeps the settings while powered but not across a
+reboot (measured 2026-11-04: dark again after a warm reboot), so a restore
+at boot is needed; `TODO(hw)` whether suspend/resume also clears them.
 
 Open option: a `go_s:white:xbox_button` LED class device in the driver
 (`brightness` 0 → mask off, 1–3 → the level report) would let udev and

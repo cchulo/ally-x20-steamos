@@ -314,7 +314,31 @@ M
     [ "$(cut -f3 "$AX20_ROOT$STATE/state/last-update-check")" = fetch-failed ]
 }
 
+@test "run from another clone (the one installed from): the installed checkout is updated, the clone is left alone" {
+    clone="$BATS_TEST_TMPDIR/home-clone"
+    git clone --quiet --branch v0.2.0 "$ORIGIN" "$clone"
+    run "$clone/ally-x20-steamos.sh" self-update --insecure-skip-verify
+    assert_success
+    assert_output_contains "updating the installed checkout at $STATE/src"
+    assert_output_contains "updated to v0.2.0"
+    [ "$(head_of "$SRC")" = "$V2" ]
+    [ "$(head_of "$clone")" = "$V2" ]
+    # apply ran from the installed checkout (its stub records the VERSION)
+    [ "$(cat "$AX20_ROOT$STATE/applied")" = "0.2.0" ]
+    [ ! -e "$clone/.git/ax20-touched" ]
+}
+
+@test "run from another clone with --check: reports against the installed checkout" {
+    clone="$BATS_TEST_TMPDIR/home-clone"
+    git clone --quiet --branch v0.2.0 "$ORIGIN" "$clone"
+    run "$clone/ally-x20-steamos.sh" self-update --check --insecure-skip-verify
+    assert_success
+    assert_output_contains "v0.2.0"
+    [ "$(head_of "$SRC")" = "$V1" ]
+}
+
 @test "not a git checkout: clear error" {
+    rm -rf "$SRC"
     src="$BATS_TEST_TMPDIR/plain"
     mkdir -p "$src"
     cp -R "$REPO_ROOT/ally-x20-steamos.sh" "$REPO_ROOT/VERSION" "$REPO_ROOT/lib" "$REPO_ROOT/cmd" "$src/"

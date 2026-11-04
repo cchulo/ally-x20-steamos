@@ -99,8 +99,14 @@ and a module parameter of the same name). `xbox-led on` writes the attribute
 and a modprobe.d option, so the light is on from the next boot too. Without
 the patched module the command writes the mask once, keeping the driver's
 `sleep_animation` bit, and the light is dark again after a reboot.
-Brightness and breathing are separate MCU commands and last until the next
-reboot. Suspend/resume has not been checked (`TODO(hw)`).
+Brightness and breathing are separate MCU commands that the controller
+resets at power-on (back to maximum, steady), so the command records them in
+`/etc/ally-x20-steamos/xbox-led.conf` and component `xboxled` re-sends them
+through a udev rule whenever the ring LED device appears (boot, resume,
+reconnect); `xbox-led restore` does the same by hand. These reports are
+volatile, nothing is written to MCU flash. Measured on the X20: a soft
+reboot keeps the level (the controller stays powered), a full power-off
+resets it, and the restore covers both.
 
 The reports were captured from Armoury Crate on Windows
 ([xbox-led-capture.md](xbox-led-capture.md)) and verified on an X20 on

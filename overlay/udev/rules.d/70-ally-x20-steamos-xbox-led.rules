@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# ally-x20-steamos: re-send the Xbox-button light settings (brightness,
+# breathing) whenever the controller's ring LED device appears: boot, resume
+# and reconnect. The controller resets them to default at power-on. Detached
+# through systemd-run so udev is not held up waiting for the device node.
+ACTION=="add", SUBSYSTEM=="leds", KERNEL=="go_s:rgb:joystick_rings|ally:rgb:joystick_rings", TEST=="/etc/ally-x20-steamos/xbox-led.conf", RUN+="/usr/bin/systemd-run --no-block --collect --unit=ally-x20-steamos-xbox-led-restore /etc/ally-x20-steamos/xbox-led-restore"

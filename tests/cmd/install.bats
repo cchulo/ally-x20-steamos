@@ -127,6 +127,28 @@ STUB
     ! grep -q pinned-by-owner "$AX20_ROOT$STATE/keys/allowed_signers"
 }
 
+@test "placeholder pins are replaced by real keys without --repin-keys" {
+    run "$CLI" install --no-apply --repo "$ORIGIN" --ref v0.1.0
+    assert_success
+    printf 'owner@example.invalid namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPlaceholderReplacedByARealLookingKey test\n' >"$W/keys/allowed_signers"
+    commit_all "$W" "real key"
+    git -C "$W" tag -a v0.1.1 -m v0.1.1
+    git -C "$W" push --quiet origin main --tags
+    run "$CLI" install --no-apply --repo "$ORIGIN" --ref v0.1.1
+    assert_success
+    assert_output_contains "placeholders only; pinning the real keys"
+    grep -q 'AAAAC3NzaC1lZDI1NTE5AAAAIPlaceholderReplacedByARealLookingKey' "$AX20_ROOT$STATE/keys/allowed_signers"
+    # A real pin is kept afterwards.
+    printf 'owner@example.invalid namespaces="git" ssh-ed25519 AAAAOther test\n' >"$W/keys/allowed_signers"
+    commit_all "$W" "rotate"
+    git -C "$W" tag -a v0.1.2 -m v0.1.2
+    git -C "$W" push --quiet origin main --tags
+    run "$CLI" install --no-apply --repo "$ORIGIN" --ref v0.1.2
+    assert_success
+    assert_output_contains "keeping the pinned ones"
+    grep -q 'AAAAC3NzaC1lZDI1NTE5AAAAIPlaceholderReplacedByARealLookingKey' "$AX20_ROOT$STATE/keys/allowed_signers"
+}
+
 @test "install refuses when read-only mode was disabled, unless --i-know" {
     fixture_file /.ax20-readonly-disabled
     run "$CLI" install --no-apply --repo "$ORIGIN" --ref v0.1.0

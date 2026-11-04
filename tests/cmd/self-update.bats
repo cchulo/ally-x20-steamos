@@ -184,17 +184,61 @@ M
     [ "$(head_of "$SRC")" = "$V3" ]
 }
 
-@test "a release cannot bring its own key: only the pinned copy is trusted" {
-    key=$(ssh_signing_key)
-    # The signed release ships the matching key in keys/, but the pinned
-    # copy on the device is still the placeholder.
-    cp "$AX20_ROOT$STATE/keys/allowed_signers" "$W/keys/allowed_signers"
-    cp "$SRC/keys/allowed_signers" "$AX20_ROOT$STATE/keys/allowed_signers"
-    new_release v0.3.0 -c gpg.format=ssh -c user.signingkey="$key" -c tag.gpgSign=true
+@test "a release cannot bring its own key once a real key is pinned" {
+    key_a=$(ssh_signing_key)
+    # Upstream switches to key B and ships it; the device still pins A.
+    ssh-keygen -q -t ed25519 -N '' -C b -f "$BATS_TEST_TMPDIR/keyb" >/dev/null
+    printf 'owner@example.invalid namespaces="git" %s\n' "$(cat "$BATS_TEST_TMPDIR/keyb.pub")" >"$W/keys/allowed_signers"
+    new_release v0.3.0 -c gpg.format=ssh -c user.signingkey="$BATS_TEST_TMPDIR/keyb" -c tag.gpgSign=true
+    run "$SU" self-update
+    assert_failure
+    assert_output_contains "not signed by a pinned key"
+    [ "$(head_of "$SRC")" = "$V1" ]
+    grep -q "$(cut -d' ' -f3 "$BATS_TEST_TMPDIR/signkey.pub")" "$AX20_ROOT$STATE/keys/allowed_signers"
+    : "$key_a"
+}
+
+@test "placeholders pinned (pre-0.1.4 install): the key shipped in the newest verifying release is trusted once and pinned" {
+    # Device: placeholder allowed_signers, no .asc (setup). Upstream ships key A
+    # and signs v0.3.0 with it; copy_repo_tree also put the project's real
+    # release-signing.asc in upstream, which must not matter here.
+    ssh-keygen -q -t ed25519 -N '' -C a -f "$BATS_TEST_TMPDIR/keya" >/dev/null
+    printf 'owner@example.invalid namespaces="git" %s\n' "$(cat "$BATS_TEST_TMPDIR/keya.pub")" >"$W/keys/allowed_signers"
+    new_release v0.3.0 -c gpg.format=ssh -c user.signingkey="$BATS_TEST_TMPDIR/keya" -c tag.gpgSign=true
+    run "$SU" self-update
+    assert_success
+    assert_output_contains "trusting the key shipped in v0.3.0 on first use"
+    assert_output_contains "updated to v0.3.0"
+    [ "$(head_of "$SRC")" = "$(head_of "$W" v0.3.0)" ]
+    grep -q "$(cut -d' ' -f2 "$BATS_TEST_TMPDIR/keya.pub")" "$AX20_ROOT$STATE/keys/allowed_signers"
+    # From now on the pin is real: a release signed by (and shipping) key B is refused.
+    ssh-keygen -q -t ed25519 -N '' -C b -f "$BATS_TEST_TMPDIR/keyb" >/dev/null
+    printf 'owner@example.invalid namespaces="git" %s\n' "$(cat "$BATS_TEST_TMPDIR/keyb.pub")" >"$W/keys/allowed_signers"
+    new_release v0.4.0 -c gpg.format=ssh -c user.signingkey="$BATS_TEST_TMPDIR/keyb" -c tag.gpgSign=true
+    run "$SU" self-update
+    assert_success
+    assert_output_contains "tag v0.4.0 is not signed by a pinned key"
+    assert_output_contains "already up to date"
+    [ "$(head_of "$SRC")" = "$(head_of "$W" v0.3.0)" ]
+    grep -q "$(cut -d' ' -f2 "$BATS_TEST_TMPDIR/keya.pub")" "$AX20_ROOT$STATE/keys/allowed_signers"
+}
+
+@test "placeholders pinned and no release ships a verifying key: still refused" {
     run "$SU" self-update
     assert_failure
     assert_output_contains "no release signing key is pinned"
     [ "$(head_of "$SRC")" = "$V1" ]
+}
+
+@test "the placeholder .asc (comment mentions the armor marker) is not key material" {
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/lib/selfupdate.sh"
+    mkdir -p "$BATS_TEST_TMPDIR/k"
+    printf '# Only files containing "-----BEGIN PGP PUBLIC KEY BLOCK-----" are used.\n' >"$BATS_TEST_TMPDIR/k/release-signing.asc"
+    [ -z "$(su_gpg_key_files "$BATS_TEST_TMPDIR/k")" ]
+    ! su_has_keys "$BATS_TEST_TMPDIR/k"
+    su_has_keys "$REPO_ROOT/keys"
+    [ "$(su_gpg_key_files "$REPO_ROOT/keys")" = "$REPO_ROOT/keys/release-signing.asc" ]
 }
 
 @test "GPG-signed tag verifies against a pinned .asc key" {

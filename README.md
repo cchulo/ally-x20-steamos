@@ -118,7 +118,7 @@ overlay/              files installed on the device (manifest-tracked)   uninsta
 patches/kernel/       0001-0006 ASoC (audio), 0010-0015 hid-asus-ally, 0020 asus-armoury   patches/{gamescope,libdisplay-info}/
 build/                Containerfile, build-modules.sh, build-hdr.sh, build-inputplumber.sh, kernel-sources.md
 acpi/                 patch-acp-flag.py (DSDT flag patch + early initrd), dump-dsdt.md, fixtures/, tests/
-firmware/             tas2783.lock, fetch-tas2783.sh, speaker-id.map       keys/        release signing key placeholders
+firmware/             tas2783.lock, fetch-tas2783.sh, speaker-id.map       keys/        release signing key (OpenPGP)   
 vm/                   run-steamos-vm.sh, setup-fedora-host.sh, guest/ scripts, test LED module, ci/
 migrations/           idempotent self-update migrations                     tests/       bats suites (shell), fixtures
 docs/                 user and developer documentation (index: docs/README.md)

@@ -4,3 +4,4 @@
 0013-hid-asus-ally-fix-use-after-free-on-interface-unbind.patch	drivers/hid	hid-asus-ally.ko
 0014-hid-asus-ally-scale-rumble-and-vibration-intensity-to-0-100.patch	drivers/hid	hid-asus-ally.ko
 0015-hid-asus-ally-hold-X20-top-right-key-for-250-ms.patch	drivers/hid	hid-asus-ally.ko
+0016-hid-asus-ally-aura-apply-on-effect-change-xbox-button-light.patch	drivers/hid	hid-asus-ally.ko

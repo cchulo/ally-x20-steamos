@@ -17,20 +17,85 @@ setup() {
     cp "$AX20_ROOT$CONF" "$BATS_TEST_TMPDIR/pristine"
 }
 
-@test "register appends one delimited block and saves the original with its digest" {
+# parses_single_handlers <file> <post> : configparser (what
+# steamos-atomupd-client uses, strict mode) accepts the file and sees our
+# post-install handler. A second [handlers] section or a repeated key would
+# raise DuplicateSectionError / DuplicateOptionError.
+parses_single_handlers() {
+    python3 -I -c 'import configparser, sys
+c = configparser.ConfigParser()
+c.read(sys.argv[1])
+assert c["handlers"]["post-install"] == sys.argv[2], dict(c["handlers"])
+assert c["handlers"]["pre-install"] == sys.argv[3], dict(c["handlers"])' "$1" "$2" "$3"
+}
+
+@test "register puts one delimited block inside the stock [handlers] section and saves the original with its digest" {
     rauc_register "$PRE" "$POST"
     f="$AX20_ROOT$CONF"
-    [ "$(grep -c '^# >>> ally-x20-steamos' "$f")" = 1 ]
-    [ "$(grep -c '^# <<< ally-x20-steamos' "$f")" = 1 ]
-    [ "$(tail -n1 "$f")" = "# <<< ally-x20-steamos" ]
+    [ "$(grep -c '^\[handlers\]' "$f")" = 1 ]
+    [ "$(grep -c '^# >>> ally-x20-steamos managed block' "$f")" = 1 ]
+    [ "$(grep -c '^# >>> ally-x20-steamos' "$f")" = 2 ]
+    [ "$(grep -c '^# <<< ally-x20-steamos' "$f")" = 2 ]
+    # Our block follows the header; our keys appear once, the stock handler
+    # line is kept as a prefixed comment.
+    [ "$(grep -n -A1 '^\[handlers\]' "$f" | sed -n 2p | sed 's/^[0-9]*-//')" = "# >>> ally-x20-steamos managed block (sep=0); original saved as /var/lib/ally-x20-steamos/backup/rauc/system.conf; remove with \"ally-x20-steamos uninstall\"" ]
+    [ "$(grep -c '^pre-install=' "$f")" = 1 ]
+    [ "$(grep -c '^post-install=' "$f")" = 1 ]
     grep -qx "pre-install=$PRE" "$f"
     grep -qx "post-install=$POST" "$f"
-    # stock lines untouched, in place
-    [ "$(head -n "$(wc -l <"$BATS_TEST_TMPDIR/pristine")" "$f" | ax20_sha256 /dev/stdin)" = "$(ax20_sha256 "$BATS_TEST_TMPDIR/pristine")" ]
+    grep -qx '#ally-x20-steamos-orig:post-install=/usr/lib/rauc/post-install.sh' "$f"
+    grep -qx 'bootloader-custom-backend=/usr/lib/rauc/bootloader-custom-backend.sh' "$f"
+    # The stock file is still there under our blocks.
+    [ "$(rauc_strip_block "$f" | ax20_sha256 /dev/stdin)" = "$(ax20_sha256 "$BATS_TEST_TMPDIR/pristine")" ]
     b="$AX20_ROOT/var/lib/ally-x20-steamos/backup/rauc/system.conf"
     cmp "$b" "$BATS_TEST_TMPDIR/pristine"
     [ "$(cat "$b.sha256")" = "$(ax20_sha256 "$b")" ]
     rauc_registered "$PRE" "$POST"
+}
+
+@test "registered file has one [handlers] section for configparser (steamos-atomupd-client)" {
+    command -v python3 >/dev/null || skip "python3 not installed"
+    rauc_register "$PRE" "$POST"
+    parses_single_handlers "$AX20_ROOT$CONF" "$POST" "$PRE"
+    # The same with no stock [handlers] section (block appended with a header).
+    fixture_rauc_conf 0
+    rauc_register "$PRE" "$POST"
+    [ "$(grep -c '^\[handlers\]' "$AX20_ROOT$CONF")" = 1 ]
+    parses_single_handlers "$AX20_ROOT$CONF" "$POST" "$PRE"
+}
+
+@test "stock pre-install and post-install are both kept as comments and chained" {
+    printf '[system]\ncompatible=steamos-amd64\n\n[handlers]\npost-install=/usr/lib/rauc/post-install.sh\npre-install = /usr/lib/rauc/pre.sh\n\n[slot.rootfs.0]\nbootname=A\n' >"$AX20_ROOT$CONF"
+    cp "$AX20_ROOT$CONF" "$BATS_TEST_TMPDIR/two"
+    rauc_register "$PRE" "$POST"
+    f="$AX20_ROOT$CONF"
+    [ "$(grep -c '^pre-install' "$f")" = 1 ]
+    [ "$(grep -c '^post-install' "$f")" = 1 ]
+    grep -qx '#ally-x20-steamos-orig:pre-install = /usr/lib/rauc/pre.sh' "$f"
+    [ "$(rauc_chain_get pre-install)" = /usr/lib/rauc/pre.sh ]
+    [ "$(rauc_chain_get post-install)" = /usr/lib/rauc/post-install.sh ]
+    rauc_unregister
+    cmp "$f" "$BATS_TEST_TMPDIR/two"
+}
+
+@test "old layout (block appended with a second [handlers]) is migrated by register, unregister restores pristine" {
+    f="$AX20_ROOT$CONF"
+    {
+        cat "$BATS_TEST_TMPDIR/pristine"
+        printf '%s\n' "# >>> ally-x20-steamos managed block (sep=0); original saved as /var/lib/ally-x20-steamos/backup/rauc/system.conf; remove with \"ally-x20-steamos uninstall\"" \
+            '# stock handlers are chained, see /var/lib/ally-x20-steamos/state/rauc-chain' \
+            '[handlers]' "pre-install=$PRE" "post-install=$POST" '# <<< ally-x20-steamos'
+    } >"$f"
+    [ "$(grep -c '^\[handlers\]' "$f")" = 2 ]
+    run rauc_registered "$PRE" "$POST"
+    assert_failure
+    rauc_register "$PRE" "$POST"
+    [ "$(grep -c '^\[handlers\]' "$f")" = 1 ]
+    [ "$(tail -n1 "$f")" = "bootname=A" ]
+    rauc_registered "$PRE" "$POST"
+    cmp "$AX20_ROOT/var/lib/ally-x20-steamos/backup/rauc/system.conf" "$BATS_TEST_TMPDIR/pristine"
+    rauc_unregister
+    cmp "$f" "$BATS_TEST_TMPDIR/pristine"
 }
 
 @test "existing stock handlers are chained, not replaced" {
@@ -64,7 +129,8 @@ setup() {
     first=$(ax20_sha256 "$AX20_ROOT$CONF")
     rauc_register "$PRE" "$POST"
     [ "$(ax20_sha256 "$AX20_ROOT$CONF")" = "$first" ]
-    [ "$(grep -c '^# >>> ally-x20-steamos' "$AX20_ROOT$CONF")" = 1 ]
+    [ "$(grep -c '^# >>> ally-x20-steamos managed block' "$AX20_ROOT$CONF")" = 1 ]
+    [ "$(grep -c '^\[handlers\]' "$AX20_ROOT$CONF")" = 1 ]
 }
 
 @test "never chains to itself when our handler is the stock value" {
@@ -89,9 +155,18 @@ setup() {
     printf '%s' "$(cat "$AX20_ROOT$CONF")" >"$AX20_ROOT$CONF"
     cp "$AX20_ROOT$CONF" "$BATS_TEST_TMPDIR/noeol"
     rauc_register "$PRE" "$POST"
+    grep -q '^# >>> ally-x20-steamos managed block (sep=1)' "$AX20_ROOT$CONF"
     rm -rf "$AX20_ROOT/var/lib/ally-x20-steamos/backup"
     rauc_unregister
     cmp "$AX20_ROOT$CONF" "$BATS_TEST_TMPDIR/noeol"
+    # The same when the unterminated last line is the stock handler we comment out.
+    printf '[system]\ncompatible=steamos-amd64\n\n[handlers]\npost-install=/usr/lib/rauc/post-install.sh' >"$AX20_ROOT$CONF"
+    cp "$AX20_ROOT$CONF" "$BATS_TEST_TMPDIR/noeol2"
+    rauc_register "$PRE" "$POST"
+    [ "$(rauc_chain_get post-install)" = /usr/lib/rauc/post-install.sh ]
+    rauc_register "$PRE" "$POST"
+    rauc_unregister
+    cmp "$AX20_ROOT$CONF" "$BATS_TEST_TMPDIR/noeol2"
 }
 
 @test "corrupted backup: unregister strips only our block, still byte-identical" {

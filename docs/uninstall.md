@@ -159,8 +159,9 @@ uninstaller refuses to touch:
 - anything under `/usr`, `/boot`, `/dev`, `/proc`, `/sys`, `/run`;
 - `/etc/fstab`, `/etc/passwd`, `/etc/shadow`, `/etc/group`, `/etc/hostname`,
   `/etc/machine-id`;
-- `/etc/rauc/**` (only the delimited block restore may change
-  `system.conf`);
+- `/etc/rauc/**` (only the delimited-block strip may change
+  `system.conf`: our blocks go, a stock handler line we commented out
+  inside one comes back);
 - Steam data (`~/.steam`, `~/.local/share/Steam`);
 - the ESP (`/efi`, `/esp`) except files whose name contains
   `ally-x20-steamos`;

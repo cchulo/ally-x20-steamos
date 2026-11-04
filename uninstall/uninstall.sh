@@ -30,6 +30,8 @@ NAME="ally-x20-steamos"
 TOKEN_RE='ally-x20-steamos|x20'
 MARK_BEGIN="# >>> ally-x20-steamos"
 MARK_END="# <<< ally-x20-steamos"
+# lib/rauc.sh keeps a stock handler line inside a block with this prefix.
+MARK_ORIG="#ally-x20-steamos-orig:"
 US=$(printf '\036')
 
 ROOT=""
@@ -514,9 +516,12 @@ entry_referencing() {
 #   original   the stock file bytes as they were before we touched them
 #   meta       key=value lines: path=, sha256= (of original), type=file|block
 # type=file  : restore byte-for-byte (only if 'original' still hashes to sha256)
-# type=block : remove our delimited block from the live file; if the result
-#              equals 'original' nothing else to do, otherwise keep the
-#              stripped file (Valve may have changed it since) and say so.
+# type=block : remove our delimited blocks from the live file (a stock line
+#              we commented out inside a block, prefix MARK_ORIG, comes back
+#              as it was; "sep=1" on a begin line means the original had no
+#              final newline); if the result equals 'original' nothing else
+#              to do, otherwise keep the stripped file (Valve may have
+#              changed it since) and say so.
 # A boot entry carrying the lib/slots.sh marker whose saved copy is missing,
 # corrupt or older than the entry is regenerated from the marker instead
 # (entry_regenerate).
@@ -594,10 +599,17 @@ $bpath"
                     continue
                 fi
                 tmp=$(mktemp "$real.XXXXXX") || fatal "mktemp failed next to $bpath"
-                awk -v b="$MARK_BEGIN" -v e="$MARK_END" '
-                    index($0, b) == 1 { skip = 1; next }
+                sep=0
+                awk -v b="$MARK_BEGIN" -v e="$MARK_END" -v p="$MARK_ORIG" '
+                    index($0, b) == 1 { skip = 1; if (index($0, "sep=1")) sep = 1; next }
                     index($0, e) == 1 { skip = 0; next }
-                    !skip { print }' "$real" >"$tmp"
+                    skip && index($0, p) == 1 { print substr($0, length(p) + 1); next }
+                    !skip { print }
+                    END { if (sep) exit 3 }' "$real" >"$tmp" || sep=1
+                if [ "$sep" = 1 ]; then
+                    # The original had no final newline: drop the one awk added.
+                    printf '%s' "$(cat "$tmp")" >"$tmp"
+                fi
                 if [ "$DRY" = 1 ]; then
                     rm -f "$tmp"
                     printf '[dry-run] strip %s block from %s\n' "$NAME" "$bpath"

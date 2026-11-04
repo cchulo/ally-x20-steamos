@@ -7,25 +7,43 @@
 # stock file. The contract:
 #   * the original is saved to backup/rauc/system.conf (+ .sha256) before
 #     the first change, and refreshed whenever the stock file underneath
-#     our block changed (a SteamOS update gives the new slot a fresh copy);
-#   * our change is one delimited block appended at the end:
-#         # >>> ally-x20-steamos ...
+#     our blocks changed (a SteamOS update gives the new slot a fresh copy);
+#   * the written file has exactly one [handlers] section and each key in
+#     it once. RAUC's GKeyFile parser would merge a repeated group, but
+#     steamos-atomupd-client (holoatomupd/client.py, get_rauc_config) reads
+#     the same file with Python's configparser in strict mode, which
+#     raises DuplicateSectionError and kills every `steamos-update` check.
+#     So when the stock file has a [handlers] section our main block goes
+#     right after its header, without a header of its own:
 #         [handlers]
+#         # >>> ally-x20-steamos managed block (sep=0); ...
+#         # stock handlers are chained, see .../state/rauc-chain
 #         pre-install=<our handler>
 #         post-install=<our handler>
 #         # <<< ally-x20-steamos
-#     RAUC parses system.conf with GLib's GKeyFile, which merges a repeated
-#     group and lets the last value of a key win, so the stock lines stay
-#     untouched. TODO(vm): confirm with the RAUC version SteamOS ships
-#     (`rauc status` works and our handler runs during an update);
+#     and each stock pre-install=/post-install= line of that section is
+#     replaced in place by a small block that carries the original line as
+#     a comment:
+#         # >>> ally-x20-steamos stock handler, chained by the block above
+#         #ally-x20-steamos-orig:post-install=/usr/lib/rauc/post-install.sh
+#         # <<< ally-x20-steamos
+#     When the stock file has no [handlers] section, one block carrying the
+#     header is appended at the end (sep=1 in the begin line means the
+#     original had no final newline). Stripping drops the block lines and
+#     puts the #ally-x20-steamos-orig: lines back without the prefix, so
+#     the result is the original byte-for-byte;
 #   * any handler the stock file already defines is recorded in
 #     state/rauc-chain and executed by our handlers (chaining, never
 #     replacing). SteamOS defines post-install=/usr/lib/rauc/post-install.sh
 #     (per icedream/steamos-permanent-mods), which rsyncs /var into the new
 #     slot and re-installs GRUB there;
+#   * registration renders the file from the stripped original and writes
+#     only when the live file differs, so an older layout (block appended
+#     at the end with a second [handlers]) is migrated by the next apply;
 #   * removal restores the saved original byte-for-byte after verifying its
-#     hash; if that is impossible the block is stripped instead, which is
-#     byte-identical by construction.
+#     hash; if that is impossible the blocks are stripped instead, which is
+#     byte-identical by construction. uninstall/uninstall.sh does the same
+#     strip without this library.
 #
 # Note: SteamOS's post-install rsync excludes var/lib/overlays/etc/upper/rauc,
 # so the new slot boots with a stock system.conf. The post-install handler
@@ -42,6 +60,8 @@ RAUC_PRE_HANDLER_REL="${RAUC_LIBEXEC_REL}/rauc-pre-install.hook"
 RAUC_POST_HANDLER_REL="${RAUC_LIBEXEC_REL}/rauc-post-install.hook"
 RAUC_BEGIN="# >>> ${AX20_NAME}"
 RAUC_END="# <<< ${AX20_NAME}"
+# A stock handler line kept inside one of our blocks, prefix removed on strip.
+RAUC_ORIG="#${AX20_NAME}-orig:"
 
 rauc_conf_file() { ax20_path "$RAUC_CONF_REL"; }
 rauc_backup_file() { ax20_path "$RAUC_BACKUP_REL"; }
@@ -53,15 +73,16 @@ rauc_block_present() {
     [ -f "$f" ] && grep -Fq -- "$RAUC_BEGIN" "$f"
 }
 
-# rauc_strip_block <file> : print the file without our block. If we had to
-# add a newline in front of the block (original lacked a final newline),
-# the begin line says "sep=1" and that newline is dropped too.
+# rauc_strip_block <file> : print the file without our blocks; stock handler
+# lines we commented out come back as they were. If the original had no
+# final newline (begin line says "sep=1") the last newline is dropped too.
 rauc_strip_block() {
     local f=$1 tmp rc=0
     tmp=$(mktemp "${TMPDIR:-/tmp}/ax20-rauc.XXXXXX")
-    awk -v b="$RAUC_BEGIN" -v e="$RAUC_END" '
+    awk -v b="$RAUC_BEGIN" -v e="$RAUC_END" -v p="$RAUC_ORIG" '
         index($0, b) == 1 { inblk = 1; if (index($0, "sep=1")) sep = 1; next }
         inblk && index($0, e) == 1 { inblk = 0; next }
+        inblk && index($0, p) == 1 { print substr($0, length(p) + 1); next }
         inblk { next }
         { print }
         END { if (sep) exit 3 }
@@ -74,15 +95,13 @@ rauc_strip_block() {
     rm -f "$tmp"
 }
 
-# rauc_handler_value <file> <key> : value of <key> in [handlers], outside
-# our block, last occurrence wins (GKeyFile semantics). Empty if unset.
+# rauc_handler_value <file> <key> : value of <key> in the stock [handlers]
+# section (our blocks stripped first), last occurrence wins (GKeyFile
+# semantics). Empty if unset.
 rauc_handler_value() {
     local f=$1 key=$2
     [ -f "$f" ] || return 0
-    awk -v b="$RAUC_BEGIN" -v e="$RAUC_END" -v key="$key" '
-        index($0, b) == 1 { inblk = 1; next }
-        inblk && index($0, e) == 1 { inblk = 0; next }
-        inblk { next }
+    rauc_strip_block "$f" | awk -v key="$key" '
         /^[ \t]*\[/ { g = $0; gsub(/^[ \t]*\[|\][ \t]*$/, "", g); next }
         g == "handlers" {
             line = $0
@@ -95,7 +114,7 @@ rauc_handler_value() {
             val = v
         }
         END { if (val != "") print val }
-    ' "$f"
+    '
 }
 
 # _rauc_resolve <value> : handler paths may be relative to system.conf's dir.
@@ -107,33 +126,76 @@ _rauc_resolve() {
     esac
 }
 
-# rauc_render_block <pre-handler> <post-handler> <sep:0|1>
+# _rauc_has_handlers <file> : the stock file defines a [handlers] section.
+_rauc_has_handlers() {
+    grep -Eq '^[ \t]*\[handlers\][ \t]*$' "$1"
+}
+
+# rauc_render_block <pre-handler> <post-handler> <sep:0|1> [with-header:0|1]
+# The main block; with-header=1 adds the [handlers] line (appended layout).
 rauc_render_block() {
-    [ "$3" = 1 ] && printf '\n'
+    [ "$3" = 1 ] && [ "${4:-1}" = 1 ] && printf '\n'
     printf '%s managed block (sep=%s); original saved as %s; remove with "%s uninstall"\n' \
         "$RAUC_BEGIN" "$3" "$RAUC_BACKUP_REL" "$AX20_NAME"
     printf '# stock handlers are chained, see %s\n' "$RAUC_CHAIN_REL"
-    printf '[handlers]\n'
+    [ "${4:-1}" = 1 ] && printf '[handlers]\n'
     printf 'pre-install=%s\n' "$1"
     printf 'post-install=%s\n' "$2"
     printf '%s\n' "$RAUC_END"
 }
 
-# rauc_registered [pre] [post] : block present and pointing at our handlers.
+# rauc_render <original-file> <pre-handler> <post-handler> : the registered
+# file for this original, on stdout.
+rauc_render() {
+    local orig=$1 pre=$2 post=$3 sep=0
+    [ -s "$orig" ] && [ -n "$(tail -c1 "$orig")" ] && sep=1
+    if ! _rauc_has_handlers "$orig"; then
+        cat "$orig"
+        rauc_render_block "$pre" "$post" "$sep" 1
+        return 0
+    fi
+    # ENVIRON instead of -v: awk would interpret backslashes in -v values.
+    AX20_RAUC_MAIN=$(rauc_render_block "$pre" "$post" "$sep" 0) \
+    AX20_RAUC_STOCK_BEGIN="$RAUC_BEGIN stock handler, chained by the block above" \
+    AX20_RAUC_END="$RAUC_END" AX20_RAUC_ORIG="$RAUC_ORIG" \
+        awk '
+        /^[ \t]*\[/ {
+            g = $0; gsub(/^[ \t]*\[|\][ \t]*$/, "", g)
+            print
+            if (g == "handlers" && !done) { print ENVIRON["AX20_RAUC_MAIN"]; done = 1 }
+            next
+        }
+        g == "handlers" {
+            line = $0
+            sub(/^[ \t]+/, "", line)
+            n = index(line, "=")
+            if (n) {
+                k = substr(line, 1, n - 1); sub(/[ \t]+$/, "", k)
+                if (k == "pre-install" || k == "post-install") {
+                    print ENVIRON["AX20_RAUC_STOCK_BEGIN"]
+                    print ENVIRON["AX20_RAUC_ORIG"] $0
+                    print ENVIRON["AX20_RAUC_END"]
+                    next
+                }
+            }
+        }
+        { print }
+    ' "$orig"
+}
+
+# rauc_registered [pre] [post] : our block is present and the live file is
+# exactly what we would write for the stock file underneath it, so an older
+# layout counts as not registered and gets migrated.
 rauc_registered() {
-    local f pre=${1:-$RAUC_PRE_HANDLER_REL} post=${2:-$RAUC_POST_HANDLER_REL}
+    local f pre=${1:-$RAUC_PRE_HANDLER_REL} post=${2:-$RAUC_POST_HANDLER_REL} tmpd rc=0
     f=$(rauc_conf_file)
     rauc_block_present "$f" || return 1
-    awk -v b="$RAUC_BEGIN" -v e="$RAUC_END" '
-        index($0, b) == 1 { inblk = 1; next }
-        inblk && index($0, e) == 1 { inblk = 0; next }
-        inblk { print }
-    ' "$f" | grep -Fxq -- "pre-install=$pre" || return 1
-    awk -v b="$RAUC_BEGIN" -v e="$RAUC_END" '
-        index($0, b) == 1 { inblk = 1; next }
-        inblk && index($0, e) == 1 { inblk = 0; next }
-        inblk { print }
-    ' "$f" | grep -Fxq -- "post-install=$post"
+    tmpd=$(mktemp -d "${TMPDIR:-/tmp}/ax20-rauc.XXXXXX")
+    rauc_strip_block "$f" >"$tmpd/orig"
+    rauc_render "$tmpd/orig" "$pre" "$post" >"$tmpd/new"
+    cmp -s "$f" "$tmpd/new" || rc=1
+    rm -rf "$tmpd"
+    return "$rc"
 }
 
 # rauc_backup_valid : saved original exists and matches its digest.
@@ -167,7 +229,7 @@ _rauc_write_chain() {
 # rauc_register [pre-handler] [post-handler] : idempotent.
 rauc_register() {
     local pre=${1:-$RAUC_PRE_HANDLER_REL} post=${2:-$RAUC_POST_HANDLER_REL}
-    local f b tmpd sep=0
+    local f b tmpd
     f=$(rauc_conf_file)
     if ! [ -f "$f" ]; then
         log_warn "$RAUC_CONF_REL not found; not a SteamOS root? skipping RAUC registration"
@@ -192,15 +254,11 @@ rauc_register() {
         fi
     fi
     _rauc_write_chain "$tmpd/orig" "$pre" "$post"
-    if rauc_registered "$pre" "$post"; then
+    rauc_render "$tmpd/orig" "$pre" "$post" >"$tmpd/new"
+    if cmp -s "$f" "$tmpd/new"; then
         rm -rf "$tmpd"
         return 0
     fi
-    [ -s "$tmpd/orig" ] && [ -n "$(tail -c1 "$tmpd/orig")" ] && sep=1
-    {
-        cat "$tmpd/orig"
-        rauc_render_block "$pre" "$post" "$sep"
-    } >"$tmpd/new"
     # Self-check: stripping must give the original back.
     rauc_strip_block "$tmpd/new" >"$tmpd/check"
     if ! cmp -s "$tmpd/orig" "$tmpd/check"; then

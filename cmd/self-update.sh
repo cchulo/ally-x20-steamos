@@ -177,6 +177,7 @@ _self_update_switch() {
     log_info "checked out $label (previous: $(printf '%s' "$prev" | cut -c1-12))"
     su_run_migrations "$AX20_SRC"
     _self_update_apply "$no_apply"
+    [ "$no_apply" = 1 ] || [ "$AX20_DRY_RUN" = 1 ] || su_stage_modules "$AX20_SRC"
 }
 
 _self_update_apply() {

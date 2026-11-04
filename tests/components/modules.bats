@@ -23,10 +23,25 @@ stock_modules() {
     fixture_file "/usr/lib/modules/$KV/kernel/drivers/platform/x86/asus-armoury.ko" "${3:-x RC74XA y}"
 }
 
+# patch_files : the two listed patches, so builds can record their hashes.
+patch_files() {
+    printf 'asoc patch v1\n' >"$AX20_PATCHES_DIR/0001-a.patch"
+    printf 'hid patch v1\n' >"$AX20_PATCHES_DIR/0010-h.patch"
+}
+
+# build_info_patches [dir] : patch.<name>=<sha256> lines for the current patches.
+build_info_patches() {
+    local p
+    for p in 0001-a.patch 0010-h.patch; do
+        printf 'patch.%s=%s\n' "$p" "$(ax20_sha256 "$AX20_PATCHES_DIR/$p")"
+    done
+}
+
 stage_build() {
     local d="$BATS_TEST_TMPDIR/build"
     mkdir -p "$d"
-    printf 'kver=%s\n' "$KV" >"$d/BUILD-INFO"
+    patch_files
+    { printf 'kver=%s\n' "$KV"; build_info_patches; } >"$d/BUILD-INFO"
     printf 'a' >"$d/snd-soc-acpi-amd-match.ko.zst"
     printf 'h' >"$d/hid-asus-ally.ko.zst"
     modules_stage "$KV" "$d"
@@ -99,7 +114,9 @@ stage_build() {
     run component_status modules
     [ "$output" = active ]
     printf '0020-p.patch\tdrivers/platform/x86\tasus-armoury.ko\n' >"$AX20_PATCHES_DIR/modules-power.list"
+    printf 'power patch v1\n' >"$AX20_PATCHES_DIR/0020-p.patch"
     printf 'p' >"$AX20_ROOT/etc/ally-x20-steamos/modules/$KV/asus-armoury.ko.zst"
+    printf 'patch.0020-p.patch=%s\n' "$(ax20_sha256 "$AX20_PATCHES_DIR/0020-p.patch")" >>"$AX20_ROOT/etc/ally-x20-steamos/modules/$KV/BUILD-INFO"
     run component_status modules
     [ "$output" = stock ]
     run modules_status_detail
@@ -174,7 +191,8 @@ stage_build() {
     component_apply modules
     d="$BATS_TEST_TMPDIR/build"
     mkdir -p "$d"
-    printf 'kver=%s\nmodule.snd-soc-acpi-amd-match=superseded\nmodule.hid-asus-ally=superseded\n' "$KV" >"$d/BUILD-INFO"
+    patch_files
+    { printf 'kver=%s\nmodule.snd-soc-acpi-amd-match=superseded\nmodule.hid-asus-ally=superseded\n' "$KV"; build_info_patches; } >"$d/BUILD-INFO"
     modules_stage "$KV" "$d"
     run component_status modules
     [ "$output" = superseded ]
@@ -183,7 +201,8 @@ stage_build() {
 @test "rebuild command: prints the source used and BUILD-INFO" {
     a="$AX20_ROOT/var/lib/ally-x20-steamos/cache/artifacts"
     mkdir -p "$a" "$BATS_TEST_TMPDIR/art/$KV"
-    printf 'kver=%s\nheader_source=2\n' "$KV" >"$BATS_TEST_TMPDIR/art/$KV/BUILD-INFO"
+    patch_files
+    { printf 'kver=%s\nheader_source=2\n' "$KV"; build_info_patches; } >"$BATS_TEST_TMPDIR/art/$KV/BUILD-INFO"
     printf 'a' >"$BATS_TEST_TMPDIR/art/$KV/snd-soc-acpi-amd-match.ko.zst"
     printf 'h' >"$BATS_TEST_TMPDIR/art/$KV/hid-asus-ally.ko.zst"
     tar -C "$BATS_TEST_TMPDIR/art" -cf - "$KV" | zstd -q -o "$a/modules-$KV.tar.zst"
@@ -200,4 +219,49 @@ stage_build() {
     assert_output_contains "stock modules stay in use"
     run "$CLI" --root "$AX20_ROOT" rebuild --source floppy
     assert_failure 2
+}
+
+@test "a staged build from another version of a patch is not available; status explains; rebuild re-stages" {
+    component_apply modules
+    stage_build
+    modules_available "$KV"
+    # the checkout's hid patch changes (a new release)
+    printf 'hid patch v2\n' >"$AX20_PATCHES_DIR/0010-h.patch"
+    run modules_available "$KV"
+    assert_failure
+    run modules_staged_stale "$KV"
+    assert_success
+    assert_output_contains '0010-h.patch: built from a different version of the patch'
+    run modules_status
+    assert_output_contains 'stock'
+    run modules_status_detail
+    assert_output_contains 'staged modules for'
+    assert_output_contains 'are from another release (0010-h.patch: built from a different version of the patch)'
+    # the cache holds no artifact: staging a matching build makes it current again
+    stage_build
+    run modules_available "$KV"
+    assert_success
+}
+
+@test "a build whose BUILD-INFO lacks the patch hashes is refused by modules_stage" {
+    component_load modules
+    patch_files
+    d="$BATS_TEST_TMPDIR/old"
+    mkdir -p "$d"
+    printf 'kver=%s\n' "$KV" >"$d/BUILD-INFO"
+    printf 'a' >"$d/snd-soc-acpi-amd-match.ko.zst"
+    printf 'h' >"$d/hid-asus-ally.ko.zst"
+    run modules_stage "$KV" "$d"
+    assert_failure
+    assert_output_contains "does not match this checkout's patches (0001-a.patch: not in the build)"
+    [ ! -d "$AX20_ROOT/etc/ally-x20-steamos/modules/$KV" ]
+}
+
+@test "release download tries the checkout version first, then latest" {
+    component_load modules
+    printf '0.1.7\n' >"$BATS_TEST_TMPDIR/VERSION"
+    AX20_SRC="$BATS_TEST_TMPDIR" run _modules_release_urls
+    assert_success
+    [ "${lines[0]}" = "https://github.com/cchulo/ally-x20-steamos/releases/download/v0.1.7" ]
+    [ "${lines[1]}" = "https://github.com/cchulo/ally-x20-steamos/releases/latest/download" ]
 }

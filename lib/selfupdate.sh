@@ -295,6 +295,22 @@ su_run_migrations() {
     done
 }
 
+# su_stage_modules <checkout> : stage the patched modules for the running
+# kernel from that checkout (release artifact, cache or local build). rebuild
+# returns at once when the staged build already matches the checkout's
+# patches, and refuses builds made from other patches, so a release that
+# changes only a patch gets its new module here. Skipped on fixture roots.
+su_stage_modules() {
+    local src=$1 kver
+    [ -n "$AX20_ROOT" ] && return 0
+    [ -f "$src/cmd/rebuild.sh" ] || return 0
+    kver=$(probe_running_kver 2>/dev/null || uname -r)
+    [ -n "$kver" ] || return 0
+    su_run_cli "$src" rebuild --kver "$kver" --no-self-update \
+        || log_warn "could not stage the modules now; the boot service retries after the reboot (or run: $AX20_NAME rebuild)"
+    return 0
+}
+
 # su_run_cli <checkout> <command> [args...] : run a command of that
 # checkout's CLI if the command exists there. Returns its exit code, or 0
 # with a note when the command is not available (yet).

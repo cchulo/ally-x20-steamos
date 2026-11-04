@@ -51,6 +51,19 @@ staged or untracked files), self-update stops and lists them. It never
 runs `reset --hard`, `stash` or `clean`. Commit your change on a branch,
 move it elsewhere, or remove it, then retry.
 
+## Kernel modules after an update
+
+After checking out the new release and running `apply`, self-update stages
+the patched kernel modules for the running kernel from the new checkout
+(`rebuild`). A staged or cached build counts as current only when its
+BUILD-INFO carries the hashes of exactly the patches the checkout ships;
+a build from another release is refused, cached tarballs included, and the
+release matching the checkout's VERSION is downloaded (then "latest", then
+a container build). Before v0.1.8 only the kernel version was compared, so
+a release that changed a patch without a kernel change kept loading the
+previous build until `rebuild --force --source release`. Reboot to load the
+new modules; never reload `hid-asus-ally` live.
+
 ## Signing and the pinned key
 
 Release tags are signed by the project owner, with either an OpenPGP key or

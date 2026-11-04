@@ -87,6 +87,6 @@ cmd_rebuild() {
         cat "$dir/BUILD-INFO"
     fi
     if [ "$kver" = "$(probe_running_kver)" ]; then
-        log_info "reboot (or reload the modules) to use them"
+        log_info "reboot to use them (do not reload hid-asus-ally live: it has crashed the X20)"
     fi
 }

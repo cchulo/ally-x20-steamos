@@ -26,6 +26,7 @@ risk.
 | The Armoury Crate button (top left) and the capture button (top right) do nothing. | **Armoury Crate** opens Steam's **Quick Access** menu. **Capture** takes a **screenshot**. |
 | Rumble at 100 % feels weak, and strong rumble makes the speakers hiss. | Rumble uses its full range, and the static from the speakers during strong rumble is gone. |
 | The joystick-ring lights cannot be changed from Steam. | **Settings → Customization** in Game Mode shows the joystick-ring lighting (colour and brightness). |
+| The Xbox button light is dark. | `sudo ally-x20-steamos xbox-led on` lights it (green, as on Windows); `brightness 0-3` and `breathe on\|off` as well. The controller remembers the setting. There is no Steam menu for it. |
 | Game Mode does not detect HDR on the OLED screen and only offers 60 and 120 Hz. | **HDR** is available in Game Mode, and the refresh rate can be set anywhere from 30 to 120 Hz. |
 | Steam's **Performance** tab has no power profile switch. | **Low power**, **Balanced** and **Performance** profiles are there (about 12, 16-21 and 25-30 W for the processor on battery). Balanced is the default. |
 | Steam's controller screens show a generic handheld outline. | They show the Xbox Ally X, which has the same shell, screen and controls. |
@@ -36,8 +37,8 @@ risk.
   limit it is sent, so a slider would move and change nothing. Use the
   three power profiles instead. Details, and how to re-test after a BIOS
   update: [power.md](power.md).
-- **The Xbox button light stays dark.** Nobody has found out yet how to
-  switch it on from Linux ([rgb.md](rgb.md)).
+- **The Xbox button light has no menu.** It is switched from the command
+  line only ([rgb.md](rgb.md#xbox-button-light)).
 - **HDR in Desktop Mode** needs an extra build step that the installer does
   not run for you ([hdr.md](hdr.md)). Game Mode HDR works without it.
 - **Bluetooth and USB headsets** are left as SteamOS sets them up: their

@@ -240,28 +240,36 @@ running.
 
 ## Xbox button light
 
-The X20's Xbox button glows green on Windows and is dark on Linux. The stock
-driver registers no LED for it, and these patches do not add one: no public
-source documents the command. hhd (which supports the X20 and the RC73
-Xbox Allys), kndclark/ally_module, g-helper, asusctl and InputPlumber
-control only the joystick rings. A comment in hhd's X20 path says the X20 has no
-dynamic-lighting interface. On the Ally X, hhd disables that interface
-(HID application `0x00590001`, the LampArray usage page) after wake. g-helper's Ally power mask
-(`0x5a 0xd1 0x09 0x01 <mask>`) has only the ring ("keyboard") bits.
-`xpad`'s LED class device covers only Xbox 360 pads.
+The X20's Xbox button glows green on Windows and is dark after a Linux boot.
+The stock driver registers no LED for it and these patches do not add one;
+`ally-x20-steamos xbox-led` drives it from user space over the N-KEY
+configuration interface (`0b05:1b4c` interface 2, the hidraw node with
+report IDs `0x5a`, `0x5d`, `0x5e`; interrupt IN `0x83`, interrupt OUT
+`0x04`). No public driver (hhd, kndclark/ally_module, g-helper, asusctl,
+InputPlumber) knows these; they came from a USBPcap capture of Armoury Crate
+3.1.5 on Windows ([docs/xbox-led-capture.md](../../docs/xbox-led-capture.md))
+and were verified on an X20 on 2026-11-04. All reports are 64 bytes,
+zero-padded:
 
-`vm/guest/xbox-led.sh on|off|brightness <0-100>|color R G B` writes to a
-`/sys/class/leds/*xbox_button*` device if a later driver provides one.
-Otherwise it sends an experimental probe to the N-KEY hidraw node: the Aura
-static report for one zone, `5a b3 <zone> 00 R G B 00 00`, then `5a b5`
-(set only, no apply, so nothing is written to MCU flash). The default is
-zone 5, the Aura "logo" zone in asusctl and ally_module. Try
-`--zone 5`…`8`. Zones 0–4 are the rings.
+| Action | Report | Transport |
+|---|---|---|
+| on / off | `5a d1 09 01 1f` / `5a d1 09 01 0f` | feature (`SET_REPORT`) |
+| brightness 0–3 | `5d d1 20 01 <level>` | output report on interrupt OUT `0x04` (hidraw `write()`) |
+| breathe / steady | `5a d1 21 02 01 08` / `5a d1 21 02 00 08` | feature |
 
-`TODO(hw)`: run the probe for zones 5–8. If none lights the button, capture
-USB traffic on Windows (USBPcap) while Armoury Crate or Game Bar changes the
-button light. Once the report is known, add a `go_s:white:xbox_button` (or
-`:rgb:`) LED class device behind a module parameter.
+`0x09` is g-helper's Ally "power LED mask", whose low four bits are the
+rings' power states; bit `0x10` is the Xbox button. Armoury Crate re-sends
+the ring colour (`5a b3 …`, `5a b4`, `5a b5`) after every mask write, but
+on the X20 the rings kept their colour without that. The byte `08` in the
+`0x21` report did not change between breathe and steady in the capture
+(speed, or a fixed field). Nothing in the capture suggests an RGB colour
+for the button. The MCU keeps the settings across the command's exit;
+`TODO(hw)` whether they survive a full power-off.
+
+Open option: a `go_s:white:xbox_button` LED class device in the driver
+(`brightness` 0 → mask off, 1–3 → the level report) would let udev and
+systemd-backlight-style tooling restore it. Steam would not show it: its
+Customization page drives one LED.
 
 ## Validation status
 
@@ -276,10 +284,10 @@ button light. Once the report is known, add a `go_s:white:xbox_button` (or
 
 ## Hardware TODOs
 
-- `TODO(hw)` `ls /sys/class/leds/`: does the X20 expose only the rings
-  (`go_s:rgb:joystick_rings` after the patch), or also a separate Xbox-button
-  LED? The driver registers exactly one multicolor LED. A second node would
-  need a further patch.
+- Measured 2026-10-31: `/sys/class/leds/` has only the rings
+  (`go_s:rgb:joystick_rings` after the patch). The Xbox-button light is
+  driven from user space (see above); an LED class device for it would be a
+  further patch.
 - `TODO(hw)` whether Steam's Customization menu lists and drives the rings
   (colour and brightness), and whether Steam also writes `effect`, `speed`,
   `mode` or `profile`. `profile` is not implemented.

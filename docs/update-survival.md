@@ -204,26 +204,51 @@ in post-install for the new slot and at boot.
 
 ## Exception 2: `/etc/rauc/system.conf` (`lib/rauc.sh`)
 
-RAUC reads one `system.conf` and has no `conf.d`. We append one delimited
-block and leave the stock lines alone:
+RAUC reads one `system.conf` and has no `conf.d`, so our handlers have to
+go into the stock file. Two programs parse it: RAUC itself (GLib's
+GKeyFile, lenient) and `steamos-atomupd-client`
+(`holoatomupd/client.py`, `get_rauc_config`, called from
+`is_desync_in_use`), which uses Python's `configparser` in strict mode. A
+second `[handlers]` section or a repeated key makes configparser raise
+`DuplicateSectionError` / `DuplicateOptionError`, every `steamos-update`
+check dies and Discover reports "An error occurred calling the
+'steamos-atomupd-client' helper: Child process exited with code 1"
+(seen on SteamOS 3.9.5; releases up to 0.1.2 appended a second
+`[handlers]` and hit exactly this). So the written file has exactly one
+`[handlers]` section and each key in it once.
+
+When the stock file has a `[handlers]` section, our main block goes right
+after its header and each stock `pre-install=`/`post-install=` line is
+replaced in place by a small block that keeps the original line as a
+prefixed comment:
 
 ```
+[handlers]
 # >>> ally-x20-steamos managed block (sep=0); original saved as /var/lib/ally-x20-steamos/backup/rauc/system.conf; ...
 # stock handlers are chained, see /var/lib/ally-x20-steamos/state/rauc-chain
-[handlers]
 pre-install=/var/lib/ally-x20-steamos/libexec/rauc-pre-install.hook
 post-install=/var/lib/ally-x20-steamos/libexec/rauc-post-install.hook
 # <<< ally-x20-steamos
+bootloader-custom-backend=/usr/lib/rauc/bootloader-custom-backend.sh
+# >>> ally-x20-steamos stock handler, chained by the block above
+#ally-x20-steamos-orig:post-install=/usr/lib/rauc/post-install.sh
+# <<< ally-x20-steamos
 ```
 
-RAUC parses the file with GLib's GKeyFile, which merges a repeated
-`[handlers]` group and lets the last value of a key win. TODO(vm): verify
-with SteamOS's RAUC (`rauc status` still works; our hooks run during an
-update). The stock `post-install=` (and `pre-install=` if present) is
-recorded in `state/rauc-chain` and run by our hooks. Removal restores the
-saved original after checking its sha256; if the stock file changed under
-our block, only the block is removed. icedream/steamos-permanent-mods
-edits the same key in place instead, which is what we avoid.
+When the stock file has no `[handlers]` section, one block carrying the
+header is appended at the end (`sep=1` in the begin line means the
+original had no final newline). Stripping drops the block lines and puts
+the `#ally-x20-steamos-orig:` lines back without the prefix, so the result
+is the original byte-for-byte; `uninstall/uninstall.sh` does the same
+strip on its own. The stock `post-install=` (and `pre-install=` if
+present) is recorded in `state/rauc-chain` and run by our hooks.
+
+`apply` renders the file from the stripped original and writes only when
+the live file differs, so an install with the old appended layout is
+migrated on the next `apply`. Removal restores the saved original after
+checking its sha256; if the stock file changed under our blocks, only the
+blocks are removed. icedream/steamos-permanent-mods edits the same key in
+place instead, which is what we avoid.
 
 ## VM checklist (update survival)
 

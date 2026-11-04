@@ -51,11 +51,17 @@ sudo ./ally-x20-steamos.sh self-update --check   # is there a new release?
 sudo ./ally-x20-steamos.sh self-update           # fetch it, verify the signature, re-apply
 ```
 
-Reboot if it says a kernel module changed. `self-update --rollback` returns
-to the previous release. If `self-update` rejects every tag (installs made
-before v0.1.4 have placeholder keys and code that does not understand
-them), repeat the **Install** steps from a fresh clone: re-running `install`
-is safe and moves the installed copy to that release.
+What an update consists of: the code comes from the signed git tag
+(`self-update` fetches tags and checks out the newest signed `vX.Y.Z`), and
+the patched kernel modules come from that release's GitHub assets, which
+`self-update` stages for the running kernel right after re-applying (since
+v0.1.8; on v0.1.7 run `sudo ./ally-x20-steamos.sh rebuild` once after
+updating). **Reboot after every update**: new modules only load at boot,
+and nothing here reloads them live. `self-update --rollback` returns to the
+previous release. If `self-update` rejects every tag (installs made before
+v0.1.4 have placeholder keys and code that does not understand them),
+repeat the **Install** steps from a fresh clone: re-running `install` is
+safe and moves the installed copy to that release.
 
 **Check** that everything is active: `sudo ./ally-x20-steamos.sh status`.
 **Remove** it: `sudo ./ally-x20-steamos.sh uninstall`. Details, including
@@ -95,6 +101,14 @@ moves the installed copy. From then on `self-update` works.
 You ran it from a clone in your home directory, which updated that clone
 only. The device uses `/var/lib/ally-x20-steamos/src`; run `self-update`
 (and everything else) from there.
+
+**I updated, but a change to a kernel driver is not active.**
+Reboot first; modules only load at boot. If it is still the old driver,
+the staged module build was not refreshed. Since v0.1.8 `self-update`
+refreshes it (and refuses a build made from other patches, cached or not);
+on v0.1.7 run `sudo ./ally-x20-steamos.sh rebuild`, then reboot.
+`sudo ./ally-x20-steamos.sh status` says whether the staged modules match
+the installed release.
 
 **The Xbox button light is dark after every reboot.**
 The driver rewrites the controller's LED power mask at every boot. Since

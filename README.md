@@ -75,74 +75,6 @@ SteamOS updates and troubleshooting: [user guide](docs/user-guide.md),
 > unconfirmed on the hardware. The design is in
 > [`X20-STEAMOS-PLAN.md`](X20-STEAMOS-PLAN.md).
 
-## FAQ and gotchas
-
-Things the owner ran into that you may run into too.
-
-**My battery stops charging at 80 % and Steam shows no charge limit.**
-The limit lives in the controller's EC and survives reboots and operating
-systems; Armoury Crate's Battery Care on Windows sets it, and so does
-Steam's charge-limit setting (Settings → Power). After a reboot the kernel
-attribute reads 0 until something writes it, so Steam shows no limit while
-the EC still enforces the old one. Check with
-`sudo ./ally-x20-steamos.sh power status` (`charge_limit=`), clear it with
-`echo 100 | sudo tee /sys/class/power_supply/BAT1/charge_control_end_threshold`,
-or set the value you want in Steam. Nothing in ally-x20-steamos writes a
-limit. Details: [docs/power.md](docs/power.md).
-
-**`self-update` says no release tag is signed by a pinned key.**
-Installs made from releases before v0.1.4 pinned placeholder keys, and their
-`self-update` does not understand them. Clone fresh, check out the newest
-tag and run `sudo ./ally-x20-steamos.sh install` again (see
-[Install and update](#install-and-update)); it pins the real key and
-moves the installed copy. From then on `self-update` works.
-
-**I ran `self-update`, but after a reboot a new command is "unknown".**
-You ran it from a clone in your home directory, which updated that clone
-only. The device uses `/var/lib/ally-x20-steamos/src`; run `self-update`
-(and everything else) from there.
-
-**I updated, but a change to a kernel driver is not active.**
-Reboot first; modules only load at boot. If it is still the old driver,
-the staged module build was not refreshed. Since v0.1.8 `self-update`
-refreshes it (and refuses a build made from other patches, cached or not);
-on v0.1.7 run `sudo ./ally-x20-steamos.sh rebuild`, then reboot.
-`sudo ./ally-x20-steamos.sh status` says whether the staged modules match
-the installed release.
-
-**The Xbox button light is dark after every reboot.**
-The driver rewrites the controller's LED power mask at every boot. Since
-v0.1.7 the light is part of that mask: `sudo ./ally-x20-steamos.sh xbox-led on`
-lights it and keeps it on across reboots. Its brightness and breathing
-(`xbox-led brightness 0-3`, `xbox-led breathe on|off`) are separate
-controller commands and reset at reboot. Older versions' `xbox-led on` also
-switched the rings' sleep animation on by accident; v0.1.7 fixes that, and a
-reboot restores the driver's setting.
-
-**The joystick rings are dark from power-on until the Steam login screen.**
-Expected. Steam stores the ring colour and brightness and re-applies them
-when it starts; the controller is not asked to light the rings on its own.
-
-**With the Solid effect only the left ring stays lit.**
-An older module build mixed two report types for Solid. Current builds send
-Solid as the controller's own static effect, which keeps both rings lit. If
-you still see it, update, or try the other strategies through the
-`rgb_static_mode` module parameter
-([docs/rgb.md](docs/rgb.md#solid-colour-if-one-ring-goes-dark)).
-
-**`apply` warns that `libdisplay-info.so.3` is not built yet.**
-Desktop Mode HDR needs a build step the installer does not run for you
-(`build/build-hdr.sh`, [docs/hdr.md](docs/hdr.md)). Game Mode HDR works
-without it. Everything else is unaffected.
-
-**Steam's Performance tab has no TDP slider, and Manual GPU Clock fails.**
-Both on purpose or unfixable for now: BIOS `RC74XA.303` ignores every power
-limit it is sent (the three power profiles work), and this APU rejects a
-manual GPU clock. [docs/power.md](docs/power.md).
-
-**Is it safe to run `apply` repeatedly?** Yes. It only rewrites what differs
-and the boot service and update handler run it themselves.
-
 ## What it fixes
 
 | Gap on stock SteamOS | Fix | Component / docs |
@@ -251,6 +183,74 @@ v0.1.0 is the first release, with CI-built module artifacts attached to
 the GitHub release. Still open: the `TODO(hw)` items in
 [docs/hardware-data.md](docs/hardware-data.md), a real SteamOS A/B update on
 the device, the VM round-trip tests, and the optional Decky plugin.
+
+## FAQ and gotchas
+
+Things the owner ran into that you may run into too.
+
+**My battery stops charging at 80 % and Steam shows no charge limit.**
+The limit lives in the controller's EC and survives reboots and operating
+systems; Armoury Crate's Battery Care on Windows sets it, and so does
+Steam's charge-limit setting (Settings → Power). After a reboot the kernel
+attribute reads 0 until something writes it, so Steam shows no limit while
+the EC still enforces the old one. Check with
+`sudo ./ally-x20-steamos.sh power status` (`charge_limit=`), clear it with
+`echo 100 | sudo tee /sys/class/power_supply/BAT1/charge_control_end_threshold`,
+or set the value you want in Steam. Nothing in ally-x20-steamos writes a
+limit. Details: [docs/power.md](docs/power.md).
+
+**`self-update` says no release tag is signed by a pinned key.**
+Installs made from releases before v0.1.4 pinned placeholder keys, and their
+`self-update` does not understand them. Clone fresh, check out the newest
+tag and run `sudo ./ally-x20-steamos.sh install` again (see
+[Install and update](#install-and-update)); it pins the real key and
+moves the installed copy. From then on `self-update` works.
+
+**I ran `self-update`, but after a reboot a new command is "unknown".**
+You ran it from a clone in your home directory, which updated that clone
+only. The device uses `/var/lib/ally-x20-steamos/src`; run `self-update`
+(and everything else) from there.
+
+**I updated, but a change to a kernel driver is not active.**
+Reboot first; modules only load at boot. If it is still the old driver,
+the staged module build was not refreshed. Since v0.1.8 `self-update`
+refreshes it (and refuses a build made from other patches, cached or not);
+on v0.1.7 run `sudo ./ally-x20-steamos.sh rebuild`, then reboot.
+`sudo ./ally-x20-steamos.sh status` says whether the staged modules match
+the installed release.
+
+**The Xbox button light is dark after every reboot.**
+The driver rewrites the controller's LED power mask at every boot. Since
+v0.1.7 the light is part of that mask: `sudo ./ally-x20-steamos.sh xbox-led on`
+lights it and keeps it on across reboots. Its brightness and breathing
+(`xbox-led brightness 0-3`, `xbox-led breathe on|off`) are separate
+controller commands and reset at reboot. Older versions' `xbox-led on` also
+switched the rings' sleep animation on by accident; v0.1.7 fixes that, and a
+reboot restores the driver's setting.
+
+**The joystick rings are dark from power-on until the Steam login screen.**
+Expected. Steam stores the ring colour and brightness and re-applies them
+when it starts; the controller is not asked to light the rings on its own.
+
+**With the Solid effect only the left ring stays lit.**
+An older module build mixed two report types for Solid. Current builds send
+Solid as the controller's own static effect, which keeps both rings lit. If
+you still see it, update, or try the other strategies through the
+`rgb_static_mode` module parameter
+([docs/rgb.md](docs/rgb.md#solid-colour-if-one-ring-goes-dark)).
+
+**`apply` warns that `libdisplay-info.so.3` is not built yet.**
+Desktop Mode HDR needs a build step the installer does not run for you
+(`build/build-hdr.sh`, [docs/hdr.md](docs/hdr.md)). Game Mode HDR works
+without it. Everything else is unaffected.
+
+**Steam's Performance tab has no TDP slider, and Manual GPU Clock fails.**
+Both on purpose or unfixable for now: BIOS `RC74XA.303` ignores every power
+limit it is sent (the three power profiles work), and this APU rejects a
+manual GPU clock. [docs/power.md](docs/power.md).
+
+**Is it safe to run `apply` repeatedly?** Yes. It only rewrites what differs
+and the boot service and update handler run it themselves.
 
 ## Credits
 

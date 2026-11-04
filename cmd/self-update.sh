@@ -191,21 +191,65 @@ _self_update_apply() {
     su_run_cli "$AX20_SRC" apply || die "apply failed after the update; 'self-update --rollback' returns to the previous commit"
 }
 
+# _self_update_tag_keys <tag> <dir> : the keys/ of the tag's tree, copied to
+# <dir>/keys (only *.asc and allowed_signers).
+_self_update_tag_keys() {
+    local tag=$1 dir=$2 f
+    rm -rf "${dir:?}/keys"
+    mkdir -p "$dir/keys"
+    for f in $(su_git "$AX20_SRC" ls-tree --name-only "refs/tags/$tag^{tree}" keys/ 2>/dev/null); do
+        case "$f" in
+            keys/*.asc | keys/allowed_signers) ;;
+            *) continue ;;
+        esac
+        su_git "$AX20_SRC" show "refs/tags/$tag:$f" >"$dir/$f" 2>/dev/null || rm -f "$dir/$f"
+    done
+}
+
+# _self_update_pick_tofu <dir> : nothing real is pinned on this device
+# (releases up to v0.1.3 shipped placeholders), so there is no trust to
+# protect: pick the newest release tag that verifies against the keys in
+# its own tree, leave those keys in <dir>/keys, print the tag.
+_self_update_pick_tofu() {
+    local dir=$1 t
+    for t in $(su_stable_tags "$AX20_SRC"); do
+        _self_update_tag_keys "$t" "$dir"
+        if su_has_keys "$dir/keys" && su_verify_tag "$AX20_SRC" "$t" "$dir/keys"; then
+            printf '%s\n' "$t"
+            return 0
+        fi
+        log_debug "tag $t: ships no key that verifies it"
+    done
+    return 0
+}
+
 _self_update_stable() {
-    local skip=$1 no_apply=$2 pick tag
+    local skip=$1 no_apply=$2 pick tag tofu=""
     if [ "$skip" = 1 ]; then
         su_insecure_warning
     fi
     if [ "$skip" != 1 ] && ! su_has_keys "$(su_keys_dir 2>/dev/null)"; then
-        die "no release signing key is pinned (keys/ only has placeholders, TODO(owner)). Refusing to install unverified code. Pin a key (docs/self-update.md) or, for development only, pass --insecure-skip-verify"
-    fi
-    pick=$(_self_update_pick_stable "$skip")
-    tag=$(printf '%s' "$pick" | cut -f1)
-    if [ -z "$tag" ]; then
-        if [ -z "$(su_stable_tags "$AX20_SRC")" ]; then
-            die "origin has no release tags (v*) yet; use --channel beta or wait for a release"
+        tofu=$(mktemp -d "${TMPDIR:-/tmp}/ax20-tofu.XXXXXX") || die "cannot create a temporary directory"
+        tag=$(_self_update_pick_tofu "$tofu")
+        if [ -z "$tag" ]; then
+            rm -rf "$tofu"
+            if [ -z "$(su_stable_tags "$AX20_SRC")" ]; then
+                die "origin has no release tags (v*) yet; use --channel beta or wait for a release"
+            fi
+            die "no release signing key is pinned on this device and no release tag ships a key that verifies it. Refusing to install unverified code (docs/self-update.md); for development only, pass --insecure-skip-verify"
         fi
-        die "no release tag is signed by a pinned key; refusing to update (every tag was unsigned or signed by an unknown key)"
+        log_warn "no release signing key was pinned on this device (releases before v0.1.4 shipped placeholders); trusting the key shipped in $tag on first use and pinning it into $SU_KEYS_REL"
+        su_pin_keys "$tofu"
+        rm -rf "$tofu"
+    else
+        pick=$(_self_update_pick_stable "$skip")
+        tag=$(printf '%s' "$pick" | cut -f1)
+        if [ -z "$tag" ]; then
+            if [ -z "$(su_stable_tags "$AX20_SRC")" ]; then
+                die "origin has no release tags (v*) yet; use --channel beta or wait for a release"
+            fi
+            die "no release tag is signed by a pinned key; refusing to update (every tag was unsigned or signed by an unknown key)"
+        fi
     fi
     if _self_update_contains "refs/tags/$tag"; then
         printf 'already up to date (%s contains %s)\n' "$(su_describe "$AX20_SRC")" "$tag"

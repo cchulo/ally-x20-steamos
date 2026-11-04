@@ -69,12 +69,27 @@ replaces it. Key rotation: publish a release whose `keys/` contains the new
 key while still signing it with the old key, and ask users to run
 `sudo ally-x20-steamos.sh install --repin-keys` after updating.
 
+Releases up to v0.1.3 shipped placeholder key files, so devices installed
+from them have nothing real pinned. Since v0.1.4 the repository ships the
+owner's OpenPGP key (`keys/release-signing.asc`, fingerprint
+`786B 5C9C 5199 A907 58C0 106A 951A 981E 25C1 5FA1`) and a pin that holds
+only placeholders is treated as no pin at all, because there is no trust
+to protect yet:
+
+- `install` (and a re-install) replaces placeholder pins with the
+  checkout's real keys without `--repin-keys`;
+- `self-update` picks the newest release tag that verifies against the
+  keys in its own tree, says so (`trusting the key shipped in vX.Y.Z on
+  first use`), pins those keys and continues. Trust on first use, once;
+  from then on the pinned copy rules and a later release cannot swap the
+  key. Nothing to type for the user: `sudo ally-x20-steamos.sh self-update`
+  is enough on a pre-0.1.4 install too.
+
 Besides the signature, the tag object's embedded name must match the tag
 ref, so an old signed tag cannot be replayed under a newer name.
 
-Fail-closed: while no real key is pinned (the repository currently ships
-placeholders, `TODO(owner)`), every stable update is refused. For
-development, or before the owner has published a key,
+Fail-closed: when no real key is pinned and no release tag ships a key
+that verifies it, every stable update is refused. For development
 `--insecure-skip-verify` accepts unsigned tags and prints a loud warning.
 `--check` still reports new tags in that state, flagged
 `available-unverified`.
@@ -116,8 +131,9 @@ stops the run, is not recorded, and is retried by the next self-update;
 
 `install` copies `keys/` from the checkout it was run from into
 `/var/lib/ally-x20-steamos/keys` ("pinning"). Later self-updates verify
-against the pinned copy only, so a fetched release cannot bring its own key.
-If `install` was never run (a developer running the CLI straight from a
+against the pinned copy only, so a fetched release cannot bring its own key
+(except on a device where only placeholders are pinned, see "Signing and
+the pinned key"). If `install` was never run (a developer running the CLI straight from a
 clone), `su_keys_dir` falls back to the checkout's own `keys/` with a
 warning: that is trust-on-first-clone, acceptable for development, and the
 warning is there so it is never mistaken for the pinned case.

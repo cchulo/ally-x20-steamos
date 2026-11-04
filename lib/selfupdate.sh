@@ -8,7 +8,11 @@
 # Trust model (plan §4.4, docs/self-update.md): the public keys in keys/ are
 # copied ("pinned") into /var/lib/ally-x20-steamos/keys at install time.
 # self-update verifies tags against the pinned copy, never against whatever
-# the checkout currently contains, so a tag cannot bring its own key.
+# the checkout currently contains, so a tag cannot bring its own key. The
+# one exception is a device where nothing real is pinned (releases up to
+# v0.1.3 shipped placeholders): there is no trust to protect yet, so
+# su_pin_keys replaces placeholders with real keys without --repin-keys and
+# self-update trusts the key shipped in the newest release on first use.
 
 # shellcheck source=lib/common.sh
 . "${AX20_SRC:-$(dirname "${BASH_SOURCE[0]}")/..}/lib/common.sh"
@@ -114,7 +118,8 @@ su_gpg_key_files() {
     local f
     for f in "$1"/*.asc; do
         [ -f "$f" ] || continue
-        if grep -q -- '-----BEGIN PGP PUBLIC KEY BLOCK-----' "$f"; then
+        # Anchored: the placeholder's comment mentions the marker mid-line.
+        if grep -q -- '^-----BEGIN PGP PUBLIC KEY BLOCK-----' "$f"; then
             printf '%s\n' "$f"
         fi
     done
@@ -211,13 +216,19 @@ WARN
 }
 
 # su_pin_keys <checkout> [force] : copy keys/*.asc and keys/allowed_signers
-# into the pinned key directory. An existing pin is kept unless force=1.
+# into the pinned key directory. An existing pin is kept unless force=1 or
+# the pin holds no usable key (placeholders only): then there is nothing to
+# protect and the checkout's real keys take its place.
 su_pin_keys() {
     local src=$1/keys force=${2:-0} dest f same=1
     dest=$(ax20_path "$SU_KEYS_REL")
     if [ ! -d "$src" ]; then
         log_warn "checkout has no keys/ directory; nothing to pin"
         return 0
+    fi
+    if [ -d "$dest" ] && [ "$force" != 1 ] && ! su_has_keys "$dest" && su_has_keys "$src"; then
+        log_info "the pinned keys in $SU_KEYS_REL are placeholders only; pinning the real keys from $1"
+        force=1
     fi
     if [ -d "$dest" ] && [ "$force" != 1 ]; then
         for f in "$src"/*.asc "$src"/allowed_signers; do

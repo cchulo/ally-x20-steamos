@@ -166,3 +166,40 @@ x20_nodes() {
     assert_failure 1
     assert_output_contains 'must run as root'
 }
+
+@test "brightness and breathe record the setting for the boot-time restore" {
+    x20_nodes
+    run "$CLI" xbox-led brightness 1 --hidraw /dev/null 2>/dev/null || true
+    run "$CLI" --dry-run xbox-led brightness 1
+    assert_success
+    assert_output_contains '/etc/ally-x20-steamos/xbox-led.conf <- brightness=1 breathe='
+    run "$CLI" --dry-run xbox-led breathe on
+    assert_success
+    assert_output_contains 'xbox-led.conf <- brightness= breathe=on'
+}
+
+@test "the settings file keeps the other key; restore re-sends breathe then brightness" {
+    x20_nodes
+    # a real write of the settings (sends go through python3 to /dev/null... skip: write the file directly)
+    fixture_file /etc/ally-x20-steamos/xbox-led.conf 'brightness=2
+'
+    run "$CLI" --dry-run xbox-led breathe on
+    assert_success
+    assert_output_contains 'xbox-led.conf <- brightness=2 breathe=on'
+    fixture_file /etc/ally-x20-steamos/xbox-led.conf 'brightness=2
+breathe=on
+'
+    run "$CLI" --dry-run xbox-led restore
+    assert_success
+    assert_output_contains '[dry-run] /dev/hidraw5 feature <- 5a d1 21 02 01 08'
+    assert_output_contains '[dry-run] /dev/hidraw5 output <- 5d d1 20 01 02'
+    assert_output_contains 'restored brightness=2 breathe=on'
+}
+
+@test "restore with nothing recorded sends nothing" {
+    x20_nodes
+    run "$CLI" --dry-run xbox-led restore
+    assert_success
+    assert_output_contains 'nothing recorded'
+    [[ "$output" != *"5d d1 20"* ]]
+}

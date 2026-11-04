@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# summary: the Xbox button light: on | off | brightness <0-3> | breathe on|off | node
+# summary: the Xbox button light: on | off | brightness <0-3> | breathe on|off | restore | node
 #
 # The light is driven by the controller MCU over the N-KEY configuration
 # HID interface (0b05:1b4c, interface 2, the hidraw node whose report
@@ -18,8 +18,12 @@
 # plus a modprobe.d option so the driver sets it from boot on. Without the
 # attribute (stock or older module) the mask is written directly, composed
 # from the driver's default and its sleep_animation value, for this boot
-# only. Brightness and breathing are not part of the mask and last until
-# the next reboot. Nothing here touches the joystick ring colours.
+# only. Brightness and breathing are not part of the mask and the controller
+# resets them at power-on, so they are recorded in
+# /etc/ally-x20-steamos/xbox-led.conf and re-sent by component `xboxled`
+# (udev rule + /etc/ally-x20-steamos/xbox-led-restore) whenever the ring LED
+# device appears; `restore` does the same by hand. Nothing here touches the
+# joystick ring colours, and nothing is written to MCU flash.
 
 # shellcheck source=lib/component.sh
 . "$AX20_SRC/lib/component.sh"
@@ -31,13 +35,14 @@ usage: $AX20_NAME xbox-led [--hidraw <dev>] <command>
   on | off              switch the Xbox button light on or off
   brightness <0-3>      0 (dark) to 3 (brightest); the hardware has 4 steps
   breathe on|off        breathing effect, or steady light
+  restore               re-send the recorded brightness and breathe setting
   node                  print the hidraw node the commands are sent to
 
   --hidraw <dev>        use this hidraw node instead of auto-detecting it
 
-Needs root. on/off is kept across reboots when the patched hid-asus-ally
-(patch 0016) is loaded; brightness and breathe last until the next reboot.
-See docs/rgb.md, "Xbox button light".
+Needs root. on/off is kept by the patched hid-asus-ally (patch 0016);
+brightness and breathe are recorded and re-sent at boot by component
+xbox-led. See docs/rgb.md, "Xbox button light".
 USAGE
 }
 
@@ -47,6 +52,50 @@ AX20_HIDRAW_SYS=${AX20_HIDRAW_SYS:-/sys/class/hidraw}
 AX20_LEDS_SYS=${AX20_LEDS_SYS:-/sys/class/leds}
 # modprobe.d drop-in that makes the driver light the button from boot on.
 XBOX_LED_MODPROBE_REL="/etc/modprobe.d/${AX20_NAME}-xbox-led.conf"
+# brightness/breathe settings, re-sent at boot by component `xboxled`.
+XBOX_LED_CONF_REL="${AX20_EARLY_REL}/xbox-led.conf"
+
+# xbox_led_conf_get <key> : value from the settings file, or nothing.
+xbox_led_conf_get() {
+    local f
+    f=$(ax20_path "$XBOX_LED_CONF_REL")
+    [ -r "$f" ] || return 0
+    sed -n "s/^$1=//p" "$f" | head -n1
+}
+
+# xbox_led_conf_set <key> <value> : rewrite the settings file with this
+# value and the other key's current one (manifest entry of component
+# xboxled, so uninstall removes it).
+xbox_led_conf_set() {
+    local key=$1 val=$2 brightness breathe tmp
+    brightness=$(xbox_led_conf_get brightness)
+    breathe=$(xbox_led_conf_get breathe)
+    case "$key" in
+        brightness) brightness=$val ;;
+        breathe) breathe=$val ;;
+    esac
+    if [ "$AX20_DRY_RUN" = 1 ]; then
+        printf '[dry-run] %s <- brightness=%s breathe=%s\n' "$XBOX_LED_CONF_REL" "${brightness:-}" "${breathe:-}" >&2
+        return 0
+    fi
+    tmp=$(mktemp "${TMPDIR:-/tmp}/ax20-xbox-led.XXXXXX") || die "cannot create a temporary file"
+    {
+        printf '# Written by %s xbox-led; re-sent at boot by %s/xbox-led-restore.\n' "$AX20_NAME" "$AX20_EARLY_REL"
+        [ -z "$brightness" ] || printf 'brightness=%s\n' "$brightness"
+        [ -z "$breathe" ] || printf 'breathe=%s\n' "$breathe"
+    } >"$tmp"
+    manifest_install_file "$tmp" "$XBOX_LED_CONF_REL" xboxled 0644
+    rm -f "$tmp"
+}
+
+# xbox_led_send_breathe <node> <on|off>
+xbox_led_send_breathe() {
+    if [ "$2" = on ]; then
+        xbox_led_send "$1" feature 5a d1 21 02 01 08
+    else
+        xbox_led_send "$1" feature 5a d1 21 02 00 08
+    fi
+}
 
 # xbox_led_dev : print the ring LED sysfs directory, or nothing.
 xbox_led_dev() {
@@ -142,7 +191,7 @@ PY
 }
 
 cmd_xbox_led() {
-    local node="" sub level
+    local node="" sub level breathe
     while [ $# -gt 0 ]; do
         case "$1" in
             --hidraw)
@@ -188,8 +237,8 @@ cmd_xbox_led() {
             esac
             [ $# -eq 1 ] || die 2 "usage: $AX20_NAME xbox-led breathe on|off"
             ;;
-        node)
-            [ $# -eq 0 ] || die 2 "usage: $AX20_NAME xbox-led node"
+        node | restore)
+            [ $# -eq 0 ] || die 2 "usage: $AX20_NAME xbox-led $sub"
             ;;
         *)
             log_error "unknown xbox-led command: $sub"
@@ -211,15 +260,24 @@ cmd_xbox_led() {
         on | off) xbox_led_power "$sub" "$node" ;;
         brightness)
             xbox_led_send "$node" output 5d d1 20 01 "0$level"
-            log_info "xbox-led: brightness $level"
+            xbox_led_conf_set brightness "$level"
+            log_info "xbox-led: brightness $level (re-sent at boot)"
             ;;
         breathe)
-            if [ "$1" = on ]; then
-                xbox_led_send "$node" feature 5a d1 21 02 01 08
+            xbox_led_send_breathe "$node" "$1"
+            xbox_led_conf_set breathe "$1"
+            log_info "xbox-led: breathe $1 (re-sent at boot)"
+            ;;
+        restore)
+            level=$(xbox_led_conf_get brightness)
+            breathe=$(xbox_led_conf_get breathe)
+            [ -z "$breathe" ] || xbox_led_send_breathe "$node" "$breathe"
+            [ -z "$level" ] || xbox_led_send "$node" output 5d d1 20 01 "0$level"
+            if [ -z "$level$breathe" ]; then
+                log_info "xbox-led: nothing recorded in $XBOX_LED_CONF_REL"
             else
-                xbox_led_send "$node" feature 5a d1 21 02 00 08
+                log_info "xbox-led: restored brightness=${level:-unchanged} breathe=${breathe:-unchanged}"
             fi
-            log_info "xbox-led: breathe $1"
             ;;
     esac
 }

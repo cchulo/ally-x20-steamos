@@ -1,0 +1,96 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# xbox-led-restore — re-send the ROG Xbox Ally X20's Xbox-button light
+# settings (brightness level, breathing) to the controller.
+#
+# Installed to /etc/ally-x20-steamos/xbox-led-restore (a path that exists at
+# udev time, unlike /var/lib -> /home) and started by
+# /etc/udev/rules.d/70-ally-x20-steamos-xbox-led.rules whenever the
+# controller's ring LED device appears (boot, resume, reconnect). The
+# controller keeps on/off in its power mask (hid-asus-ally patch 0016) but
+# resets the level to maximum and breathing to off at power-on; these two
+# reports are volatile, nothing here is written to MCU flash.
+#
+# Settings: /etc/ally-x20-steamos/xbox-led.conf, written by
+# `ally-x20-steamos xbox-led brightness|breathe`:
+#   brightness=0..3
+#   breathe=on|off
+# No file, or a setting missing: nothing is sent for it.
+#
+# POSIX sh plus python3 for the HID I/O. Never fails loudly: every problem
+# is logged and exits 0 so udev and systemd stay quiet.
+set -u
+
+AX20_NAME=ally-x20-steamos
+ROOT=${AX20_ROOT:-}
+CONF="$ROOT/etc/$AX20_NAME/xbox-led.conf"
+LEDS="$ROOT/sys/class/leds"
+DRY=${XBOX_LED_DRY_RUN:-0}
+
+log() {
+    if command -v logger >/dev/null 2>&1 && [ "$DRY" != 1 ]; then
+        logger -t "$AX20_NAME-xbox-led" -- "$*"
+    fi
+    printf '%s: %s\n' "$AX20_NAME-xbox-led" "$*" >&2
+}
+
+[ -r "$CONF" ] || exit 0
+# POSIX sed only (no \| alternation): validate with case instead.
+brightness=$(sed -n 's/^brightness=//p' "$CONF" | head -n1)
+case "$brightness" in 0 | 1 | 2 | 3) ;; *) brightness="" ;; esac
+breathe=$(sed -n 's/^breathe=//p' "$CONF" | head -n1)
+case "$breathe" in on | off) ;; *) breathe="" ;; esac
+[ -n "$brightness$breathe" ] || exit 0
+
+# The hidraw node of the interface that owns the ring LED (interface 2, the
+# N-KEY configuration interface with report IDs 0x5a/0x5d).
+led=""
+for d in "$LEDS/go_s:rgb:joystick_rings" "$LEDS/ally:rgb:joystick_rings"; do
+    [ -d "$d" ] && led=$d && break
+done
+if [ -z "$led" ]; then
+    log "no ring LED device; nothing to restore"
+    exit 0
+fi
+hid=$(readlink -f "$led/device" 2>/dev/null || true)
+node=""
+for h in "$hid"/hidraw/hidraw*; do
+    [ -e "$h" ] && node="$ROOT/dev/$(basename "$h")" && break
+done
+if [ -z "$node" ]; then
+    log "no hidraw node under $hid; nothing to restore"
+    exit 0
+fi
+# udev may still be creating the device node.
+i=0
+while [ ! -e "$node" ] && [ "$DRY" != 1 ] && [ $i -lt 30 ]; do
+    sleep 0.1
+    i=$((i + 1))
+done
+
+if [ "$DRY" = 1 ]; then
+    [ -n "$breathe" ] && printf '%s feature <- 5a d1 21 02 %s 08\n' "$node" "$([ "$breathe" = on ] && echo 01 || echo 00)"
+    [ -n "$brightness" ] && printf '%s output <- 5d d1 20 01 0%s\n' "$node" "$brightness"
+    exit 0
+fi
+command -v python3 >/dev/null 2>&1 || {
+    log "python3 missing; cannot send HID reports"
+    exit 0
+}
+python3 -I - "$node" "$breathe" "$brightness" <<'PY' || log "sending the Xbox-button light settings failed"
+import fcntl, os, sys
+node, breathe, brightness = sys.argv[1:]
+def pad(*b):
+    buf = bytearray(64); buf[:len(b)] = bytes(b); return bytes(buf)
+fd = os.open(node, os.O_RDWR)
+try:
+    if breathe:
+        fcntl.ioctl(fd, (3 << 30) | (64 << 16) | (ord("H") << 8) | 0x06,
+                    pad(0x5a, 0xd1, 0x21, 0x02, 1 if breathe == "on" else 0, 0x08))
+    if brightness:
+        os.write(fd, pad(0x5d, 0xd1, 0x20, 0x01, int(brightness)))
+finally:
+    os.close(fd)
+PY
+log "restored Xbox-button light settings (brightness=${brightness:-unchanged} breathe=${breathe:-unchanged})"
+exit 0

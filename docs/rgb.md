@@ -80,12 +80,26 @@ modprobe.d file. The details are in
 
 ## Xbox button light
 
-The Xbox button's green light is dark on Linux, and no driver exposes it. No
-public source documents the command for it yet. `vm/guest/xbox-led.sh`
-(`on`, `off`, `brightness <0-100>`, `color R G B`) uses an LED class device
-if one ever appears. Otherwise it sends an experimental probe that treats
-the button as one more Aura zone (`--zone 5` by default; try 5–8). See
-[`README-hid.md`](../patches/kernel/README-hid.md#xbox-button-light).
+The Xbox button's green light is dark after a Linux boot and no driver
+exposes it, so Steam's Customization page cannot drive it (steamos-manager
+handles one LED, the rings). The command that does:
+
+```sh
+sudo ally-x20-steamos xbox-led on              # or off
+sudo ally-x20-steamos xbox-led brightness 3    # 0 (dark) .. 3 (brightest)
+sudo ally-x20-steamos xbox-led breathe on      # or off for a steady light
+sudo ally-x20-steamos xbox-led node            # which /dev/hidrawN it uses
+```
+
+The light is single-colour (green); there is no colour command. The MCU
+keeps the settings, so `on` is needed once, not at every boot. Whether it
+also survives a full power-off has not been checked yet (`TODO(hw)`).
+
+The reports were captured from Armoury Crate on Windows
+([xbox-led-capture.md](xbox-led-capture.md)) and verified on an X20 on
+2026-11-04; the rings keep their colour throughout. The bytes are in
+[`README-hid.md`](../patches/kernel/README-hid.md#xbox-button-light), which
+also notes the open option of a `go_s:white:xbox_button` LED class device.
 
 ## Turning it off
 
@@ -102,6 +116,5 @@ Uninstalling ally-x20-steamos restores the stock module.
 
 Steam's Customization page drives the rings on an X20 with these patches.
 Still open (`TODO(hw)`): which `rgb_static_mode` keeps both rings lit on
-Solid (the default is the most likely one), how the Xbox-button light is
-controlled, and which attributes Valve's udev rule makes writable for
-`deck`. See [`hardware-data.md`](hardware-data.md).
+Solid (the default is the most likely one), and which attributes Valve's
+udev rule makes writable for `deck`. See [`hardware-data.md`](hardware-data.md).

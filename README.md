@@ -25,6 +25,43 @@ testable in a VM before it ever touches the device.
 what not yet, how to install, check, update and remove it, and how to report
 a problem.
 
+## Install and update
+
+**Install** (Desktop Mode, Konsole). Clone, check out the newest release,
+read what you are about to run as root, then install:
+
+```sh
+git clone https://github.com/cchulo/ally-x20-steamos.git
+cd ally-x20-steamos
+git checkout "$(git tag -l 'v*' --sort=-version:refname | head -n1)"   # newest release
+sudo ./ally-x20-steamos.sh install
+```
+
+`install` copies the release to `/var/lib/ally-x20-steamos/src`, pins the
+release signing key, applies every component and prints a status. Reboot
+when it asks. The clone in your home directory can be deleted afterwards:
+everything runs from `/var/lib/ally-x20-steamos/src` from now on.
+
+**Update** to the newest release. Run this from the installed copy, not
+from a clone in your home directory (a clone updates only itself):
+
+```sh
+cd /var/lib/ally-x20-steamos/src
+sudo ./ally-x20-steamos.sh self-update --check   # is there a new release?
+sudo ./ally-x20-steamos.sh self-update           # fetch it, verify the signature, re-apply
+```
+
+Reboot if it says a kernel module changed. `self-update --rollback` returns
+to the previous release. If `self-update` rejects every tag (installs made
+before v0.1.4 have placeholder keys and code that does not understand
+them), repeat the **Install** steps from a fresh clone: re-running `install`
+is safe and moves the installed copy to that release.
+
+**Check** that everything is active: `sudo ./ally-x20-steamos.sh status`.
+**Remove** it: `sudo ./ally-x20-steamos.sh uninstall`. Details, including
+SteamOS updates and troubleshooting: [user guide](docs/user-guide.md),
+[docs/install.md](docs/install.md), [docs/self-update.md](docs/self-update.md).
+
 > **Status: first release.** Tested by the owner on one X20 (BIOS
 > `RC74XA.303`, SteamOS 3.9.5, kernel `7.2.7-valve2`). Other BIOS, SteamOS or
 > kernel versions may behave differently.
@@ -72,20 +109,12 @@ level-matched A/B on the device; `apply` removes them from older installs
   the component is reported `superseded` and you choose to run
   `uninstall --superseded`.
 
-## Install
-
-```sh
-# Desktop Mode terminal on the X20
-git clone https://github.com/cchulo/ally-x20-steamos.git
-cd ally-x20-steamos
-git checkout "$(git tag -l 'v*' --sort=-version:refname | head -n1)"   # newest release
-sudo ./ally-x20-steamos.sh install      # clones into the state dir, pins keys, applies, prints status
-```
-
-See [docs/install.md](docs/install.md). There is also a `bootstrap.sh` for a
-one-liner; the docs explain why cloning and reading first is preferred.
-
 ## CLI
+
+Install and update steps are at the top ([Install and update](#install-and-update)).
+There is also a `bootstrap.sh` one-liner; [docs/install.md](docs/install.md)
+explains why cloning and reading first is preferred.
+
 
 ```
 ally-x20-steamos.sh [--root <dir>] [--dry-run] [--verbose] [--yes] [--i-know] <command>

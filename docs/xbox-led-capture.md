@@ -2,7 +2,8 @@
 
 **Done (2026-11-04).** A community member ran the script below with Armoury
 Crate 3.1.5 on BIOS `RC74XA.303` and performed off, on, off, on, minimum,
-maximum, breathe. Only the first pcap had the controller (`0B05:1B4C`); the
+maximum, breathe
+([issue #47](https://github.com/cchulo/ally-x20-steamos/issues/47), thank you). Only the first pcap had the controller (`0B05:1B4C`); the
 others were a dock. The frames that lined up with each action:
 
 | Time | Action | Bytes (64-byte report, rest zero) | Transport |

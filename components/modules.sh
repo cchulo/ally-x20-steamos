@@ -120,7 +120,7 @@ modules_status() {
 
 # modules_status_detail : one human-readable line explaining the status.
 modules_status_detail() {
-    local kver
+    local kver why
     kver=$(probe_running_kver)
     if modules_lockdown_active; then
         printf 'kernel lockdown is active: unsigned modules cannot load, stock modules in use\n'
@@ -132,6 +132,8 @@ modules_status_detail() {
         printf 'modprobe hooks out of date with the module lists (run: %s apply --only modules)\n' "$AX20_NAME"
     elif modules_available "$kver"; then
         printf 'patched modules staged for %s\n' "$kver"
+    elif why=$(modules_staged_stale "$kver"); then
+        printf 'staged modules for %s are from another release (%s); run: %s rebuild\n' "$kver" "$why" "$AX20_NAME"
     else
         printf 'pending rebuild: no patched modules for %s yet (run: %s rebuild)\n' "$kver" "$AX20_NAME"
     fi

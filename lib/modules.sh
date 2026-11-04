@@ -35,6 +35,9 @@ AX20_MODULES_COMPONENT=modules
 # Release assets: <base>/modules-<kver>.tar.zst and .sha256. CI attaches every
 # kernel in build/kernels.txt to every release, so "latest" always works.
 AX20_MODULES_RELEASE_URL="${AX20_MODULES_RELEASE_URL:-https://github.com/cchulo/${AX20_NAME}/releases/latest/download}"
+# The release of this checkout's VERSION is tried before "latest": a newer
+# release's artifact may be built from other patches and would be refused.
+AX20_MODULES_RELEASE_BASE="${AX20_MODULES_RELEASE_BASE:-https://github.com/cchulo/${AX20_NAME}/releases/download}"
 export AX20_MODULES_REL AX20_MODULES_CACHE_REL AX20_HELPER_REL AX20_MODPROBE_CONF_REL
 
 # modules_patches_dir : where the patches and modules*.list files live.
@@ -129,7 +132,32 @@ modules_all_superseded() {
     return 0
 }
 
-# modules_available <kver> : 0 if a complete staged build exists for kver.
+# modules_build_matches_patches <build-dir> : the build was made from the
+# patches this checkout ships. BUILD-INFO records patch.<name>=<sha256> for
+# every patch it applied (build/build-modules.sh); each listed patch must be
+# there with the checkout's hash. Without that check a release that changes
+# only a patch (v0.1.7: hid-asus-ally 0016) kept loading the previous build,
+# because the kernel version had not changed. Prints the first mismatch.
+modules_build_matches_patches() {
+    local dir=$1 entries p want got
+    entries=$(modules_list_entries) || return 1
+    for p in $(printf '%s\n' "$entries" | cut -f1 | sort -u); do
+        want=$(ax20_sha256 "$(modules_patches_dir)/$p" 2>/dev/null || true)
+        got=$(modules_build_info_get "$dir/BUILD-INFO" "patch.$p" 2>/dev/null || true)
+        if [ -z "$got" ]; then
+            printf '%s: not in the build\n' "$p"
+            return 1
+        fi
+        if [ "$got" != "$want" ]; then
+            printf '%s: built from a different version of the patch\n' "$p"
+            return 1
+        fi
+    done
+    return 0
+}
+
+# modules_available <kver> : 0 if a complete staged build exists for kver,
+# made from this checkout's patches.
 modules_available() {
     local kver=$1 dir names n
     dir=$(ax20_path "$(modules_dir_for "$kver")")
@@ -140,13 +168,24 @@ modules_available() {
     for n in $names; do
         _modules_has_module "$dir" "$n" || return 1
     done
+    modules_build_matches_patches "$dir" >/dev/null || return 1
     return 0
+}
+
+# modules_staged_stale <kver> : a build is staged for kver but not from this
+# checkout's patches; prints why.
+modules_staged_stale() {
+    local dir
+    dir=$(ax20_path "$(modules_dir_for "$1")")
+    [ -f "$dir/BUILD-INFO" ] || return 1
+    [ "$(modules_build_info_get "$dir/BUILD-INFO" kver)" = "$1" ] || return 1
+    ! modules_build_matches_patches "$dir"
 }
 
 # modules_validate_build_dir <kver> <dir> : the directory holds a build for
 # kver with every listed module.
 modules_validate_build_dir() {
-    local kver=$1 src=$2 names n got
+    local kver=$1 src=$2 names n got why
     if [ ! -f "$src/BUILD-INFO" ]; then
         log_error "no BUILD-INFO in $src"
         return 1
@@ -167,6 +206,10 @@ modules_validate_build_dir() {
             return 1
         fi
     done
+    if ! why=$(modules_build_matches_patches "$src"); then
+        log_warn "build in $src does not match this checkout's patches ($why); not staging it"
+        return 1
+    fi
     return 0
 }
 
@@ -372,24 +415,42 @@ _modules_try_cache() {
     _modules_install_tarball "$kver" "$a"
 }
 
+# _modules_release_urls : download bases to try, one per line: the release
+# matching this checkout's VERSION (when the file exists), then "latest".
+_modules_release_urls() {
+    local v
+    if [ -f "$AX20_SRC/VERSION" ]; then
+        v=$(tr -d '[:space:]' <"$AX20_SRC/VERSION")
+        [ -n "$v" ] && printf '%s/v%s\n' "${AX20_MODULES_RELEASE_BASE%/}" "$v"
+    fi
+    printf '%s\n' "${AX20_MODULES_RELEASE_URL%/}"
+}
+
 # _modules_try_release <kver>
 _modules_try_release() {
-    local kver=$1 name url dir tmp
+    local kver=$1 name url dir tmp base
     modules_online || {
         log_info "offline: skipping release download for $kver"
         return 1
     }
     name="modules-$kver.tar.zst"
-    url="${AX20_MODULES_RELEASE_URL%/}/$name"
     dir=$(_modules_artifact_dir)
     if [ "$AX20_DRY_RUN" = 1 ]; then
-        printf '[dry-run] download %s\n' "$url" >&2
+        printf '[dry-run] download %s\n' "$(_modules_release_urls | head -n1)/$name" >&2
         return 1
     fi
     mkdir -p "$dir" || return 1
     tmp=$(mktemp -d "$dir/.dl.XXXXXX") || return 1
-    if ! _modules_fetch "$url.sha256" "$tmp/$name.sha256" || ! _modules_fetch "$url" "$tmp/$name"; then
-        log_info "no release artifact for $kver at $url"
+    url=""
+    for base in $(_modules_release_urls); do
+        if _modules_fetch "$base/$name.sha256" "$tmp/$name.sha256" && _modules_fetch "$base/$name" "$tmp/$name"; then
+            url="$base/$name"
+            break
+        fi
+        log_debug "no release artifact at $base/$name"
+    done
+    if [ -z "$url" ]; then
+        log_info "no release artifact for $kver (tried: $(_modules_release_urls | tr '\n' ' '))"
         rm -rf "$tmp"
         return 1
     fi

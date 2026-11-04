@@ -57,6 +57,15 @@ This runs from the RAUC post-install hook for the new slot's kernel, and
 from the boot service when the running kernel has no build. Failures are
 logged and never block an update or a boot.
 
+A staged or cached build is used only if its BUILD-INFO lists exactly the
+patches the installed checkout ships, with matching hashes. Otherwise it is
+refused and the next source is tried: the release matching the checkout's
+`VERSION`, then the latest release, then a container build. `self-update`
+runs this staging step itself after switching releases, so a release that
+changes only a patch gets its new module without any manual step. Before
+v0.1.8 only the kernel version was compared, and such a release kept the
+previous build until `rebuild --force --source release`.
+
 ## What happens on a new SteamOS kernel
 
 After an update that changes the kernel, the speakers and RGB use stock

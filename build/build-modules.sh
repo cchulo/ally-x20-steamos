@@ -22,7 +22,11 @@
 # Header resolution order (BUILD-INFO header_source):
 #   1 cached headers         CACHE_DIR/headers/<kver>
 #   2 Valve headers package  <mirror>/<channel>/os/x86_64/<pkgbase>-headers-<ver>-<rel>-x86_64.pkg.tar.zst,
-#                            sha256 checked against the repo database
+#                            sha256 checked against the repo database; when the
+#                            database has moved on to a newer pkgrel (the file
+#                            stays on the mirror) the file is fetched by name and
+#                            its detached .sig checked against Valve's package
+#                            signing key in build/keys/ (BM_PKG_KEYRING)
 #   3 Valve source           evlaV/linux-integration tag (full checkout) or the mirror's .src.tar.gz,
 #                            .config from the slot's vmlinuz (extract-ikconfig), make modules_prepare
 #   4 linux-stable v<base>   only when every touched file is byte-identical to the cached Valve source
@@ -49,6 +53,12 @@ BM_STABLE_GIT_URL="${KERNEL_STABLE_GIT_URL:-https://git.kernel.org/pub/scm/linux
 # mirror has no such repo today; beta images pull from jupiter-main.
 BM_ALL_CHANNELS="${BM_ALL_CHANNELS:-jupiter-main jupiter-rel jupiter-staging}"
 BM_FULL_BUILD="${BM_FULL_BUILD:-1}"
+# Valve's package signing key (GitLab CI Package Builder, steamos.cloud,
+# fingerprint 889B5EBDDD505A683621900DAF1D2199EF0A3CCF), used only when a
+# package has to be fetched by name because the repo database no longer
+# lists that pkgrel. BM_PKG_KEYRING overrides; see bm_pkg_keyring.
+BM_PKG_KEYRING="${BM_PKG_KEYRING:-}"
+BM_PKG_KEYRING_NAME=steamos-package-signing.asc
 BM_SYMBOL_IGNORE="${BM_SYMBOL_IGNORE:-^$}"
 
 bm_log() { printf 'build-modules: %s\n' "$*" >&2; }
@@ -320,13 +330,89 @@ bm_fetch_repo_db() {
     bm_fetch "$BM_MIRROR_BASE/$1/os/x86_64/$1.db" "$2"
 }
 
+# bm_pkg_keyring : BM_PKG_KEYRING, or build/keys/<name> next to this script
+# (checkout) or under the checkout PATCHES_DIR points into (the container
+# runs /usr/local/bin/build-modules.sh with /src mounted).
+bm_pkg_keyring() {
+    local d
+    if [ -n "$BM_PKG_KEYRING" ]; then
+        printf '%s\n' "$BM_PKG_KEYRING"
+        return 0
+    fi
+    for d in "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keys" \
+        "$(cd "${PATCHES_DIR:-.}/../.." 2>/dev/null && pwd)/build/keys"; do
+        if [ -s "$d/$BM_PKG_KEYRING_NAME" ]; then
+            printf '%s\n' "$d/$BM_PKG_KEYRING_NAME"
+            return 0
+        fi
+    done
+    printf '%s\n' "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keys/$BM_PKG_KEYRING_NAME"
+}
+
+# bm_verify_pkg_sig <file> <sig> : the detached signature is good and was
+# made by a key in the keyring (a throwaway GNUPGHOME holds nothing else).
+bm_verify_pkg_sig() {
+    local f=$1 sig=$2 gh rc=1 keyring
+    keyring=$(bm_pkg_keyring)
+    [ -s "$keyring" ] || {
+        bm_warn "no package signing keyring at $keyring"
+        return 1
+    }
+    bm_have gpg || {
+        bm_warn "gpg not available; cannot verify $(basename "$f")"
+        return 1
+    }
+    gh=$(mktemp -d "${TMPDIR:-/tmp}/bm-gnupg.XXXXXX") || return 1
+    chmod 0700 "$gh"
+    : >"$gh/common.conf"
+    if GNUPGHOME="$gh" gpg --batch --quiet --import "$keyring" >/dev/null 2>&1 \
+        && GNUPGHOME="$gh" gpg --batch --verify "$sig" "$f" >/dev/null 2>&1; then
+        rc=0
+    fi
+    if bm_have gpgconf; then GNUPGHOME="$gh" gpgconf --kill all >/dev/null 2>&1 || true; fi
+    rm -rf "$gh"
+    return "$rc"
+}
+
+# bm_fetch_package_direct <pkgname> <dest-dir> <channel> : the package at
+# its conventional file name, verified with its detached signature. Used
+# when the repo database no longer lists BM_PKGVER-BM_REL. Sets the same
+# globals as bm_fetch_package.
+bm_fetch_package_direct() {
+    local name=$1 dest=$2 ch=$3 fn url
+    fn="$name-$BM_PKGVER-$BM_REL-x86_64.pkg.tar.zst"
+    url="$BM_MIRROR_BASE/$ch/os/x86_64/$fn"
+    bm_fetch "$url" "$dest/$fn" 2>/dev/null || return 1
+    if ! bm_fetch "$url.sig" "$dest/$fn.sig" 2>/dev/null; then
+        bm_warn "$fn is on the $ch mirror but has no .sig; not trusting it"
+        rm -f "$dest/$fn"
+        return 1
+    fi
+    if ! bm_verify_pkg_sig "$dest/$fn" "$dest/$fn.sig"; then
+        bm_warn "$fn: signature does not verify against $(basename "$(bm_pkg_keyring)"); not trusting it"
+        rm -f "$dest/$fn" "$dest/$fn.sig"
+        return 1
+    fi
+    bm_log "repo $ch: $fn fetched by name (database lists a newer pkgrel); detached signature verified"
+    BM_PKG_URL=$url
+    BM_PKG_SHA256=$(bm_sha256 "$dest/$fn")
+    BM_PKG_CHANNEL=$ch
+    BM_PKG_FILE="$dest/$fn"
+    BM_PKG_VERIFIED=signature
+    rm -f "$dest/$fn.sig"
+    return 0
+}
+
 # bm_fetch_package <pkgname> <dest-dir> : find <pkgname> at
-# BM_PKGVER-BM_REL in the channels' repo DBs, download, verify. Sets
-# BM_PKG_FILE BM_PKG_URL BM_PKG_SHA256 BM_PKG_CHANNEL (call it directly, not
-# in a command substitution, or the globals are lost).
+# BM_PKGVER-BM_REL in the channels' repo DBs, download, verify. When a
+# database lists only another pkgrel, fall back to the file by name with its
+# signature (bm_fetch_package_direct). Sets BM_PKG_FILE BM_PKG_URL
+# BM_PKG_SHA256 BM_PKG_CHANNEL BM_PKG_VERIFIED (repo-db|signature); call it
+# directly, not in a command substitution, or the globals are lost.
 bm_fetch_package() {
     local name=$1 dest=$2 ch db hit fn sha
     mkdir -p "$dest" || return 1
+    BM_PKG_VERIFIED=""
     for ch in $(bm_channels); do
         db="$dest/$ch.db"
         if ! bm_fetch_repo_db "$ch" "$db" 2>/dev/null; then
@@ -335,6 +421,7 @@ bm_fetch_package() {
         fi
         if ! hit=$(bm_repo_db_lookup "$db" "$name" "$BM_PKGVER-$BM_REL"); then
             bm_log "repo $ch: no $name $BM_PKGVER-$BM_REL (has: $(bm_repo_db_versions "$db" "$name" | tr '\n' ' '))"
+            bm_fetch_package_direct "$name" "$dest" "$ch" && return 0
             continue
         fi
         fn=$(printf '%s' "$hit" | cut -f1)
@@ -351,6 +438,7 @@ bm_fetch_package() {
         BM_PKG_SHA256=$sha
         BM_PKG_CHANNEL=$ch
         BM_PKG_FILE="$dest/$fn"
+        BM_PKG_VERIFIED=repo-db
         return 0
     done
     return 1
@@ -377,6 +465,7 @@ bm_write_provenance() {
         printf 'header_origin_name=%s\n' "$BM_HEADER_DESC"
         printf 'header_url=%s\n' "${BM_HEADER_URL:-}"
         printf 'header_sha256=%s\n' "${BM_HEADER_SHA256:-}"
+        printf 'header_verified=%s\n' "${BM_HEADER_VERIFIED:-}"
         printf 'channel=%s\n' "${BM_CHANNEL_USED:-}"
     } >"$CACHE_DIR/headers/$KVER.provenance"
 }
@@ -388,6 +477,7 @@ bm_read_provenance() {
     BM_HEADER_ORIGIN_DESC=$(sed -n 's/^header_origin_name=//p' "$f")
     BM_HEADER_URL=$(sed -n 's/^header_url=//p' "$f")
     BM_HEADER_SHA256=$(sed -n 's/^header_sha256=//p' "$f")
+    BM_HEADER_VERIFIED=$(sed -n 's/^header_verified=//p' "$f")
     BM_CHANNEL_USED=$(sed -n 's/^channel=//p' "$f")
 }
 
@@ -438,6 +528,7 @@ bm_headers_from_mirror() {
     BM_HEADER_DESC="valve-headers-package"
     BM_HEADER_URL=$BM_PKG_URL
     BM_HEADER_SHA256=$BM_PKG_SHA256
+    BM_HEADER_VERIFIED=$BM_PKG_VERIFIED
     BM_CHANNEL_USED=$BM_PKG_CHANNEL
     bm_install_headers_dir "$build" || return 1
     rm -rf "$x" "$pkg"
@@ -708,6 +799,7 @@ bm_headers_from_valve_source() {
     BM_HEADER_DESC="valve-source+modules_prepare"
     BM_HEADER_URL=$BM_SOURCE_URL
     BM_HEADER_SHA256=$BM_SOURCE_SHA256
+    BM_HEADER_VERIFIED=""
     bm_prepare_tree "$BM_VALVE_SRC"
 }
 
@@ -767,6 +859,7 @@ bm_headers_from_stable() {
     BM_HEADER_DESC="linux-stable+modules_prepare"
     BM_HEADER_URL="$BM_STABLE_GIT_URL#v$BM_BASE"
     BM_HEADER_SHA256=""
+    BM_HEADER_VERIFIED=""
     BM_TREE_SRC=$stable
     BM_SOURCE_URL="$BM_STABLE_GIT_URL"
     BM_SOURCE_REF="v$BM_BASE@$(bm_git -C "$stable" rev-parse HEAD 2>/dev/null)"
@@ -969,6 +1062,7 @@ bm_render_build_info() {
     fi
     printf 'header_url=%s\n' "${BM_HEADER_URL:-}"
     printf 'header_sha256=%s\n' "${BM_HEADER_SHA256:-}"
+    printf 'header_verified=%s\n' "${BM_HEADER_VERIFIED:-}"
     printf 'channel=%s\n' "${BM_CHANNEL_USED:-$CHANNEL}"
     printf 'source_url=%s\n' "${BM_SOURCE_URL:-}"
     printf 'source_ref=%s\n' "${BM_SOURCE_REF:-}"

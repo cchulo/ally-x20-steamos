@@ -223,6 +223,119 @@ fake_headers_package() {
     [ ! -d "$CACHE_DIR/headers/$KVER" ]
 }
 
+# test_pkg_key : a throwaway OpenPGP key for signing fixture packages; sets
+# TEST_GH (its GNUPGHOME) and BM_PKG_KEYRING (its armored export). Skips
+# the test when gpg cannot generate keys on this host.
+test_pkg_key() {
+    command -v gpg >/dev/null 2>&1 || skip "gpg not installed on this host"
+    TEST_GH="$BATS_TEST_TMPDIR/gnupg"
+    mkdir -p "$TEST_GH" && chmod 700 "$TEST_GH"
+    : >"$TEST_GH/common.conf"
+    if ! GNUPGHOME="$TEST_GH" gpg --batch --quiet --passphrase '' --quick-gen-key 'Fixture Signer <sign@example.invalid>' ed25519 sign never 2>/dev/null; then
+        GNUPGHOME="$TEST_GH" gpgconf --kill all 2>/dev/null || true
+        skip "gpg cannot generate a key on this host"
+    fi
+    GNUPGHOME="$TEST_GH" gpg --batch --armor --export sign@example.invalid >"$BATS_TEST_TMPDIR/fixture-signing.asc"
+    BM_PKG_KEYRING="$BATS_TEST_TMPDIR/fixture-signing.asc"
+}
+
+teardown() {
+    [ -n "${TEST_GH:-}" ] && GNUPGHOME="$TEST_GH" gpgconf --kill all 2>/dev/null
+    return 0
+}
+
+# db_lists_newer_rel <pkgdir> <channel> : a repo database that only knows
+# 7.2.7.valve2-3 of the headers package (Valve bumped the pkgrel).
+db_lists_newer_rel() {
+    make_desc "$BATS_TEST_TMPDIR/db-$2" linux-neptune-72-headers 7.2.7.valve2-3 newer.pkg.tar.zst 1111
+    (cd "$BATS_TEST_TMPDIR/db-$2" && tar -czf "$1/$2.db" ./*)
+}
+
+@test "step 2 fetches the package by name when the repo db has moved to a newer pkgrel, verifying its signature" {
+    test_pkg_key
+    pkgdir="$MIRROR/jupiter-main/os/x86_64"
+    mkdir -p "$pkgdir"
+    fn=linux-neptune-72-headers-7.2.7.valve2-2-x86_64.pkg.tar.zst
+    fake_headers_package "$pkgdir/$fn"
+    GNUPGHOME="$TEST_GH" gpg --batch --quiet --detach-sign -o "$pkgdir/$fn.sig" "$pkgdir/$fn"
+    db_lists_newer_rel "$pkgdir" jupiter-main
+    run bm_headers_from_mirror
+    assert_success
+    assert_output_contains "no linux-neptune-72-headers 7.2.7.valve2-2 (has: 7.2.7.valve2-3"
+    assert_output_contains "fetched by name"
+    assert_output_contains "signature verified"
+    # Globals (run forks): call it again directly.
+    rm -rf "$CACHE_DIR/headers"
+    bm_headers_from_mirror
+    [ "$BM_HEADER_SOURCE" = 2 ]
+    [ "$BM_HEADER_URL" = "$BM_MIRROR_BASE/jupiter-main/os/x86_64/$fn" ]
+    [ "$BM_HEADER_SHA256" = "$(bm_sha256 "$pkgdir/$fn")" ]
+    [ "$BM_HEADER_VERIFIED" = signature ]
+    [ "$BM_CHANNEL_USED" = jupiter-main ]
+    [ -f "$CACHE_DIR/headers/$KVER/Module.symvers" ]
+    grep -qx 'header_verified=signature' "$CACHE_DIR/headers/$KVER.provenance"
+    BM_HEADER_SOURCE="" BM_HEADER_VERIFIED=""
+    bm_headers_from_cache
+    [ "$BM_HEADER_ORIGIN" = 2 ]
+    [ "$BM_HEADER_VERIFIED" = signature ]
+}
+
+@test "the db route is still preferred and records header_verified=repo-db" {
+    pkgdir="$MIRROR/jupiter-main/os/x86_64"
+    mkdir -p "$pkgdir"
+    fn=linux-neptune-72-headers-7.2.7.valve2-2-x86_64.pkg.tar.zst
+    fake_headers_package "$pkgdir/$fn"
+    make_desc "$BATS_TEST_TMPDIR/db" linux-neptune-72-headers 7.2.7.valve2-2 "$fn" "$(bm_sha256 "$pkgdir/$fn")"
+    (cd "$BATS_TEST_TMPDIR/db" && tar -czf "$pkgdir/jupiter-main.db" ./*)
+    bm_headers_from_mirror
+    [ "$BM_HEADER_VERIFIED" = repo-db ]
+    grep -qx 'header_verified=repo-db' "$CACHE_DIR/headers/$KVER.provenance"
+}
+
+@test "a package fetched by name is refused without a .sig or with a signature from another key" {
+    test_pkg_key
+    pkgdir="$MIRROR/jupiter-main/os/x86_64"
+    mkdir -p "$pkgdir"
+    fn=linux-neptune-72-headers-7.2.7.valve2-2-x86_64.pkg.tar.zst
+    fake_headers_package "$pkgdir/$fn"
+    db_lists_newer_rel "$pkgdir" jupiter-main
+    run bm_headers_from_mirror
+    assert_failure
+    assert_output_contains "has no .sig"
+    [ ! -d "$CACHE_DIR/headers/$KVER" ]
+    # Signed by a key that is not in the keyring (second key in the same
+    # home; BM_PKG_KEYRING was exported before it existed).
+    GNUPGHOME="$TEST_GH" gpg --batch --quiet --passphrase '' --quick-gen-key 'Someone Else <else@example.invalid>' ed25519 sign never 2>/dev/null \
+        || skip "gpg cannot generate a second key"
+    GNUPGHOME="$TEST_GH" gpg --batch --quiet --local-user else@example.invalid --detach-sign -o "$pkgdir/$fn.sig" "$pkgdir/$fn"
+    run bm_headers_from_mirror
+    assert_failure
+    assert_output_contains "signature does not verify"
+    [ ! -d "$CACHE_DIR/headers/$KVER" ]
+    # Tampered package under a good signature.
+    GNUPGHOME="$TEST_GH" gpg --batch --quiet --yes --local-user sign@example.invalid --detach-sign -o "$pkgdir/$fn.sig" "$pkgdir/$fn"
+    printf 'x' >>"$pkgdir/$fn"
+    run bm_headers_from_mirror
+    assert_failure
+    assert_output_contains "signature does not verify"
+}
+
+@test "the shipped keyring is Valve's package signing key" {
+    command -v gpg >/dev/null 2>&1 || skip "gpg not installed on this host"
+    gh="$BATS_TEST_TMPDIR/vk"
+    mkdir -p "$gh" && chmod 700 "$gh"
+    : >"$gh/common.conf"
+    GNUPGHOME="$gh" gpg --batch --quiet --import "$REPO_ROOT/build/keys/steamos-package-signing.asc"
+    GNUPGHOME="$gh" gpg --batch --with-colons --list-keys | grep -q '^fpr:::::::::889B5EBDDD505A683621900DAF1D2199EF0A3CCF:'
+    GNUPGHOME="$gh" gpgconf --kill all 2>/dev/null || true
+    # Found next to the script in a checkout, and through PATCHES_DIR when
+    # the script runs from elsewhere (the container's /usr/local/bin).
+    BM_PKG_KEYRING=""
+    [ "$(bm_pkg_keyring)" = "$REPO_ROOT/build/keys/steamos-package-signing.asc" ]
+    PATCHES_DIR="$REPO_ROOT/patches/kernel" BASH_SOURCE=/usr/local/bin/build-modules.sh bm_pkg_keyring >/dev/null 2>&1 || true
+    [ "$(PATCHES_DIR="$REPO_ROOT/patches/kernel" bm_pkg_keyring)" = "$REPO_ROOT/build/keys/steamos-package-signing.asc" ]
+}
+
 @test "step 2 explains a kver without the -g<commit> suffix" {
     KVER=7.2.7-valve2-2-neptune-72
     pkgdir="$MIRROR/jupiter-main/os/x86_64"

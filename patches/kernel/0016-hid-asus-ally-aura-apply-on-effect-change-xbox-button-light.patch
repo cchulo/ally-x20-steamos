@@ -1,0 +1,245 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Carlos Chulo <cchulo.dev@gmail.com>
+Date: Wed, 4 Nov 2026 03:30:00 -0800
+Subject: [PATCH] HID: asus-ally: send Aura apply only on effect changes; add
+ xbox_button_light
+
+Two fixes to the ring LED path added by patches 0010/0011, plus the X20's
+Xbox-button light.
+
+1. Apply (0x5a 0xb4) only when the effect changes.
+
+   For the animated effects (breathe, strobe, chroma, rainbow) the LED work
+   item sent 0xb3 + 0xb5 + 0xb4 on every write, so every colour or
+   brightness step Steam streams while a slider moves ended in an apply.
+   Apply is what makes the effect the MCU's own default (asusctl: "changes
+   won't persist unless apply is set"); Valve's driver sends it once per
+   suspend and never on writes, hhd only on a mode change. Nothing proves
+   it is a flash write, but nothing is gained by sending it per write
+   either. ally_rgb_send_aura() takes an apply flag; the work item passes
+   update_aura (effect, speed, direction or enabled changed), the suspend
+   path keeps its single apply, and resume resends effect, colour and
+   level with set only, since suspend already applied that effect.
+
+2. xbox_button_light.
+
+   The ROG Xbox Ally X20 lights its Xbox button through bit 4 of the
+   power-state mask (5a d1 09 01 <mask>), captured from Armoury Crate 3.1.5
+   (on = 0x1f, off = 0x0f) and verified on an RC74XA. This driver writes
+   that mask at every probe with its own default (boot | awake |
+   shutdown), so anything set from user space is lost at the next boot,
+   and a user-space write of the whole mask clobbers sleep_animation. The
+   bit therefore lives here: a new xbox_button_light LED attribute (0/1)
+   next to sleep_animation, and a module parameter of the same name for
+   the value used from boot on. Default off, as stock. Brightness and
+   breathing of that light are separate MCU commands and stay in user
+   space (ally-x20-steamos xbox-led).
+
+Derived from: Valve hid-asus-ally.c 7.2.7-valve2 (ally_set_led_power_states,
+ally_rgb_store_settings: one apply per suspend); hhd-dev/hhd
+device/rog_ally/hid.py (RGB_SET + RGB_APPLY on mode change only); asusctl
+asusd/src/aura_laptop/mod.rs ("Changes won't persist unless apply is set");
+seerge/g-helper app/USB/Aura.cs ApplyAllyPower (mask bits 0x01-0x08); a
+USBPcap capture of Armoury Crate 3.1.5 on an RC74XA, 2026-11-04 (bit 0x10).
+
+---
+ .../ABI/testing/sysfs-driver-hid-asus-ally    | 11 +++
+ drivers/hid/hid-asus-ally.c                   | 88 ++++++++++++++++---
+ 2 files changed, 88 insertions(+), 11 deletions(-)
+
+diff --git a/Documentation/ABI/testing/sysfs-driver-hid-asus-ally b/Documentation/ABI/testing/sysfs-driver-hid-asus-ally
+index 8370bde..47945ef 100644
+--- a/Documentation/ABI/testing/sysfs-driver-hid-asus-ally
++++ b/Documentation/ABI/testing/sysfs-driver-hid-asus-ally
+@@ -125,3 +125,14 @@ Description:	Values accepted by mode: custom.
+ 
+ 		Applies to handhelds bound by hid-asus-ally (ROG Ally, Ally X
+ 		and devices sharing their N-KEY USB IDs).
++
++What:		/sys/class/leds/<led>/xbox_button_light
++Date:		November 2026
++Contact:	linux-input@vger.kernel.org
++Description:	ROG Xbox Ally X20: whether the Xbox button is lit (0 or 1).
++		The setting is bit 4 of the same power-state mask that
++		sleep_animation uses, which the driver sends to the MCU at
++		every probe, so the value chosen here lasts until the next
++		boot; the xbox_button_light module parameter sets the value
++		used from boot on. Brightness and breathing of this light
++		are separate MCU commands not covered by this attribute.
+diff --git a/drivers/hid/hid-asus-ally.c b/drivers/hid/hid-asus-ally.c
+index 94ed877..475c9d4 100644
+--- a/drivers/hid/hid-asus-ally.c
++++ b/drivers/hid/hid-asus-ally.c
+@@ -1987,9 +1987,15 @@ static int ally_rgb_latch(struct hid_device *hdev, bool apply)
+ 	return asus_dev_set_report(hdev, EC_MODE_LED_APPLY, sizeof(EC_MODE_LED_APPLY));
+ }
+ 
+-/* Program a hardware Aura effect for the whole ring: 0xb3, then 0xb5, then 0xb4 */
++/*
++ * Program a hardware Aura effect for the whole ring: 0xb3, then 0xb5, then
++ * 0xb4 when @apply is set. Apply is what makes the effect the MCU's own
++ * default (asusctl: "changes won't persist unless apply is set"), so it is
++ * sent only when the effect itself changes and once at suspend, never for
++ * the colour and brightness updates Steam streams while a slider moves.
++ */
+ static int ally_rgb_send_aura(struct hid_device *hdev, u8 effect, u8 red, u8 green,
+-			      u8 blue, u8 speed, u8 direction)
++			      u8 blue, u8 speed, u8 direction, bool apply)
+ {
+ 	int ret;
+ 
+@@ -1998,7 +2004,7 @@ static int ally_rgb_send_aura(struct hid_device *hdev, u8 effect, u8 red, u8 gre
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	return ally_rgb_latch(hdev, true);
++	return ally_rgb_latch(hdev, apply);
+ }
+ 
+ /*
+@@ -2051,11 +2057,24 @@ static void ally_rgb_aura_defaults(void)
+ #define ALLY_LED_POWER_AWAKE		BIT(1)
+ #define ALLY_LED_POWER_SLEEP		BIT(2)
+ #define ALLY_LED_POWER_SHUTDOWN		BIT(3)
++/*
++ * ROG Xbox Ally X20: the Xbox button's light. Captured from Armoury Crate
++ * (5a d1 09 01 1f = on, 0f = off); the X20 has no separate command for it.
++ * Since this mask is sent at every probe, the bit has to live here or the
++ * light goes dark at every boot.
++ */
++#define ALLY_LED_POWER_XBOX_BUTTON	BIT(4)
+ 
+ /* Default to no animation during sleep, adjustable via sleep_animation attr */
+ static u8 ally_led_power_mask = ALLY_LED_POWER_BOOT | ALLY_LED_POWER_AWAKE |
+ 				ALLY_LED_POWER_SHUTDOWN;
+ 
++/* Xbox-button light at probe; the xbox_button_light attribute changes it live */
++static bool xbox_button_light;
++module_param(xbox_button_light, bool, 0644);
++MODULE_PARM_DESC(xbox_button_light,
++		 "Light the Xbox button (ROG Xbox Ally X20) from boot on (default: off, as stock)");
++
+ static int ally_set_led_power_states(struct hid_device *hdev, u8 mask)
+ {
+ 	u8 buf[16] = { [0] = FEATURE_ROG_ALLY_REPORT_ID,
+@@ -2107,6 +2126,43 @@ static ssize_t sleep_animation_index_show(struct device *dev,
+ }
+ DEVICE_ATTR_RO(sleep_animation_index);
+ 
++static ssize_t xbox_button_light_show(struct device *dev,
++				      struct device_attribute *attr, char *buf)
++{
++	return sysfs_emit(buf, "%d\n", !!(ally_led_power_mask & ALLY_LED_POWER_XBOX_BUTTON));
++}
++
++static ssize_t xbox_button_light_store(struct device *dev,
++				       struct device_attribute *attr,
++				       const char *buf, size_t count)
++{
++	struct led_classdev *cdev = dev_get_drvdata(dev);
++	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(cdev);
++	struct ally_rgb_dev *led_rgb = container_of(mc_cdev, struct ally_rgb_dev, led_rgb_dev);
++	bool enable;
++	int ret;
++
++	ret = kstrtobool(buf, &enable);
++	if (ret < 0)
++		return ret;
++
++	if (enable == !!(ally_led_power_mask & ALLY_LED_POWER_XBOX_BUTTON))
++		return count;
++
++	if (enable)
++		ally_led_power_mask |= ALLY_LED_POWER_XBOX_BUTTON;
++	else
++		ally_led_power_mask &= ~ALLY_LED_POWER_XBOX_BUTTON;
++	xbox_button_light = enable;
++
++	ret = ally_set_led_power_states(led_rgb->hdev, ally_led_power_mask);
++	if (ret < 0)
++		return ret;
++
++	return count;
++}
++DEVICE_ATTR_RW(xbox_button_light);
++
+ static struct ally_rgb_dev *ally_rgb_from_dev(struct device *dev)
+ {
+ 	struct led_classdev *cdev = dev_get_drvdata(dev);
+@@ -2322,6 +2378,7 @@ ALLY_DEVICE_ATTR_RO(ally_rgb_mode_index, mode_index);
+ static struct attribute *ally_rgb_attrs[] = {
+ 	&dev_attr_sleep_animation.attr,
+ 	&dev_attr_sleep_animation_index.attr,
++	&dev_attr_xbox_button_light.attr,
+ 	&dev_attr_ally_rgb_effect.attr,
+ 	&dev_attr_ally_rgb_effect_index.attr,
+ 	&dev_attr_ally_rgb_speed.attr,
+@@ -2389,10 +2446,11 @@ static void ally_rgb_do_work(struct work_struct *work)
+ 
+ 	/*
+ 	 * Animated effects run on the MCU; resend the effect so colour and
+-	 * speed changes take.
++	 * speed changes take. Apply (0xb4) only when the effect changed.
+ 	 */
+ 	if (effect != ALLY_RGB_EFFECT_MONOCOLOR) {
+-		ret = ally_rgb_send_aura(led->hdev, effect, red, green, blue, speed, direction);
++		ret = ally_rgb_send_aura(led->hdev, effect, red, green, blue, speed, direction,
++					 update_aura);
+ 		if (ret < 0)
+ 			hid_err(led->hdev, "Ally failed to set RGB effect: %d\n", ret);
+ 
+@@ -2415,7 +2473,7 @@ static void ally_rgb_do_work(struct work_struct *work)
+ 	static_mode = READ_ONCE(rgb_static_mode);
+ 	if (static_mode == ALLY_RGB_STATIC_LEGACY) {
+ 		ret = update_aura ? ally_rgb_send_aura(led->hdev, effect, red, green, blue,
+-						       speed, direction) : 0;
++						       speed, direction, true) : 0;
+ 	} else if (static_mode != ALLY_RGB_STATIC_SET_LEDS) {
+ 		ret = ally_rgb_send_static(led->hdev, static_mode, red, green, blue, update_aura);
+ 	} else {
+@@ -2507,13 +2565,15 @@ static void ally_rgb_store_settings(void)
+ 	/* What the MCU shows on its own while the host sleeps or is off */
+ 	if (!drvdata.led_rgb_data.enabled)
+ 		ally_rgb_send_aura(led_rgb->hdev, ALLY_RGB_EFFECT_MONOCOLOR, 0, 0, 0,
+-				   drvdata.led_rgb_data.speed, drvdata.led_rgb_data.direction);
++				   drvdata.led_rgb_data.speed, drvdata.led_rgb_data.direction,
++				   true);
+ 	else if (drvdata.led_rgb_data.effect != ALLY_RGB_EFFECT_MONOCOLOR)
+ 		ally_rgb_send_aura(led_rgb->hdev, drvdata.led_rgb_data.effect,
+ 				   drvdata.led_rgb_data.intensity[0],
+ 				   drvdata.led_rgb_data.intensity[1],
+ 				   drvdata.led_rgb_data.intensity[2],
+-				   drvdata.led_rgb_data.speed, drvdata.led_rgb_data.direction);
++				   drvdata.led_rgb_data.speed, drvdata.led_rgb_data.direction,
++				   true);
+ 	else
+ 		ally_rgb_set_static_from_multi(led_rgb->hdev);
+ }
+@@ -2546,11 +2606,13 @@ static void ally_rgb_resume(void)
+ 
+ 	if (drvdata.led_rgb_data.initialized) {
+ 		ally_rgb_restore_settings(led_rgb, led_cdev, mc_led_info);
+-		/* The MCU was reinitialised; resend effect and level as well */
++		/*
++		 * The MCU was reinitialised; the work resends the effect, the
++		 * colour and the level (UNKNOWN now). No apply: suspend already
++		 * made this effect the MCU's default.
++		 */
+ 		led_rgb->hw_level = ALLY_RGB_HW_LEVEL_UNKNOWN;
+ 		led_rgb->update_rgb = true;
+-		led_rgb->update_aura = true;
+-		/* The work resends the hardware level, it is UNKNOWN now */
+ 		ally_rgb_schedule_work(led_rgb);
+ 	}
+ }
+@@ -2633,6 +2695,10 @@ static struct ally_rgb_dev *ally_rgb_create(struct hid_device *hdev)
+ 	}
+ 	led_rgb->attr_group_added = true;
+ 
++	if (xbox_button_light)
++		ally_led_power_mask |= ALLY_LED_POWER_XBOX_BUTTON;
++	else
++		ally_led_power_mask &= ~ALLY_LED_POWER_XBOX_BUTTON;
+ 	ret = ally_set_led_power_states(hdev, ally_led_power_mask);
+ 	if (ret < 0)
+ 		hid_err(hdev, "Failed to set ring LED power states: %d\n", ret);

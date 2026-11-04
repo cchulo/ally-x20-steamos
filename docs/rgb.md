@@ -85,15 +85,22 @@ exposes it, so Steam's Customization page cannot drive it (steamos-manager
 handles one LED, the rings). The command that does:
 
 ```sh
-sudo ally-x20-steamos xbox-led on              # or off
-sudo ally-x20-steamos xbox-led brightness 3    # 0 (dark) .. 3 (brightest)
-sudo ally-x20-steamos xbox-led breathe on      # or off for a steady light
-sudo ally-x20-steamos xbox-led node            # which /dev/hidrawN it uses
+cd /var/lib/ally-x20-steamos/src
+sudo ./ally-x20-steamos.sh xbox-led on              # or off; kept across reboots
+sudo ./ally-x20-steamos.sh xbox-led brightness 3    # 0 (dark) .. 3 (brightest)
+sudo ./ally-x20-steamos.sh xbox-led breathe on      # or off for a steady light
+sudo ./ally-x20-steamos.sh xbox-led node            # which /dev/hidrawN it sends to
 ```
 
-The light is single-colour (green); there is no colour command. The MCU
-keeps the settings, so `on` is needed once, not at every boot. Whether it
-also survives a full power-off has not been checked yet (`TODO(hw)`).
+The light is single-colour (green); there is no colour command. On/off is a
+bit in the LED power mask that `hid-asus-ally` writes at every probe, so the
+driver owns it (patch 0016: `xbox_button_light` attribute on the ring LED,
+and a module parameter of the same name). `xbox-led on` writes the attribute
+and a modprobe.d option, so the light is on from the next boot too. Without
+the patched module the command writes the mask once, keeping the driver's
+`sleep_animation` bit, and the light is dark again after a reboot.
+Brightness and breathing are separate MCU commands and last until the next
+reboot. Suspend/resume has not been checked (`TODO(hw)`).
 
 The reports were captured from Armoury Crate on Windows
 ([xbox-led-capture.md](xbox-led-capture.md)) and verified on an X20 on

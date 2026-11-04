@@ -7,7 +7,17 @@ load '../test_helper'
 setup() {
     make_root >/dev/null
     export AX20_HIDRAW_SYS="$BATS_TEST_TMPDIR/hidraw"
-    mkdir -p "$AX20_HIDRAW_SYS"
+    export AX20_LEDS_SYS="$BATS_TEST_TMPDIR/leds"
+    mkdir -p "$AX20_HIDRAW_SYS" "$AX20_LEDS_SYS"
+}
+
+# ring_led [with-attr] [sleep] : the ring LED device; with-attr adds the
+# patch-0016 xbox_button_light attribute.
+ring_led() {
+    local d="$AX20_LEDS_SYS/go_s:rgb:joystick_rings"
+    mkdir -p "$d"
+    printf '%s\n' "${2:-0}" >"$d/sleep_animation"
+    [ "${1:-}" != with-attr ] || printf '0\n' >"$d/xbox_button_light"
 }
 
 # hidraw <n> <HID_ID> <descriptor hex> : one fake node.
@@ -57,18 +67,57 @@ x20_nodes() {
     assert_equal "$output" "/dev/hidraw9"
 }
 
-@test "on sends the power mask with the Xbox bit set, as a feature report" {
+@test "on/off with the driver attribute (patch 0016): writes it and a modprobe.d option, no raw mask" {
     x20_nodes
+    ring_led with-attr
+    run "$CLI" --dry-run xbox-led on
+    assert_success
+    assert_output_contains "xbox_button_light <- 1"
+    assert_output_contains "/etc/modprobe.d/ally-x20-steamos-xbox-led.conf <- xbox_button_light=1"
+    assert_output_contains "kept across reboots"
+    [[ "$output" != *"5a d1 09"* ]]
+    run "$CLI" --dry-run xbox-led off
+    assert_success
+    assert_output_contains "xbox_button_light <- 0"
+    assert_output_contains "xbox_button_light=0"
+}
+
+@test "on with the attribute, for real: attribute written, modprobe.d option recorded in the manifest" {
+    x20_nodes
+    ring_led with-attr
+    run "$CLI" xbox-led on
+    assert_success
+    [ "$(cat "$AX20_LEDS_SYS/go_s:rgb:joystick_rings/xbox_button_light")" = 1 ]
+    grep -q '^options hid-asus-ally xbox_button_light=1$' "$AX20_ROOT/etc/modprobe.d/ally-x20-steamos-xbox-led.conf"
+    source_libs
+    manifest_has /etc/modprobe.d/ally-x20-steamos-xbox-led.conf
+}
+
+@test "on without the attribute: one mask write with the driver's default bits (0x0b) plus the Xbox bit" {
+    x20_nodes
+    ring_led
+    run "$CLI" --dry-run xbox-led on
+    assert_success
+    assert_output_contains '[dry-run] /dev/hidraw5 feature <- 5a d1 09 01 1b'
+    assert_output_contains 'until the next reboot'
+}
+
+@test "on/off without the attribute keeps the driver's sleep_animation bit" {
+    x20_nodes
+    ring_led '' 1
     run "$CLI" --dry-run xbox-led on
     assert_success
     assert_output_contains '[dry-run] /dev/hidraw5 feature <- 5a d1 09 01 1f'
-}
-
-@test "off clears the Xbox bit and leaves the ring bits alone" {
-    x20_nodes
     run "$CLI" --dry-run xbox-led off
     assert_success
     assert_output_contains '[dry-run] /dev/hidraw5 feature <- 5a d1 09 01 0f'
+}
+
+@test "off without the attribute and without a ring LED device: 0x0b" {
+    x20_nodes
+    run "$CLI" --dry-run xbox-led off
+    assert_success
+    assert_output_contains '[dry-run] /dev/hidraw5 feature <- 5a d1 09 01 0b'
 }
 
 @test "brightness 0-3 is an output report 5d d1 20 01 <level>" {

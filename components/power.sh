@@ -202,6 +202,25 @@ power_probe_details() {
     printf 'shim=%s\n' "$(power_shim_state)"
     printf 'tdp_slider=%s\n' "$(power_tdp_slider_describe)"
     printf 'asus_armoury=%s\n' "$(power_kernel_limits || true)"
+    printf 'charge_limit=%s\n' "$(power_charge_limit)"
+}
+
+# power_charge_limit : the battery's charge_control_end_threshold as the
+# kernel reports it. The EC keeps the real limit across reboots while this
+# attribute reads 0 again after boot, so "0 (unset this boot)" means the EC
+# may still hold an older limit (docs/power.md, "Battery charge limit").
+power_charge_limit() {
+    local f v
+    for f in "$(ax20_path /sys/class/power_supply)"/BAT*/charge_control_end_threshold; do
+        [ -r "$f" ] || continue
+        v=$(cat "$f")
+        case "$v" in
+            0) printf '0 (not written this boot; the EC may still hold an older limit)\n' ;;
+            *) printf '%s%%\n' "$v" ;;
+        esac
+        return 0
+    done
+    printf 'n/a\n'
 }
 
 # _power_system_steps : should we touch the running system (systemctl)?

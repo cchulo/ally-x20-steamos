@@ -311,7 +311,16 @@ steamos-manager exposes, from the device file (26.4.1, `manager/user.rs`):
   (written by the root daemon to that platform profile's `profile` file),
   `SuggestedDefaultPerformanceProfile` = `balanced`. The interface is only
   created when the choices list is not empty.
-- **Battery charge limit** via `acpi_sb`.
+- **Battery charge limit** via `acpi_sb` (Steam → Settings → Power). Steam
+  writes the limit to `/sys/class/power_supply/BAT1/charge_control_end_threshold`
+  (asus-wmi), and the EC keeps it across reboots and across operating
+  systems. After a reboot that attribute reads 0 until something writes it,
+  so Steam's power daemon logs "100%" and the UI shows no limit while the EC
+  still stops at the old value. Seen on the owner's X20 on 2026-11-04: stuck
+  at 80 % with no limit shown. `power status` prints the EC's view
+  (`charge_limit=`); to clear a stale limit:
+  `echo 100 | sudo tee /sys/class/power_supply/BAT1/charge_control_end_threshold`.
+  Armoury Crate's Battery Care (Windows) sets the same EC value.
 - **GPU clock** (`gpu_performance` on amdgpu); Manual GPU Clock fails with
   `EINVAL` on this APU (section 1.3).
 - **No TDP limit** (`TdpLimit1`), unless `tdp_slider` is on.

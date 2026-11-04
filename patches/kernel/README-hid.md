@@ -79,13 +79,15 @@ inside the patch.
 **How it is wired**
 - `monocolor` (Steam's "Solid") is sent as the Aura static effect
   `0x5a 0xb3 00 00 R G B 00 00`, latched with `EC_MODE_LED_SET` (`0x5a 0xb5`).
-  `EC_MODE_LED_APPLY` (`0x5a 0xb4`) follows only when the effect changed. The
+  `EC_MODE_LED_APPLY` (`0x5a 0xb4`) follows only when the effect changed
+  (for the animated effects too since 0016). The
   colour is scaled by brightness in software, and the hardware level stays at
   Valve's base value. The per-zone `xpad_cmd_set_leds` report is no longer
   sent by default. See [Solid dropout](#solid-dropout) and `rgb_static_mode`.
 - Animated effects send `0x5a 0xb3 00 <effect> R G B <speed> <dir>`, then the
-  existing `EC_MODE_LED_SET` (`0x5a 0xb5`), then `EC_MODE_LED_APPLY`
-  (`0x5a 0xb4`), all through `asus_dev_set_report()`. Brightness maps to the
+  existing `EC_MODE_LED_SET` (`0x5a 0xb5`), and `EC_MODE_LED_APPLY`
+  (`0x5a 0xb4`) only when the effect changed (0016; 0011 alone sent it on
+  every write). All through `asus_dev_set_report()`. Brightness maps to the
   0–3 hardware level on report `0x5d 0xba 0xc5 0xc4 <level>`, which is sent
   only when it changes.
 - The state persists across suspend and re-probe. On suspend the MCU is left
@@ -241,14 +243,15 @@ running.
 ## Xbox button light
 
 The X20's Xbox button glows green on Windows and is dark after a Linux boot.
-The stock driver registers no LED for it and these patches do not add one;
-`ally-x20-steamos xbox-led` drives it from user space over the N-KEY
+The commands came from a USBPcap capture of Armoury Crate 3.1.5 on Windows
+([docs/xbox-led-capture.md](../../docs/xbox-led-capture.md)) and were
+verified on an X20 on 2026-11-04; no public driver (hhd, kndclark/ally_module,
+g-helper, asusctl, InputPlumber) knows them. They go to the N-KEY
 configuration interface (`0b05:1b4c` interface 2, the hidraw node with
 report IDs `0x5a`, `0x5d`, `0x5e`; interrupt IN `0x83`, interrupt OUT
-`0x04`). No public driver (hhd, kndclark/ally_module, g-helper, asusctl,
-InputPlumber) knows these; they came from a USBPcap capture of Armoury Crate
-3.1.5 on Windows ([docs/xbox-led-capture.md](../../docs/xbox-led-capture.md))
-and were verified on an X20 on 2026-11-04. All reports are 64 bytes,
+`0x04`). On/off is handled by the driver since 0016 (`xbox_button_light`
+attribute and module parameter); brightness and breathing by
+`ally-x20-steamos xbox-led` from user space. All reports are 64 bytes,
 zero-padded:
 
 | Action | Report | Transport |
@@ -257,19 +260,22 @@ zero-padded:
 | brightness 0–3 | `5d d1 20 01 <level>` | output report on interrupt OUT `0x04` (hidraw `write()`) |
 | breathe / steady | `5a d1 21 02 01 08` / `5a d1 21 02 00 08` | feature |
 
-`0x09` is g-helper's Ally "power LED mask", whose low four bits are the
-rings' power states; bit `0x10` is the Xbox button. Armoury Crate re-sends
-the ring colour (`5a b3 …`, `5a b4`, `5a b5`) after every mask write, but
-on the X20 the rings kept their colour without that. The byte `08` in the
-`0x21` report did not change between breathe and steady in the capture
-(speed, or a fixed field). Nothing in the capture suggests an RGB colour
-for the button. The MCU keeps the settings across the command's exit;
-`TODO(hw)` whether they survive a full power-off.
+`0x09` is the power-state mask this driver already owns
+(`ally_led_power_mask`, Valve's `sleep_animation` attribute): the low four
+bits are the rings' boot/awake/sleep/shutdown states, bit `0x10` is the
+Xbox button. Valve's driver writes that mask at every probe with its own
+default (`0x0b`), which is why the light was dark after every boot, and why
+a user-space write of the whole mask (the first `xbox-led on`, `0x1f`) also
+switched the sleep animation on behind the driver's back. 0016 keeps the bit
+in the driver instead. Armoury Crate re-sends the ring colour (`5a b3 …`,
+`5a b4`, `5a b5`) after every mask write; on the X20 the rings kept their
+colour without that. The byte `08` in the `0x21` report did not change
+between breathe and steady in the capture (speed, or a fixed field). Nothing
+in the capture suggests an RGB colour for the button. `TODO(hw)` whether the
+brightness level and breathing survive suspend/resume.
 
-Open option: a `go_s:white:xbox_button` LED class device in the driver
-(`brightness` 0 → mask off, 1–3 → the level report) would let udev and
-systemd-backlight-style tooling restore it. Steam would not show it: its
-Customization page drives one LED.
+Not done: a `go_s:white:xbox_button` LED class device. Steam would not show
+it (its Customization page drives one LED), and the mask bit covers boot.
 
 ## Validation status
 
@@ -315,6 +321,24 @@ speaker amps, 100 does not, so the out-of-range scaling was the cause of the
 "static during rumble" reports (docs/rumble-analysis.md §7). See
 [`docs/rumble-analysis.md`](../../docs/rumble-analysis.md) §6b for why and
 for the steps to promote it.
+
+## 0016: Aura apply only on effect changes; xbox_button_light
+
+[`0016-hid-asus-ally-aura-apply-on-effect-change-xbox-button-light.patch`](0016-hid-asus-ally-aura-apply-on-effect-change-xbox-button-light.patch)
+does two things. First, `ally_rgb_send_aura()` takes an `apply` flag and the
+LED work item passes `update_aura`, so the animated effects send
+`EC_MODE_LED_APPLY` (`0x5a 0xb4`) only when the effect, speed, direction or
+enabled state changed, as the monocolor path already did. With 0011 alone
+every colour or brightness write on breathe/strobe/chroma/rainbow ended in an
+apply, which is more than Valve's driver (once per suspend, never on writes)
+or hhd (mode changes only) send; asusctl's "changes won't persist unless
+apply is set" is the reason to treat it as a possibly persistent write.
+Suspend keeps its single apply; resume resends effect, colour and level with
+set only. Second, `xbox_button_light` (LED attribute 0/1 and module
+parameter) sets bit 4 of `ally_led_power_mask`, the mask the driver sends at
+every probe, so the X20's Xbox-button light can be on from boot without any
+user-space write of that mask. Default off, as stock. See "Xbox button
+light" above. Not yet run on hardware: compiled by CI only (`TODO(hw)`).
 
 ## 0015: hold the X20 top-right key for 250 ms (in the build since 2026-10-31)
 

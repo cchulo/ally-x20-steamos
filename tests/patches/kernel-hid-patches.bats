@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # SPDX-License-Identifier: GPL-2.0-only
-# Static checks for the hid-asus-ally kernel patches (patches/kernel/0010-0015)
+# Static checks for the hid-asus-ally kernel patches (patches/kernel/0010-0016)
 # and patches/kernel/modules-hid.list. Nothing here needs a kernel tree.
 load '../test_helper'
 
@@ -11,10 +11,10 @@ hid_patches() {
     ls "$PATCH_DIR"/001[0-9]-hid-asus-ally-*.patch 2>/dev/null
 }
 
-@test "the six hid-asus-ally patches exist" {
+@test "the seven hid-asus-ally patches exist" {
     run hid_patches
     assert_success
-    [ "$(printf '%s\n' "$output" | grep -c .)" -eq 6 ] || {
+    [ "$(printf '%s\n' "$output" | grep -c .)" -eq 7 ] || {
         echo "$output"
         false
     }
@@ -98,7 +98,7 @@ hid_patches() {
             false
         }
     done <"$LIST"
-    [ "$n" -eq 6 ]
+    [ "$n" -eq 7 ]
 }
 
 @test "every hid-asus-ally patch is listed in modules-hid.list" {
@@ -170,4 +170,22 @@ hid_patches() {
     grep -q 'ALLY_X20_KEY_HOLD_MS' "$p"
     grep -q 'cancel_delayed_work_sync(&ally_x->x20_key_release)' "$p"
     grep -q '^0015-' "$PATCH_DIR/modules-hid.list"
+}
+
+@test "0016 gates Aura apply on effect changes, adds xbox_button_light, and is listed for the build" {
+    p="$(ls "$PATCH_DIR"/0016-*.patch)"
+    [ -f "$p" ]
+    grep -q '^Subject: ' "$p"
+    # apply flag threaded through ally_rgb_send_aura; the work item passes update_aura
+    grep -q '^+			      u8 blue, u8 speed, u8 direction, bool apply)' "$p"
+    grep -q '^+					 update_aura);' "$p"
+    # resume no longer forces an apply
+    grep -q '^-		led_rgb->update_aura = true;' "$p"
+    # Xbox button: bit 4 of the power mask, attribute and module parameter
+    grep -q '^+#define ALLY_LED_POWER_XBOX_BUTTON	BIT(4)' "$p"
+    grep -q '^+DEVICE_ATTR_RW(xbox_button_light);' "$p"
+    grep -q '^+module_param(xbox_button_light, bool, 0644);' "$p"
+    grep -q '^+	&dev_attr_xbox_button_light.attr,' "$p"
+    grep -q '^+What:		/sys/class/leds/<led>/xbox_button_light' "$p"
+    grep -q '^0016-' "$PATCH_DIR/modules-hid.list"
 }

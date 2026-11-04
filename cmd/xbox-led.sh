@@ -7,13 +7,22 @@
 # Armoury Crate 3.1.5 on Windows (docs/xbox-led-capture.md) and verified on
 # an X20 on 2026-11-04:
 #
-#   on / off          5a d1 09 01 1f / 0f     feature report (SET_REPORT)
+#   on / off          bit 0x10 of the LED power mask (5a d1 09 01 <mask>)
 #   brightness 0-3    5d d1 20 01 <level>     output report (interrupt OUT)
 #   breathe on / off  5a d1 21 02 01 08 / 00 08  feature report
 #
-# 0x09 is the "power LED mask" g-helper uses for the rings (low four bits);
-# bit 0x10 is the Xbox button. The MCU keeps the setting, so "on" is only
-# needed once. Nothing here touches the joystick rings.
+# The power mask belongs to hid-asus-ally: it writes it at every probe (so a
+# bare mask write is undone at the next boot) and its low bits carry the
+# rings' sleep_animation setting. With patch 0016 the driver exposes the
+# Xbox bit as the LED attribute xbox_button_light, and on/off write that
+# plus a modprobe.d option so the driver sets it from boot on. Without the
+# attribute (stock or older module) the mask is written directly, composed
+# from the driver's default and its sleep_animation value, for this boot
+# only. Brightness and breathing are not part of the mask and last until
+# the next reboot. Nothing here touches the joystick ring colours.
+
+# shellcheck source=lib/component.sh
+. "$AX20_SRC/lib/component.sh"
 
 _xbox_led_usage() {
     cat <<USAGE
@@ -26,13 +35,66 @@ usage: $AX20_NAME xbox-led [--hidraw <dev>] <command>
 
   --hidraw <dev>        use this hidraw node instead of auto-detecting it
 
-Needs root (the hidraw node is root-only). The MCU remembers the settings.
+Needs root. on/off is kept across reboots when the patched hid-asus-ally
+(patch 0016) is loaded; brightness and breathe last until the next reboot.
 See docs/rgb.md, "Xbox button light".
 USAGE
 }
 
 # Where hidraw nodes are enumerated; tests point this at a fixture tree.
 AX20_HIDRAW_SYS=${AX20_HIDRAW_SYS:-/sys/class/hidraw}
+# The ring LED device (its xbox_button_light and sleep_animation attributes).
+AX20_LEDS_SYS=${AX20_LEDS_SYS:-/sys/class/leds}
+# modprobe.d drop-in that makes the driver light the button from boot on.
+XBOX_LED_MODPROBE_REL="/etc/modprobe.d/${AX20_NAME}-xbox-led.conf"
+
+# xbox_led_dev : print the ring LED sysfs directory, or nothing.
+xbox_led_dev() {
+    local d
+    for d in "$AX20_LEDS_SYS"/go_s:rgb:joystick_rings "$AX20_LEDS_SYS"/ally:rgb:joystick_rings; do
+        [ -d "$d" ] && printf '%s\n' "$d" && return 0
+    done
+    return 1
+}
+
+# xbox_led_power <on|off> <hidraw node> : switch the light.
+# 1. driver attribute (patch 0016): write it, and record the choice for the
+#    next boot in a modprobe.d option (manifest entry of component modules,
+#    so uninstall removes it).
+# 2. no attribute: write the mask once, keeping the driver's sleep bit.
+xbox_led_power() {
+    local want=$1 node=$2 led val sleep mask tmp
+    val=0
+    [ "$want" = on ] && val=1
+    led=$(xbox_led_dev || true)
+    if [ -n "$led" ] && [ -e "$led/xbox_button_light" ]; then
+        if [ "$AX20_DRY_RUN" = 1 ]; then
+            printf '[dry-run] %s/xbox_button_light <- %s\n' "$led" "$val" >&2
+        else
+            printf '%s\n' "$val" >"$led/xbox_button_light" || die "writing $led/xbox_button_light failed"
+        fi
+        tmp=$(mktemp "${TMPDIR:-/tmp}/ax20-xbox-led.XXXXXX") || die "cannot create a temporary file"
+        printf '# Written by %s xbox-led %s. Lights the Xbox button from boot on.\n' "$AX20_NAME" "$want" >"$tmp"
+        printf 'options hid-asus-ally xbox_button_light=%s\n' "$val" >>"$tmp"
+        if [ "$AX20_DRY_RUN" = 1 ]; then
+            printf '[dry-run] %s <- xbox_button_light=%s\n' "$XBOX_LED_MODPROBE_REL" "$val" >&2
+        else
+            manifest_install_file "$tmp" "$XBOX_LED_MODPROBE_REL" modules 0644
+        fi
+        rm -f "$tmp"
+        log_info "xbox-led: $want (kept across reboots)"
+        return 0
+    fi
+    # Fallback: the driver's default mask (boot | awake | shutdown = 0x0b)
+    # plus its sleep_animation bit, plus the Xbox bit. Lost at the next boot.
+    sleep=0
+    if [ -n "$led" ] && [ -r "$led/sleep_animation" ]; then
+        sleep=$(cat "$led/sleep_animation")
+    fi
+    mask=$((0x0b | (sleep ? 0x04 : 0) | (val ? 0x10 : 0)))
+    xbox_led_send "$node" feature 5a d1 09 01 "$(printf '%02x' "$mask")"
+    log_info "xbox-led: $want (until the next reboot: this hid-asus-ally has no xbox_button_light attribute)"
+}
 
 # xbox_led_find_node : print /dev/hidrawN of the N-KEY interface, or fail.
 # 0b05:1b4c with report ID 0x5a (85 5a) in its report descriptor.
@@ -146,14 +208,7 @@ cmd_xbox_led() {
 
     [ "$AX20_DRY_RUN" = 1 ] || require_root xbox-led "$sub" "$@"
     case "$sub" in
-        on)
-            xbox_led_send "$node" feature 5a d1 09 01 1f
-            log_info "xbox-led: on"
-            ;;
-        off)
-            xbox_led_send "$node" feature 5a d1 09 01 0f
-            log_info "xbox-led: off"
-            ;;
+        on | off) xbox_led_power "$sub" "$node" ;;
         brightness)
             xbox_led_send "$node" output 5d d1 20 01 "0$level"
             log_info "xbox-led: brightness $level"

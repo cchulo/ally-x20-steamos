@@ -110,10 +110,11 @@ Expected. Steam stores the ring colour and brightness and re-applies them
 when it starts; the controller is not asked to light the rings on its own.
 
 **With the Solid effect only the left ring stays lit.**
-A known firmware quirk with one of the ways to send a solid colour. The
-default since v0.1.3 avoids it; if you still see it, set
-`options hid-asus-ally rgb_static_mode=0` in a modprobe.d file and reboot
-([docs/rgb.md](docs/rgb.md#solid-dropout)).
+An older module build mixed two report types for Solid. Current builds send
+Solid as the controller's own static effect, which keeps both rings lit. If
+you still see it, update, or try the other strategies through the
+`rgb_static_mode` module parameter
+([docs/rgb.md](docs/rgb.md#solid-colour-if-one-ring-goes-dark)).
 
 **`apply` warns that `libdisplay-info.so.3` is not built yet.**
 Desktop Mode HDR needs a build step the installer does not run for you

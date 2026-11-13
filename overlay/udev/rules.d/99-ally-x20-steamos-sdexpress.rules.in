@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# ally-x20-steamos: treat the ROG Xbox Ally X20's SD Express slot like a
+# microSD slot. Rendered from 99-ally-x20-steamos-sdexpress.rules.in by
+# component sdexpress (@ROOT_PORT@ is filled in; default @ROOT_PORT_DEFAULT@,
+# override with `ally-x20-steamos sdexpress root-port <bdf>`).
+#
+# An SD Express card is a PCIe/NVMe device, so stock SteamOS's automount rule
+# (KERNEL=="mmcblk*|sd*") never sees it. This rule hands its partitions to the
+# same stock scripts (/usr/lib/hwsupport/block-device-event.sh, then
+# holo-automount.sh: fsck, udisks mount under /run/media/deck/<label>).
+#
+# Why the PCIe root port and not nvmeN: the kernel numbers NVMe controllers in
+# probe order, which changes between boots. Measured on the X20 (BIOS
+# RC74XA.303): the card was nvme1n1 when inserted after boot and nvme0n1 after
+# a reboot with it present (the internal SSD moved to nvme1n1). The slot's
+# root port (@ROOT_PORT_DEFAULT@; the SSD sits behind 0000:00:02.1) is a fixed
+# SoC function and the only stable identifier, so the rule matches on the
+# DEVPATH passing through it. The SD flags on the whole-disk node are a
+# cosmetic hint for udisks/Steam ("MicroSD Card" rather than "External
+# Drive"); unverified.
+SUBSYSTEM!="block", GOTO="ally_x20_sdexpress_end"
+DEVPATH!="*/@ROOT_PORT@/*", GOTO="ally_x20_sdexpress_end"
+KERNEL=="nvme*n[0-9]", ENV{ID_DRIVE_FLASH_SD}="1", ENV{ID_DRIVE_MEDIA_FLASH_SD}="1", ENV{ID_DRIVE_MEDIA_FLASH}="1"
+KERNEL!="nvme*n[0-9]p[0-9]*", GOTO="ally_x20_sdexpress_end"
+ENV{ID_FS_USAGE}!="filesystem", GOTO="ally_x20_sdexpress_end"
+ACTION=="add", RUN+="/bin/systemd-run --no-block --collect /usr/lib/hwsupport/block-device-event.sh add %k"
+ACTION=="remove", RUN+="/bin/systemd-run --no-block --collect /usr/lib/hwsupport/block-device-event.sh remove %k"
+LABEL="ally_x20_sdexpress_end"

@@ -7,6 +7,8 @@ PROFILE=/etc/inputplumber/devices.d/50-rog_xbox_ally_x20.yaml
 CAPMAP=/etc/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml
 HWDB=/etc/udev/hwdb.d/60-ally-x20-steamos-inputplumber.hwdb
 DROPIN=/etc/systemd/system/inputplumber.service.d/50-ally-x20-steamos.conf
+RESUME_UNIT=/etc/systemd/system/ally-x20-steamos-inputplumber-resume.service
+SLEEP_TARGETS="suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target"
 OVL="$REPO_ROOT/overlay"
 
 setup() {
@@ -92,8 +94,27 @@ inputplumber
     same_file "$AX20_ROOT$PROFILE" "$OVL/inputplumber/devices.d/50-rog_xbox_ally_x20.stock.yaml"
     same_file "$AX20_ROOT$CAPMAP" "$OVL/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml"
     same_file "$AX20_ROOT$HWDB" "$OVL/udev/hwdb.d/60-ally-x20-steamos-inputplumber.hwdb"
+    same_file "$AX20_ROOT$RESUME_UNIT" "$OVL/systemd/ally-x20-steamos-inputplumber-resume.service"
+    for t in $SLEEP_TARGETS; do
+        link="/etc/systemd/system/$t.wants/ally-x20-steamos-inputplumber-resume.service"
+        [ "$(readlink "$AX20_ROOT$link")" = ../ally-x20-steamos-inputplumber-resume.service ]
+        manifest_has "$link"
+    done
     [ ! -e "$AX20_ROOT$DROPIN" ]
     [ "$(component_status inputplumber)" = active ]
+}
+
+@test "resume unit: a oneshot after every sleep target that try-restarts the daemon after 3 s" {
+    u="$OVL/systemd/ally-x20-steamos-inputplumber-resume.service"
+    grep -qx 'Type=oneshot' "$u"
+    grep -qx 'ExecStartPre=/bin/sleep 3' "$u"
+    grep -qx 'ExecStart=/usr/bin/systemctl try-restart inputplumber.service' "$u"
+    grep -qx "ConditionPathExists=$PROFILE" "$u"
+    grep -qx "After=$SLEEP_TARGETS" "$u"
+    grep -qx "WantedBy=$SLEEP_TARGETS" "$u"
+    # nothing is ordered after it, so it must never block the sleep
+    run grep -E '^(Before|RemainAfterExit)=' "$u"
+    assert_failure
 }
 
 @test "stock >= 0.82.0: installs the verbatim upstream profile and no capability map" {
@@ -207,19 +228,20 @@ inputplumber
     export AX20_INPUTPLUMBER_FALLBACK=1
     before=$(tree_listing)
     component_apply inputplumber
-    for p in "$PROFILE" "$HWDB" "$DROPIN"; do
+    for p in "$PROFILE" "$HWDB" "$DROPIN" "$RESUME_UNIT"; do
         manifest_has "$p"
         manifest_verify "$p"
     done
     manifest_has /etc/inputplumber/devices.d
     run component_remove_hook inputplumber
     assert_success
-    # what uninstall does: newest first; files, then the (empty) dirs we created
-    for kind in file dir; do
+    # what uninstall does: newest first; files and symlinks, then the (empty)
+    # dirs we created
+    for kind in symlink file dir; do
         manifest_entries_reverse | while IFS= read -r e; do
             [ "$(manifest_entry_get "$e" kind)" = "$kind" ] || continue
             p=$(manifest_entry_get "$e" path)
-            if [ "$kind" = file ]; then rm -f "$AX20_ROOT$p"; else rmdir "$AX20_ROOT$p"; fi
+            if [ "$kind" = dir ]; then rmdir "$AX20_ROOT$p"; else rm -f "$AX20_ROOT$p"; fi
             manifest_forget "$p"
         done
     done
@@ -242,6 +264,7 @@ inputplumber
     assert_success
     grep -qx 'systemd-hwdb update' "$stub/calls"
     grep -qx 'udevadm trigger --action=change --subsystem-match=dmi' "$stub/calls"
+    grep -qx 'systemctl daemon-reload' "$stub/calls"
     grep -qx 'systemctl enable --now inputplumber.service' "$stub/calls"
     [ -f "$AX20_ROOT/var/lib/ally-x20-steamos/inputplumber/service-enabled-by-ally-x20-steamos" ]
     PATH="$stub:$PATH" AX20_INPUTPLUMBER_SYSTEM_STEPS=always run component_remove_hook inputplumber

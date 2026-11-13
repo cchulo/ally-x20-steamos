@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Component inputplumber (docs/inputplumber.md): restart InputPlumber after a
+# suspend/resume cycle on the ROG Xbox Ally X20.
+#
+# After some resumes the gamepad stops working until the daemon is restarted
+# (issue #63; the sticks have been seen dead as well). Units wanted by
+# suspend.target and ordered after it start once systemd-suspend.service has
+# returned, that is after the resume. The daemon is given 3 s for the
+# controller to come back (the delay the reporter verified), then
+# try-restart leaves a stopped or disabled daemon alone.
+# ally-x20-steamos-xbox-led-resume.service is ordered after this unit so the
+# Xbox-button light settings are sent once the daemon has re-opened the
+# controller.
+[Unit]
+Description=ally-x20-steamos: restart InputPlumber after resume
+Documentation=file:///var/lib/ally-x20-steamos/src/docs/inputplumber.md
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+ConditionPathExists=/etc/inputplumber/devices.d/50-rog_xbox_ally_x20.yaml
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/bin/systemctl try-restart inputplumber.service
+TimeoutStartSec=60s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target

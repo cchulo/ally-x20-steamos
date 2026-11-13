@@ -1,21 +1,33 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
-# xbox-led-restore — re-send the ROG Xbox Ally X20's Xbox-button light
-# settings (brightness level, breathing) to the controller.
+# xbox-led-restore [resume] — re-send the ROG Xbox Ally X20's Xbox-button
+# light settings (brightness level, breathing) to the controller.
 #
 # Installed to /etc/ally-x20-steamos/xbox-led-restore (a path that exists at
-# udev time, unlike /var/lib -> /home) and started by
-# /etc/udev/rules.d/70-ally-x20-steamos-xbox-led.rules whenever the
-# controller's ring LED device appears (boot, resume, reconnect). The
-# controller keeps on/off in its power mask (hid-asus-ally patch 0016) but
-# resets the level to maximum and breathing to off at power-on; these two
-# reports are volatile, nothing here is written to MCU flash.
+# udev time, unlike /var/lib -> /home) and started
+#   - by /etc/udev/rules.d/70-ally-x20-steamos-xbox-led.rules whenever the
+#     controller's ring LED device appears (boot, reconnect), and
+#   - with the argument "resume" by ally-x20-steamos-xbox-led-resume.service
+#     after every suspend/resume cycle, which produces no udev add event.
+# The controller keeps on/off in its power mask (hid-asus-ally patch 0016)
+# but resets the level and breathing when its MCU is reinitialised (power-on
+# and resume); these two reports are volatile, nothing here is written to
+# MCU flash.
 #
 # Settings: /etc/ally-x20-steamos/xbox-led.conf, written by
 # `ally-x20-steamos xbox-led brightness|breathe`:
 #   brightness=0..3
 #   breathe=on|off
-# No file, or a setting missing: nothing is sent for it.
+# No file, or a setting missing: nothing is sent for it. Exception, resume
+# only: when the light is on (the ring LED's xbox_button_light attribute
+# reads 1) and no brightness is recorded, the power-on default (3, maximum)
+# is sent, because after a resume the light stays dark until a level is
+# written (issue #63).
+#
+# Resume timing: the controller may still be coming back, so "resume" waits
+# up to XBOX_LED_RESUME_WAIT seconds (default 15) for the ring LED device
+# and then XBOX_LED_RESUME_DELAY seconds (default 3) more for the MCU to
+# finish its own initialisation before sending.
 #
 # POSIX sh plus python3 for the HID I/O. Never fails loudly: every problem
 # is logged and exits 0 so udev and systemd stay quiet.
@@ -26,6 +38,16 @@ ROOT=${AX20_ROOT:-}
 CONF="$ROOT/etc/$AX20_NAME/xbox-led.conf"
 LEDS="$ROOT/sys/class/leds"
 DRY=${XBOX_LED_DRY_RUN:-0}
+MODE=${1:-}
+case "$MODE" in
+    resume | "") ;;
+    *)
+        printf 'usage: %s [resume]\n' "$0" >&2
+        exit 0
+        ;;
+esac
+RESUME_WAIT=${XBOX_LED_RESUME_WAIT:-15}
+RESUME_DELAY=${XBOX_LED_RESUME_DELAY:-3}
 
 log() {
     if command -v logger >/dev/null 2>&1 && [ "$DRY" != 1 ]; then
@@ -34,24 +56,63 @@ log() {
     printf '%s: %s\n' "$AX20_NAME-xbox-led" "$*" >&2
 }
 
-[ -r "$CONF" ] || exit 0
-# POSIX sed only (no \| alternation): validate with case instead.
-brightness=$(sed -n 's/^brightness=//p' "$CONF" | head -n1)
-case "$brightness" in 0 | 1 | 2 | 3) ;; *) brightness="" ;; esac
-breathe=$(sed -n 's/^breathe=//p' "$CONF" | head -n1)
-case "$breathe" in on | off) ;; *) breathe="" ;; esac
-[ -n "$brightness$breathe" ] || exit 0
+# nap <seconds> : sleep unless dry-running (tests).
+nap() {
+    [ "$DRY" = 1 ] || sleep "$1"
+}
 
-# The hidraw node of the interface that owns the ring LED (interface 2, the
-# N-KEY configuration interface with report IDs 0x5a/0x5d).
+brightness=""
+breathe=""
+if [ -r "$CONF" ]; then
+    # POSIX sed only (no \| alternation): validate with case instead.
+    brightness=$(sed -n 's/^brightness=//p' "$CONF" | head -n1)
+    case "$brightness" in 0 | 1 | 2 | 3) ;; *) brightness="" ;; esac
+    breathe=$(sed -n 's/^breathe=//p' "$CONF" | head -n1)
+    case "$breathe" in on | off) ;; *) breathe="" ;; esac
+fi
+# At boot and reconnect the controller already shows its power-on default;
+# only recorded settings are worth sending.
+if [ "$MODE" != resume ] && [ -z "$brightness$breathe" ]; then
+    exit 0
+fi
+
+# find_led : set $led to the ring LED directory, or leave it empty.
+find_led() {
+    led=""
+    for d in "$LEDS/go_s:rgb:joystick_rings" "$LEDS/ally:rgb:joystick_rings"; do
+        [ -d "$d" ] && led=$d && break
+    done
+    [ -n "$led" ]
+}
+
 led=""
-for d in "$LEDS/go_s:rgb:joystick_rings" "$LEDS/ally:rgb:joystick_rings"; do
-    [ -d "$d" ] && led=$d && break
-done
+if [ "$MODE" = resume ]; then
+    # The controller may re-enumerate after the resume; wait for it.
+    i=0
+    until find_led || [ "$i" -ge "$RESUME_WAIT" ] || [ "$DRY" = 1 ]; do
+        sleep 1
+        i=$((i + 1))
+    done
+    find_led || true
+else
+    find_led || true
+fi
 if [ -z "$led" ]; then
     log "no ring LED device; nothing to restore"
     exit 0
 fi
+
+if [ "$MODE" = resume ] && [ -z "$brightness" ]; then
+    # Light on but no level recorded: send the power-on default, otherwise
+    # the light stays dark until the next boot.
+    if [ "$(cat "$led/xbox_button_light" 2>/dev/null)" = 1 ]; then
+        brightness=3
+    fi
+fi
+[ -n "$brightness$breathe" ] || exit 0
+
+# The hidraw node of the interface that owns the ring LED (interface 2, the
+# N-KEY configuration interface with report IDs 0x5a/0x5d).
 hid=$(readlink -f "$led/device" 2>/dev/null || true)
 node=""
 for h in "$hid"/hidraw/hidraw*; do
@@ -67,6 +128,12 @@ while [ ! -e "$node" ] && [ "$DRY" != 1 ] && [ $i -lt 30 ]; do
     sleep 0.1
     i=$((i + 1))
 done
+
+if [ "$MODE" = resume ]; then
+    # Give the MCU time to finish its own initialisation after the resume;
+    # a report sent too early is accepted and then overwritten.
+    nap "$RESUME_DELAY"
+fi
 
 if [ "$DRY" = 1 ]; then
     [ -n "$breathe" ] && printf '%s feature <- 5a d1 21 02 %s 08\n' "$node" "$([ "$breathe" = on ] && echo 01 || echo 00)"
@@ -92,5 +159,5 @@ try:
 finally:
     os.close(fd)
 PY
-log "restored Xbox-button light settings (brightness=${brightness:-unchanged} breathe=${breathe:-unchanged})"
+log "restored Xbox-button light settings${MODE:+ after $MODE} (brightness=${brightness:-unchanged} breathe=${breathe:-unchanged})"
 exit 0

@@ -83,10 +83,16 @@ existing mount stays until the card is removed.
 sudo ./ally-x20-steamos.sh sdexpress format [--label <label>] [--full] [--validate]
 ```
 
-It finds the card by root port (and refuses to run when none is there),
-asks you to type `erase` (skipped with `--yes`), runs
-`holo-automount.sh remove`, unmounts anything mounted from the card, then
-the stock sequence:
+It finds the card by root port (and refuses to run when none is there).
+Before anything is written it checks that the card is idle: a line in
+`/etc/fstab` that names the card or one of its filesystems (by device,
+`UUID=`, `LABEL=`, `PARTUUID=` or `PARTLABEL=`) stops the format, because
+such a line keeps re-mounting the card (`x-systemd.automount`) and would
+mount the new filesystem at the old path too. Follow the migration steps
+below first. Then it asks you to type `erase` (skipped with `--yes`), runs
+`holo-automount.sh remove`, unmounts udisks mounts from the card, checks
+again that nothing on it is mounted (a Steam library on the card or a shell
+inside it can hold it), and only then runs the stock sequence:
 
 ```
 dd if=/dev/zero of=/dev/<card> bs=512 count=1024 status=none

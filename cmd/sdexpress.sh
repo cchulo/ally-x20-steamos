@@ -26,6 +26,8 @@ usage: $AX20_NAME sdexpress <command>
                               f3probe --destructive first (slow). Asks you to
                               type 'erase' unless --yes; --dry-run prints the
                               commands only.
+                              Refuses while /etc/fstab references the card or
+                              anything on it is still mounted after unmounting.
   mount                       hand an inserted, formatted card to the stock
                               automount script (udisks mount under
                               /run/media/deck/<label>)
@@ -100,11 +102,45 @@ _sdexpress_automount() {
 }
 
 # _sdexpress_disk_mounts <disk> : every mountpoint on the card, one per line
-# (live systems with lsblk only).
+# (needs lsblk; skipped on fixture roots unless AX20_SDEXPRESS_SYSTEM_STEPS=always).
 _sdexpress_disk_mounts() {
-    [ -z "$AX20_ROOT" ] || return 0
+    _sdexpress_system_steps || return 0
     ax20_have lsblk || return 0
     lsblk -rno MOUNTPOINTS "/dev/$1" 2>/dev/null | grep -v '^$' || true
+}
+
+# _sdexpress_fstab_refs <disk> : lines of /etc/fstab that name the card or
+# one of its filesystems (by device, UUID, LABEL, PARTUUID or PARTLABEL).
+# Such a line keeps re-mounting the card (x-systemd.automount) and would
+# mount the freshly formatted card at the old path too, so format refuses.
+_sdexpress_fstab_refs() {
+    local disk=$1 fstab pat="" v
+    fstab=$(ax20_path /etc/fstab)
+    [ -r "$fstab" ] || return 0
+    pat="/dev/$disk(p[0-9]+)?"
+    if _sdexpress_system_steps && ax20_have lsblk; then
+        while IFS= read -r v; do
+            [ -n "$v" ] || continue
+            pat="$pat|$v"
+        done <<EOF
+$(lsblk -rno UUID,LABEL,PARTUUID,PARTLABEL "/dev/$disk" 2>/dev/null | tr ' ' '\n' | sed -e 's/\\x20/ /g' -e '/^$/d')
+EOF
+    fi
+    grep -v '^[[:space:]]*#' "$fstab" | grep -E "(^|[[:space:]=])($pat)([[:space:]]|$)" || true
+}
+
+# _sdexpress_require_idle <disk> : die unless nothing on the card is mounted
+# or referenced by fstab. Runs before anything is written.
+_sdexpress_require_idle() {
+    local disk=$1 refs mounts
+    refs=$(_sdexpress_fstab_refs "$disk")
+    if [ -n "$refs" ]; then
+        log_error "sdexpress format: /etc/fstab still references the card:"
+        printf '%s\n' "$refs" | sed 's/^/    /' >&2
+        die "remove that line, run 'systemctl daemon-reload', stop its .automount unit if any, unmount, then run format again (docs/sdexpress.md, 'Migrating from a hand-made fstab mount')"
+    fi
+    mounts=$(_sdexpress_disk_mounts "$disk")
+    [ -z "$mounts" ] || die "sdexpress format: /dev/$disk is still mounted at $(printf '%s' "$mounts" | tr '\n' ' '); unmount it first"
 }
 
 _sdexpress_confirm_erase() {
@@ -161,12 +197,17 @@ _sdexpress_cmd_format() {
         [ "$validate" = 0 ] || ax20_have f3probe || die "sdexpress format: --validate needs f3probe"
     fi
     log_info "sdexpress: card /dev/$disk ($model, $size GiB) behind root port $(sdexpress_root_port); label '$label', $discard"
+    # An fstab line is refused outright (it would keep re-mounting the card
+    # and would grab the new filesystem too). udisks mounts are unmounted
+    # here; whatever is still mounted afterwards stops the format before dd.
+    [ -z "$(_sdexpress_fstab_refs "$disk")" ] || _sdexpress_require_idle "$disk"
     _sdexpress_confirm_erase "$disk" "$model" "$size"
     _sdexpress_automount remove "$part" || true
     _sdexpress_disk_mounts "$disk" | while IFS= read -r mp; do
         [ -n "$mp" ] || continue
-        ax20_run umount "$mp" || die "sdexpress format: cannot unmount $mp (close what uses it, or remove its fstab line)"
+        ax20_run umount "$mp" || die "sdexpress format: cannot unmount $mp (close what uses it: Steam with a library on the card, a shell inside it)"
     done || return 1
+    [ "$AX20_DRY_RUN" = 1 ] || _sdexpress_require_idle "$disk"
     if [ "$validate" = 1 ]; then
         ax20_run f3probe --destructive "$dev" || die 14 "sdexpress format: f3probe found the card faulty or counterfeit; not formatting"
     fi

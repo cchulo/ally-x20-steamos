@@ -189,3 +189,73 @@ card_as() { nvme_dev "$1" "$CARD_PORT" 0000:62:00.0 'ST51271_WDC SanDisk SD Expr
     [ ! -e "$AX20_ROOT$RULE" ]
     [ ! -e "$AX20_ROOT$CONF" ]
 }
+
+# lsblk_stub <dir> <mountpoint> : lsblk that reports the card's partition
+# mounted (MOUNTPOINTS) and its identifiers (UUID,LABEL,PARTUUID,PARTLABEL);
+# anything else prints nothing.
+lsblk_stub() {
+    mkdir -p "$1"
+    cat >"$1/lsblk" <<STUB
+#!/bin/sh
+case "\$*" in
+    *MOUNTPOINTS*) printf '%s\n' '$2' ;;
+    *UUID,LABEL*) printf '%s\n' '2a4b0c7e-1111-2222-3333-444444444444 sdcard 9f8e7d6c-aaaa-bbbb-cccc-dddddddddddd primary' ;;
+esac
+STUB
+    chmod +x "$1/lsblk"
+}
+
+@test "format: refuses before dd while /etc/fstab references the card (UUID line, x-systemd.automount)" {
+    ssd_as nvme0n1
+    card_as nvme1n2
+    fixture_file /etc/fstab '# <file system> <dir> <type> <options> <dump> <pass>
+UUID=2a4b0c7e-1111-2222-3333-444444444444 /home/deck/sdcard ext4 defaults,nofail,x-systemd.automount 0 0
+'
+    lsblk_stub "$BATS_TEST_TMPDIR/stub" /home/deck/sdcard
+    PATH="$BATS_TEST_TMPDIR/stub:$PATH" AX20_SDEXPRESS_SYSTEM_STEPS=always run "$CLI" --dry-run --yes sdexpress format
+    assert_failure 1
+    assert_output_contains '/etc/fstab still references the card'
+    assert_output_contains 'UUID=2a4b0c7e-1111-2222-3333-444444444444 /home/deck/sdcard'
+    assert_output_contains 'Migrating from a hand-made fstab mount'
+    [[ "$output" != *"dd if="* ]]
+    [[ "$output" != *"parted"* ]]
+}
+
+@test "format: an fstab line naming the device node is refused too, unrelated lines are not" {
+    ssd_as nvme0n1
+    card_as nvme1n1
+    fixture_file /etc/fstab 'UUID=aaaa-bbbb /home ext4 defaults 0 0
+LABEL=other /mnt/x ext4 defaults 0 0
+'
+    run "$CLI" --dry-run --yes sdexpress format
+    assert_success
+    assert_output_contains 'parted --script'
+    fixture_file /etc/fstab '/dev/nvme1n1p1 /home/deck/sdcard ext4 defaults 0 0
+'
+    run "$CLI" --dry-run --yes sdexpress format
+    assert_failure 1
+    assert_output_contains '/etc/fstab still references the card'
+    [[ "$output" != *"dd if="* ]]
+}
+
+@test "format: a udisks mount is unmounted first; still mounted afterwards stops the format before dd" {
+    ssd_as nvme0n1
+    card_as nvme1n2
+    lsblk_stub "$BATS_TEST_TMPDIR/stub" /run/media/deck/sdcard
+    # Dry run: the umount is printed, then the sequence (no live re-check).
+    PATH="$BATS_TEST_TMPDIR/stub:$PATH" AX20_SDEXPRESS_SYSTEM_STEPS=always run "$CLI" --dry-run --yes sdexpress format
+    assert_success
+    assert_output_contains '[dry-run] umount /run/media/deck/sdcard'
+    umount_line=$(printf '%s\n' "$output" | grep -n 'umount /run' | cut -d: -f1)
+    dd_line=$(printf '%s\n' "$output" | grep -n 'dd if=' | cut -d: -f1)
+    [ "$umount_line" -lt "$dd_line" ]
+    # Real run with a umount stub that does nothing (the mount keeps coming
+    # back): the re-check must stop before dd.
+    printf '#!/bin/sh\nexit 0\n' >"$BATS_TEST_TMPDIR/stub/umount"
+    for t in parted mkfs.ext4 udevadm dd; do printf '#!/bin/sh\necho "RAN $0 $*"\nexit 0\n' >"$BATS_TEST_TMPDIR/stub/$t"; done
+    chmod +x "$BATS_TEST_TMPDIR/stub"/*
+    PATH="$BATS_TEST_TMPDIR/stub:$PATH" AX20_SDEXPRESS_SYSTEM_STEPS=always run "$CLI" --yes sdexpress format
+    assert_failure 1
+    assert_output_contains 'still mounted at /run/media/deck/sdcard'
+    [[ "$output" != *"RAN"* ]]
+}

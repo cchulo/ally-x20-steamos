@@ -19,10 +19,11 @@
 # attribute (stock or older module) the mask is written directly, composed
 # from the driver's default and its sleep_animation value, for this boot
 # only. Brightness and breathing are not part of the mask and the controller
-# resets them at power-on, so they are recorded in
-# /etc/ally-x20-steamos/xbox-led.conf and re-sent by component `xboxled`
-# (udev rule + /etc/ally-x20-steamos/xbox-led-restore) whenever the ring LED
-# device appears; `restore` does the same by hand. Nothing here touches the
+# resets them when its MCU is reinitialised (power-on, resume), so they are
+# recorded in /etc/ally-x20-steamos/xbox-led.conf and re-sent by component
+# `xboxled` (/etc/ally-x20-steamos/xbox-led-restore, started by a udev rule
+# whenever the ring LED device appears and by a systemd unit after every
+# resume); `restore` does the same by hand. Nothing here touches the
 # joystick ring colours, and nothing is written to MCU flash.
 
 # shellcheck source=lib/component.sh
@@ -41,8 +42,8 @@ usage: $AX20_NAME xbox-led [--hidraw <dev>] <command>
   --hidraw <dev>        use this hidraw node instead of auto-detecting it
 
 Needs root. on/off is kept by the patched hid-asus-ally (patch 0016);
-brightness and breathe are recorded and re-sent at boot by component
-xbox-led. See docs/rgb.md, "Xbox button light".
+brightness and breathe are recorded and re-sent at boot and after resume by
+component xboxled. See docs/rgb.md, "Xbox button light".
 USAGE
 }
 
@@ -52,7 +53,7 @@ AX20_HIDRAW_SYS=${AX20_HIDRAW_SYS:-/sys/class/hidraw}
 AX20_LEDS_SYS=${AX20_LEDS_SYS:-/sys/class/leds}
 # modprobe.d drop-in that makes the driver light the button from boot on.
 XBOX_LED_MODPROBE_REL="/etc/modprobe.d/${AX20_NAME}-xbox-led.conf"
-# brightness/breathe settings, re-sent at boot by component `xboxled`.
+# brightness/breathe settings, re-sent at boot and after resume by `xboxled`.
 XBOX_LED_CONF_REL="${AX20_EARLY_REL}/xbox-led.conf"
 
 # xbox_led_conf_get <key> : value from the settings file, or nothing.
@@ -80,7 +81,7 @@ xbox_led_conf_set() {
     fi
     tmp=$(mktemp "${TMPDIR:-/tmp}/ax20-xbox-led.XXXXXX") || die "cannot create a temporary file"
     {
-        printf '# Written by %s xbox-led; re-sent at boot by %s/xbox-led-restore.\n' "$AX20_NAME" "$AX20_EARLY_REL"
+        printf '# Written by %s xbox-led; re-sent at boot and after resume by %s/xbox-led-restore.\n' "$AX20_NAME" "$AX20_EARLY_REL"
         [ -z "$brightness" ] || printf 'brightness=%s\n' "$brightness"
         [ -z "$breathe" ] || printf 'breathe=%s\n' "$breathe"
     } >"$tmp"
@@ -261,12 +262,12 @@ cmd_xbox_led() {
         brightness)
             xbox_led_send "$node" output 5d d1 20 01 "0$level"
             xbox_led_conf_set brightness "$level"
-            log_info "xbox-led: brightness $level (re-sent at boot)"
+            log_info "xbox-led: brightness $level (re-sent at boot and after resume)"
             ;;
         breathe)
             xbox_led_send_breathe "$node" "$1"
             xbox_led_conf_set breathe "$1"
-            log_info "xbox-led: breathe $1 (re-sent at boot)"
+            log_info "xbox-led: breathe $1 (re-sent at boot and after resume)"
             ;;
         restore)
             level=$(xbox_led_conf_get brightness)

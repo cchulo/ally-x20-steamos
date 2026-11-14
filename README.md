@@ -80,9 +80,9 @@ SteamOS updates and troubleshooting: [user guide](docs/user-guide.md),
 | Gap on stock SteamOS | Fix | Component / docs |
 |---|---|---|
 | **Speakers silent.** Two TI TAS2783 amps on AMD SoundWire; the BIOS flags the machine as DMIC-only, the kernel has no link layout, the driver asks for a firmware name linux-firmware does not ship, and there is no UCM profile. | ACPI table override as an early initrd (pure-Python tool, no `iasl`), a rebuilt `snd-soc-acpi-amd-match` (plus the amp driver and SoundWire helpers with four fixes backported from Valve 7.2.10), firmware download keyed on the `SPEAKER_ID` UEFI variable, UCM overlay | `audio`, `modules` · [docs/audio.md](docs/audio.md) |
-| **Controller not matched** by the bundled InputPlumber 0.78; top-right (capture) button dead; rumble weak at 100 % and strong rumble makes the speakers hiss. | Upstream X20 profile as a `devices.d` drop-in (adapted to the stock daemon's schema) with an X20 button map (Armoury Crate → Quick Access, capture → screenshot) + hwdb autostart; `0xa0` → `KEY_PROG2` in the rebuilt `hid-asus-ally`, which also scales rumble to the MCU's 0-100 range | `inputplumber`, `modules` · [docs/inputplumber.md](docs/inputplumber.md) |
+| **Controller not matched** by the bundled InputPlumber 0.78; top-right (capture) button dead; rumble weak at 100 % and strong rumble makes the speakers hiss. | Upstream X20 profile as a `devices.d` drop-in (adapted to the stock daemon's schema) with an X20 button map (Armoury Crate → Quick Access, capture → screenshot) + hwdb autostart + a daemon restart after every resume; `0xa0` → `KEY_PROG2` in the rebuilt `hid-asus-ally`, which also scales rumble to the MCU's 0-100 range | `inputplumber`, `modules` · [docs/inputplumber.md](docs/inputplumber.md) |
 | **Joystick ring RGB** missing from Steam's Customization menu. | `hid-asus-ally` registers the LED under a name Steam knows, with a fixed R/G/B channel layout and effect/speed attributes | `modules` · [docs/rgb.md](docs/rgb.md) |
-| **Xbox button light** dark on Linux. | `xbox-led on\|off\|brightness\|breathe` sends the controller the reports Armoury Crate uses (captured on Windows, verified on the X20); the driver keeps on/off and a udev rule re-sends brightness/breathe at boot; no Steam menu for it | `xboxled`, `modules` · [docs/rgb.md](docs/rgb.md#xbox-button-light) |
+| **Xbox button light** dark on Linux. | `xbox-led on\|off\|brightness\|breathe` sends the controller the reports Armoury Crate uses (captured on Windows, verified on the X20); the driver keeps on/off; a udev rule re-sends brightness/breathe at boot and a systemd unit after resume; no Steam menu for it | `xboxled`, `modules` · [docs/rgb.md](docs/rgb.md#xbox-button-light) |
 | **HDR not detected** (panel metadata lives in a DisplayID 2 block). | libdisplay-info 0.3.0 + DisplayID 2 backport via `ld.so.conf.d` (Desktop Mode); gamescope Lua display profile for the panel, loaded by stock gamescope (Game Mode); optional custom gamescope behind a stock-fallback wrapper | `hdr` · [docs/hdr.md](docs/hdr.md) |
 | **No power profiles in Steam's Performance menu.** steamos-manager 26.4.1 has no X20 device file. | The upstream steamos-manager RC74XA entry, merged into `/usr/share/steamos-manager/devices` by a boot-time bind mount of a copy in `/run` (nothing written to `/usr`, steps aside once SteamOS ships it): Low power / Balanced / Performance hold the APU at about 12 / 16-21 / 25-30 W on battery. No TDP slider on purpose: BIOS `RC74XA.303` ignores PPT writes (`power tdp-slider on` to re-test; the mainline `asus-armoury` RC74XA table is still built) | `power`, `modules` · [docs/power.md](docs/power.md) |
 | **SteamOS updates wipe out-of-tree changes.** | RAUC pre/post-install handlers, boot service, user notifier; `block`/`degrade` policy when modules cannot be built for an incoming kernel | `update` · [docs/update-survival.md](docs/update-survival.md) |
@@ -227,6 +227,23 @@ lights it and keeps it on across reboots. Its brightness and breathing
 controller commands and reset at reboot. Older versions' `xbox-led on` also
 switched the rings' sleep animation on by accident; v0.1.7 fixes that, and a
 reboot restores the driver's setting.
+
+**The Xbox button light is dark after suspend/resume.**
+The controller is reinitialised while the device sleeps and comes back with
+the light dark, and a resume produces no udev event, so up to v0.1.9 nothing
+re-sent the brightness
+([issue #63](https://github.com/cchulo/ally-x20-steamos/issues/63)). Later
+versions run `ally-x20-steamos-xbox-led-resume.service` after every resume;
+`sudo ./ally-x20-steamos.sh apply` installs it. Until then,
+`sudo ./ally-x20-steamos.sh xbox-led restore` (or any `brightness` value)
+relights it.
+
+**The gamepad (or the sticks) stop working after suspend/resume.**
+Seen now and then on the X20 ([issue #63](https://github.com/cchulo/ally-x20-steamos/issues/63)).
+`sudo systemctl restart inputplumber.service` brings it back. Versions after
+v0.1.9 install `ally-x20-steamos-inputplumber-resume.service`, which does
+that restart 3 s after every resume; `sudo ./ally-x20-steamos.sh apply`
+installs it.
 
 **The joystick rings are dark from power-on until the Steam login screen.**
 Expected. Steam stores the ring colour and brightness and re-applies them

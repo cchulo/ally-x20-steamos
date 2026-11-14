@@ -141,12 +141,25 @@ The stock-adapted profile differs from upstream in three places only:
 3. The evdev source's `include` list also has `Keyboard:KeyProg2`, the key
    patch 0012 reports for the top-right capture button.
 
+`apply` also installs `/etc/systemd/system/ally-x20-steamos-inputplumber-resume.service`
+and enables it with symlinks in the `.wants/` directories of `suspend.target`,
+`hibernate.target`, `hybrid-sleep.target` and `suspend-then-hibernate.target`
+(manifest entries, like everything else). A unit wanted by a sleep target and
+ordered after it starts once `systemd-suspend.service` has returned, that is
+after the resume. It sleeps 3 s and runs
+`systemctl try-restart inputplumber.service`: after some resumes the gamepad
+(sticks included) stays dead until the daemon is restarted
+([issue #63](https://github.com/cchulo/ally-x20-steamos/issues/63), where
+this delay and restart were verified). `try-restart` leaves a stopped daemon
+alone. Steam sees the virtual pad disappear and come back, as on any daemon
+restart. Component `xboxled` orders its own resume unit after this one.
+
 After installing the files, `apply` runs these steps on a live system. It
 skips them for `--root`/`--slot` prefixes.
 
 1. `systemd-hwdb update`
 2. `udevadm trigger --action=change --subsystem-match=dmi`
-3. `systemctl daemon-reload`, only when the fallback drop-in is installed.
+3. `systemctl daemon-reload`, so systemd knows the resume unit (and the fallback drop-in, when installed).
 4. If the unit is already enabled (stock SteamOS), `systemctl restart inputplumber.service`. Otherwise `systemctl enable --now inputplumber.service`, and a marker in `/var/lib/ally-x20-steamos/inputplumber/` records that we enabled it, so removal disables it again. If a command is missing, apply logs a warning and continues.
 
 **TODO(vm)**: `systemd-hwdb update` writes `/etc/udev/hwdb.bin`. If that

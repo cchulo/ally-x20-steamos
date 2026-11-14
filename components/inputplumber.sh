@@ -16,6 +16,10 @@
 #       DMI match -> USE_INPUTPLUMBER=1 (autostart, like upstream).
 #   /etc/systemd/system/inputplumber.service.d/50-ally-x20-steamos.conf
 #       FALLBACK ONLY: ExecStart= override to our build of upstream.
+#   /etc/systemd/system/ally-x20-steamos-inputplumber-resume.service
+#       restarts the daemon after every suspend/resume cycle: the gamepad can
+#       come back dead otherwise (issue #63). Enabled through manifest
+#       symlinks in the sleep targets' .wants/ directories.
 
 # shellcheck disable=SC2034  # read by lib/component.sh
 COMPONENT_DESCRIPTION="InputPlumber X20 profile + hwdb autostart for the stock daemon (optional upstream build fallback)"
@@ -46,6 +50,10 @@ _IP_CAPMAP_DEST=/etc/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml
 _IP_HWDB_DEST=/etc/udev/hwdb.d/60-ally-x20-steamos-inputplumber.hwdb
 _IP_DROPIN_DEST=/etc/systemd/system/inputplumber.service.d/50-ally-x20-steamos.conf
 _IP_DROPIN_SRC=systemd/inputplumber.service.d/50-ally-x20-steamos.conf
+_IP_RESUME_UNIT="${AX20_NAME}-inputplumber-resume.service"
+_IP_RESUME_UNIT_DEST="/etc/systemd/system/${_IP_RESUME_UNIT}"
+# The sleep targets whose completion means "resumed" (systemd.special(7)).
+_IP_SLEEP_TARGETS="suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target"
 
 # _ip_semver <text> : first X.Y.Z in the text (drops "inputplumber " prefixes
 # and pacman "-pkgrel" suffixes). Returns 2 when there is none.
@@ -158,6 +166,16 @@ inputplumber_files() {
         printf 'inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml\t%s\t0644\n' "$_IP_CAPMAP_DEST"
     fi
     printf 'udev/hwdb.d/60-ally-x20-steamos-inputplumber.hwdb\t%s\t0644\n' "$_IP_HWDB_DEST"
+    printf 'systemd/%s\t%s\t0644\n' "$_IP_RESUME_UNIT" "$_IP_RESUME_UNIT_DEST"
+}
+
+# _ip_install_resume_links : enable the resume unit in every sleep target.
+_ip_install_resume_links() {
+    local t
+    for t in $_IP_SLEEP_TARGETS; do
+        manifest_install_symlink "../$_IP_RESUME_UNIT" \
+            "/etc/systemd/system/$t.wants/$_IP_RESUME_UNIT" inputplumber
+    done
 }
 
 # _ip_system_steps : should we touch the running system (hwdb, udev, systemd)?
@@ -224,9 +242,9 @@ _ip_reload() {
         log_warn "inputplumber: systemctl not found; start inputplumber.service yourself"
         return 0
     fi
-    if manifest_has "$_IP_DROPIN_DEST"; then
-        ax20_run systemctl daemon-reload || log_warn "inputplumber: systemctl daemon-reload failed"
-    fi
+    # The resume unit (and the fallback drop-in, when installed) are new to
+    # the running systemd.
+    ax20_run systemctl daemon-reload || log_warn "inputplumber: systemctl daemon-reload failed"
     if systemctl is-enabled --quiet inputplumber.service 2>/dev/null; then
         # Restart so device configs are re-read for already-present devices.
         ax20_run systemctl restart inputplumber.service \
@@ -261,6 +279,7 @@ inputplumber_apply() {
     v=$(inputplumber_stock_version) || v=unknown
     log_info "inputplumber: stock daemon $v, profile variant: $(inputplumber_variant)"
     _ip_apply_fallback || return 1
+    _ip_install_resume_links
     _ip_reload
     return 0
 }

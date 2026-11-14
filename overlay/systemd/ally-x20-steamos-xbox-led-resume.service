@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Component xboxled (docs/rgb.md, "Xbox button light"): re-send the ROG Xbox
+# Ally X20's Xbox-button light settings after a suspend/resume cycle.
+#
+# The controller MCU is reinitialised while the host sleeps and comes back
+# with the light dark, but a resume produces no udev "add" event for the
+# ring LED device, so the udev rule that covers boot and reconnect
+# (70-ally-x20-steamos-xbox-led.rules) never runs. Units wanted by
+# suspend.target and ordered after it start once systemd-suspend.service
+# has returned, that is after the resume; the helper then waits for the
+# controller and sends the recorded brightness and breathe setting (issue
+# #63). The same applies to the other sleep targets. Ordered after
+# ally-x20-steamos-inputplumber-resume.service (component inputplumber, when
+# installed) so the settings are sent once the daemon has re-opened the
+# controller.
+[Unit]
+Description=ally-x20-steamos: re-send the Xbox-button light settings after resume
+Documentation=file:///var/lib/ally-x20-steamos/src/docs/rgb.md
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+After=ally-x20-steamos-inputplumber-resume.service
+ConditionPathExists=/etc/ally-x20-steamos/xbox-led-restore
+
+[Service]
+Type=oneshot
+ExecStart=/etc/ally-x20-steamos/xbox-led-restore resume
+TimeoutStartSec=60s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target

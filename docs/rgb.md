@@ -102,11 +102,28 @@ the patched module the command writes the mask once, keeping the driver's
 Brightness and breathing are separate MCU commands that the controller
 resets at power-on (back to maximum, steady), so the command records them in
 `/etc/ally-x20-steamos/xbox-led.conf` and component `xboxled` re-sends them
-through a udev rule whenever the ring LED device appears (boot, resume,
-reconnect); `xbox-led restore` does the same by hand. These reports are
-volatile, nothing is written to MCU flash. Measured on the X20: a soft
+through a udev rule whenever the ring LED device appears (boot, reconnect)
+and through `ally-x20-steamos-xbox-led-resume.service` after every
+suspend/resume cycle; `xbox-led restore` does the same by hand. These reports
+are volatile, nothing is written to MCU flash. Measured on the X20: a soft
 reboot keeps the level (the controller stays powered), a full power-off
 resets it, and the restore covers both.
+
+Resume needs its own hook because the controller's MCU is reinitialised
+while the host sleeps and comes back with the light dark, while the resume
+produces no udev "add" event for the ring LED device, so the udev rule
+never runs ([issue #63](https://github.com/cchulo/ally-x20-steamos/issues/63)).
+The unit is wanted by the sleep targets and ordered after them, which makes
+systemd start it once `systemd-suspend.service` has returned. It waits for
+the ring LED device (up to 15 s), then 3 s more for the MCU, and re-sends the
+recorded settings. When the light is on but no brightness was ever recorded
+it sends the power-on default (level 3) instead, since a level write is what
+relights the button. Both delays can be changed with a drop-in that sets
+`XBOX_LED_RESUME_WAIT` and `XBOX_LED_RESUME_DELAY` in the unit's environment;
+`journalctl -t ally-x20-steamos-xbox-led` shows what was sent. The light does
+not need the InputPlumber restart from the issue's workaround (component
+`inputplumber` does restart the daemon after a resume, for the gamepad, and
+this unit runs after that).
 
 The reports were captured from Armoury Crate on Windows
 ([xbox-led-capture.md](xbox-led-capture.md)) and verified on an X20 on

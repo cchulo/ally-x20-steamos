@@ -9,6 +9,9 @@ usage: surround-test COMMAND [options]
   list                  list the candidates
   add-user FILE         add a local 14-channel 48 kHz HRIR file as candidate
                         "user" (checked like the others; never uploaded)
+  speakers-from ID      make the speaker candidates from one headphone
+                        candidate (the winner): the set as it is plus a
+                        sweep of side/rear crosstalk cancellation
   calibrate             measure every candidate against raw on the muted
                         hardware sink (silent) and store the correction
   localise              blind localisation test (single-channel call-outs)
@@ -42,7 +45,7 @@ import signal
 import sys
 import time
 
-from . import conf, dsp, manifest, scoring, signals, wav
+from . import conf, dsp, manifest, scoring, signals, wav, xtc
 from .layout import INPUTS, RAW_DOWNMIX, SINK_HEADPHONES, SINK_SPEAKERS, SPEAKERS
 from .pw import TOOLS, Pw, PwError
 
@@ -733,6 +736,17 @@ def cmd_add_user(args, paths, pw, io):
     return 1 if entry["status"] == "FAIL" else 0
 
 
+def cmd_speakers_from(args, paths, pw, io):
+    data = manifest.load(paths.manifest)
+    made = xtc.add_speaker_candidates(data, paths.share, args.id)
+    manifest.save(paths.manifest, data)
+    for entry in made:
+        io.say("%-34s %s, level trim %+.2f dB" % (entry["id"], entry["status"], entry["trim_db"]))
+    io.say("%d speaker candidate(s); test them with --device speakers (%d conditions with raw:"
+           " pick a few with --candidates)." % (len(made), len(made) + 1))
+    return 1 if any(e["status"] == "FAIL" for e in made) else 0
+
+
 def cmd_results(args, paths, pw, io):
     records = read_log(paths.log)
     if not records:
@@ -793,6 +807,9 @@ def parser():
     p.add_argument("file")
     p.add_argument("--id", default="user")
     p.set_defaults(fn=cmd_add_user)
+    p = sub.add_parser("speakers-from")
+    p.add_argument("id")
+    p.set_defaults(fn=cmd_speakers_from)
     common(sub.add_parser("calibrate")).set_defaults(fn=cmd_calibrate)
     p = common(sub.add_parser("localise"))
     p.add_argument("--repeats", type=int, default=2)

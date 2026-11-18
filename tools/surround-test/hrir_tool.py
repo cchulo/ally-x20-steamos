@@ -12,6 +12,12 @@ usage:
       run the checks and record the candidate in the manifest
   hrir_tool.py report --manifest FILE
       print the table of every candidate in the manifest
+  hrir_tool.py speakers --manifest FILE --id ID [--delays US,US...]
+                        [--strengths S,S...] [--order N]
+      speaker candidates from one headphone candidate (the winner): the set
+      itself plus a sweep of side/rear crosstalk cancellation (delay in
+      microseconds, strength 0..1), written next to it and recorded in the
+      manifest for the device "speakers"
   hrir_tool.py conf --manifest FILE --id ID --target NODE --node NAME
                     --description TEXT [--extra-db DB] [-o FILE]
       write the PipeWire config of one candidate
@@ -22,7 +28,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from x20surround import checks, conf, dsp, forms, manifest, wav  # noqa: E402
+from x20surround import checks, conf, dsp, forms, manifest, wav, xtc  # noqa: E402
 from x20surround.layout import RATE  # noqa: E402
 
 
@@ -59,6 +65,24 @@ def cmd_add(args):
 def cmd_report(args):
     sys.stdout.write(manifest.report(manifest.load(args.manifest)))
     return 0
+
+
+def _numbers(text, kind):
+    try:
+        return [kind(v) for v in text.split(",") if v != ""]
+    except ValueError:
+        raise ValueError("not a list of numbers: %r" % text)
+
+
+def cmd_speakers(args):
+    data = manifest.load(args.manifest)
+    base_dir = os.path.dirname(os.path.abspath(args.manifest))
+    made = xtc.add_speaker_candidates(data, base_dir, args.id, _numbers(args.delays, float),
+                                      _numbers(args.strengths, float), args.order)
+    manifest.save(args.manifest, data)
+    for entry in made:
+        print("%-34s %s, level trim %+.2f dB" % (entry["id"], entry["status"], entry["trim_db"]))
+    return 1 if any(e["status"] == checks.FAIL for e in made) else 0
 
 
 def cmd_conf(args):
@@ -98,6 +122,13 @@ def main(argv=None):
     p = sub.add_parser("report")
     p.add_argument("--manifest", required=True)
     p.set_defaults(fn=cmd_report)
+    p = sub.add_parser("speakers")
+    p.add_argument("--manifest", required=True)
+    p.add_argument("--id", required=True)
+    p.add_argument("--delays", default=",".join(str(d) for d in xtc.DELAYS_US))
+    p.add_argument("--strengths", default=",".join(str(v) for v in xtc.STRENGTHS))
+    p.add_argument("--order", type=int, default=xtc.ORDER)
+    p.set_defaults(fn=cmd_speakers)
     p = sub.add_parser("conf")
     p.add_argument("--manifest", required=True)
     p.add_argument("--id", required=True)

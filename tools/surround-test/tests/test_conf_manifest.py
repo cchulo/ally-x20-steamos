@@ -160,3 +160,19 @@ def test_tool_reports_failures(tmp_path, channels):
     assert r.returncode == 1 and "routing   FAIL" in r.stdout
     r = run_tool("check", str(tmp_path / "missing.wav"))
     assert r.returncode == 2 and "hrir_tool:" in r.stderr
+
+
+def test_tool_speakers_sweep(tmp_path, hrir_file):
+    man = str(tmp_path / "manifest.json")
+    assert run_tool("add", "--manifest", man, "--id", "win", hrir_file).returncode == 0
+    r = run_tool("speakers", "--manifest", man, "--id", "win", "--delays", "60,90",
+                 "--strengths", "0.3")
+    assert r.returncode == 0, r.stderr
+    assert [ln.split()[0] for ln in r.stdout.splitlines()] == [
+        "win-speakers", "win-xtc-d060-s30", "win-xtc-d090-s30"]
+    cands = {c["id"]: c for c in json.load(open(man))["candidates"]}
+    assert cands["win-xtc-d090-s30"]["device"] == "speakers"
+    assert "device" not in cands["win"]
+    assert os.path.isfile(str(tmp_path / "win-xtc-d090-s30.wav"))
+    r = run_tool("speakers", "--manifest", man, "--id", "win", "--delays", "abc")
+    assert r.returncode == 2 and "not a list of numbers" in r.stderr

@@ -195,7 +195,7 @@ STUB
 # The whole flow with real PipeWire and WirePlumber, on null sinks named
 # like the X20's. Silent. Skipped where the daemons are not installed (macOS,
 # plain CI images) or when running as root.
-@test "headless PipeWire: doctor, calibrate, localise, tone, results, uninstall" {
+@test "headless PipeWire: doctor, calibrate, localise, tone, speaker candidates, results, uninstall" {
     for tool in pipewire wireplumber pw-cli pw-cat pw-record pw-metadata wpctl dbus-run-session; do
         command -v "$tool" >/dev/null 2>&1 || skip "$tool not installed"
     done
@@ -211,6 +211,8 @@ before=\$(wpctl get-volume @DEFAULT_AUDIO_SINK@)
 { echo; for i in \$(seq 21); do echo 1; done; } | "$LINK" localise --repeats 1 --seed 3
 { echo; echo 2; echo 1; echo p1; echo p0; } | "$LINK" tone --candidates syn-full --rounds 2 \
     --file "\$XDG_RUNTIME_DIR/x20-surround-test/noise.wav" --seed 4
+"$LINK" speakers-from syn-dry
+"$LINK" calibrate --device speakers --candidates syn-dry-speakers,syn-dry-xtc-d100-s50
 "$LINK" results
 echo "volume-before=\$before volume-after=\$(wpctl get-volume @DEFAULT_AUDIO_SINK@)"
 echo "configured-after=[\$(pw-metadata -n default 0 default.configured.audio.sink 2>/dev/null | grep -c update || true)]"
@@ -227,12 +229,17 @@ FLOW
     assert_output_contains "volume-before=Volume: 1.00 volume-after=Volume: 1.00"
     assert_output_contains "configured-after=[0]"
     assert_output_contains "left-over-nodes=[0]"
-    # both candidates measured within 0.5 dB of raw
+    assert_output_contains "13 speaker candidate(s)"
+    # every candidate measured within 0.5 dB of raw, per hardware sink
     python3 - "$STATE/calibration.json" <<'PY'
 import json, sys
-(entries,) = json.load(open(sys.argv[1])).values()
-assert set(entries) == {"syn-full", "syn-dry"}, entries
-assert all(abs(e["residual_db"]) <= 0.5 for e in entries.values()), entries
+cal = json.load(open(sys.argv[1]))
+phones = [v for k, v in cal.items() if k.endswith("Headphones__sink")][0]
+speakers = [v for k, v in cal.items() if k.endswith("Speaker__sink")][0]
+assert set(phones) == {"syn-full", "syn-dry"}, phones
+assert set(speakers) == {"syn-dry-speakers", "syn-dry-xtc-d100-s50"}, speakers
+for entries in (phones, speakers):
+    assert all(abs(e["residual_db"]) <= 0.5 for e in entries.values()), entries
 PY
     [ "$(wc -l <"$STATE/results.jsonl" | tr -d ' ')" = 2 ]
     [ ! -e "$STATE/restore.json" ]

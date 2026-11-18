@@ -8,6 +8,8 @@ CAPMAP=/etc/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml
 HWDB=/etc/udev/hwdb.d/60-ally-x20-steamos-inputplumber.hwdb
 DROPIN=/etc/systemd/system/inputplumber.service.d/50-ally-x20-steamos.conf
 RESUME_UNIT=/etc/systemd/system/ally-x20-steamos-inputplumber-resume.service
+RESUME_HELPER=/etc/ally-x20-steamos/inputplumber-resume-check
+RESUME_CONF=/etc/ally-x20-steamos/inputplumber-resume.conf
 SLEEP_TARGETS="suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target"
 OVL="$REPO_ROOT/overlay"
 
@@ -95,6 +97,8 @@ inputplumber
     same_file "$AX20_ROOT$CAPMAP" "$OVL/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml"
     same_file "$AX20_ROOT$HWDB" "$OVL/udev/hwdb.d/60-ally-x20-steamos-inputplumber.hwdb"
     same_file "$AX20_ROOT$RESUME_UNIT" "$OVL/systemd/ally-x20-steamos-inputplumber-resume.service"
+    same_file "$AX20_ROOT$RESUME_HELPER" "$OVL/bin/inputplumber-resume-check"
+    [ -x "$AX20_ROOT$RESUME_HELPER" ]
     for t in $SLEEP_TARGETS; do
         link="/etc/systemd/system/$t.wants/ally-x20-steamos-inputplumber-resume.service"
         [ "$(readlink "$AX20_ROOT$link")" = ../ally-x20-steamos-inputplumber-resume.service ]
@@ -104,17 +108,157 @@ inputplumber
     [ "$(component_status inputplumber)" = active ]
 }
 
-@test "resume unit: a oneshot after every sleep target that try-restarts the daemon after 3 s" {
+@test "resume unit: a oneshot after every sleep target that runs the check helper" {
     u="$OVL/systemd/ally-x20-steamos-inputplumber-resume.service"
     grep -qx 'Type=oneshot' "$u"
-    grep -qx 'ExecStartPre=/bin/sleep 3' "$u"
-    grep -qx 'ExecStart=/usr/bin/systemctl try-restart inputplumber.service' "$u"
+    grep -qx "ExecStart=$RESUME_HELPER" "$u"
     grep -qx "ConditionPathExists=$PROFILE" "$u"
+    grep -qx "ConditionPathExists=$RESUME_HELPER" "$u"
     grep -qx "After=$SLEEP_TARGETS" "$u"
     grep -qx "WantedBy=$SLEEP_TARGETS" "$u"
+    # the restart is the helper's decision, never unconditional
+    run grep -E 'try-restart|^ExecStartPre=' <(grep -v '^#' "$u")
+    assert_failure
     # nothing is ordered after it, so it must never block the sleep
     run grep -E '^(Before|RemainAfterExit)=' "$u"
     assert_failure
+}
+
+# ------------------------------------------------------ resume check helper --
+# stub_bin <name> <body> : a fake command on PATH for the helper.
+stub_bin() {
+    mkdir -p "$AX20_ROOT/stubs"
+    printf '#!/bin/sh\n%s\n' "$2" >"$AX20_ROOT/stubs/$1"
+    chmod +x "$AX20_ROOT/stubs/$1"
+}
+
+# input_dev <eventN> <vendor> <product> <abs> : a kernel input device.
+input_dev() {
+    fixture_file "/sys/class/input/$1/device/id/vendor" "$2
+"
+    fixture_file "/sys/class/input/$1/device/id/product" "$3
+"
+    fixture_file "/sys/class/input/$1/device/capabilities/abs" "$4
+"
+}
+
+# daemon <active|inactive> [source path]... : stub systemctl and busctl so
+# InputPlumber reports one CompositeDevice with the given source devices.
+daemon() {
+    local state=$1 props="" n=0 p
+    shift
+    for p in "$@"; do
+        props="$props \"$p\""
+        n=$((n + 1))
+    done
+    if [ "$state" = active ]; then
+        stub_bin systemctl '[ "$1" = is-active ] && exit 0; echo "systemctl $*"'
+    else
+        stub_bin systemctl '[ "$1" = is-active ] && exit 3; echo "systemctl $*"'
+    fi
+    stub_bin busctl "case \"\$*\" in
+*tree*) printf '%s\\n' /org/shadowblip/InputPlumber /org/shadowblip/InputPlumber/Manager /org/shadowblip/InputPlumber/CompositeDevice0 /org/shadowblip/InputPlumber/devices/target/gamepad0 ;;
+*CompositeDevice0*SourceDevicePaths*) echo 'as $n$props' ;;
+*) exit 1 ;;
+esac"
+}
+
+resume_check() {
+    AX20_ROOT="$AX20_ROOT" IP_RESUME_DRY_RUN=1 PATH="$AX20_ROOT/stubs:$PATH" \
+        run "$OVL/bin/inputplumber-resume-check"
+}
+
+@test "resume check: gamepad present and held by InputPlumber, no restart" {
+    input_dev event7 0b05 1b4c 3003f
+    input_dev event8 0b05 1b4c 0 # the controller's keyboard interface
+    input_dev event2 0001 0001 0
+    daemon active /dev/hidraw4 /dev/hidraw6 /dev/input/event7 /dev/input/event8
+    resume_check
+    assert_success
+    assert_output_contains 'gamepad connected 3 s after resume'
+    [[ "$output" != *try-restart* ]]
+}
+
+@test "resume check: a hidden source node (other directory) still counts as held" {
+    input_dev event7 0b05 1b4c 3003f
+    daemon active /dev/inputplumber/sources/event7
+    resume_check
+    assert_success
+    [[ "$output" != *try-restart* ]]
+}
+
+@test "resume check: no gamepad input device after the wait, restart" {
+    input_dev event2 0001 0001 0
+    daemon active /dev/input/event7
+    resume_check
+    assert_success
+    assert_output_contains 'gamepad not connected 10 s after resume: no gamepad input device (0b05:1b4c)'
+    assert_output_contains 'systemctl try-restart inputplumber.service'
+}
+
+@test "resume check: gamepad re-enumerated under a node InputPlumber does not hold, restart" {
+    input_dev event9 0b05 1b4c 3003f
+    daemon active /dev/hidraw4 /dev/input/event7
+    resume_check
+    assert_success
+    assert_output_contains 'InputPlumber does not hold the gamepad (event9)'
+    assert_output_contains 'systemctl try-restart inputplumber.service'
+    # event17 must not match a held event1
+    rm -rf "$AX20_ROOT/sys"
+    input_dev event1 0b05 1b4c 3003f
+    daemon active /dev/input/event17
+    resume_check
+    assert_output_contains 'InputPlumber does not hold the gamepad (event1)'
+}
+
+@test "resume check: no CompositeDevice on the bus, restart" {
+    input_dev event7 0b05 1b4c 3003f
+    daemon active
+    stub_bin busctl 'case "$*" in *tree*) echo /org/shadowblip/InputPlumber/Manager ;; *) exit 1 ;; esac'
+    resume_check
+    assert_success
+    assert_output_contains 'systemctl try-restart inputplumber.service'
+}
+
+@test "resume check: daemon not running, nothing happens" {
+    input_dev event7 0b05 1b4c 3003f
+    daemon inactive
+    resume_check
+    assert_success
+    [ -z "$output" ]
+}
+
+@test "resume check: restart=always restarts, restart=never does not, junk falls back to the check" {
+    input_dev event7 0b05 1b4c 3003f
+    daemon active /dev/input/event7
+    fixture_file "$RESUME_CONF" 'restart=always
+'
+    resume_check
+    assert_success
+    assert_output_contains 'systemctl try-restart inputplumber.service'
+    fixture_file "$RESUME_CONF" 'restart=never
+'
+    resume_check
+    assert_success
+    [ -z "$output" ]
+    fixture_file "$RESUME_CONF" 'restart=sometimes
+'
+    resume_check
+    assert_success
+    assert_output_contains 'ignoring unknown restart=sometimes'
+    assert_output_contains 'gamepad connected'
+    [[ "$output" != *try-restart* ]]
+}
+
+@test "resume check: without busctl the daemon is restarted as before" {
+    input_dev event7 0b05 1b4c 3003f
+    daemon active /dev/input/event7
+    rm "$AX20_ROOT/stubs/busctl"
+    AX20_ROOT="$AX20_ROOT" IP_RESUME_DRY_RUN=1 PATH="$AX20_ROOT/stubs:/usr/bin:/bin" \
+        run "$OVL/bin/inputplumber-resume-check"
+    assert_success
+    assert_output_contains 'busctl missing'
+    assert_output_contains 'systemctl try-restart inputplumber.service'
 }
 
 @test "stock >= 0.82.0: installs the verbatim upstream profile and no capability map" {
@@ -228,7 +372,7 @@ inputplumber
     export AX20_INPUTPLUMBER_FALLBACK=1
     before=$(tree_listing)
     component_apply inputplumber
-    for p in "$PROFILE" "$HWDB" "$DROPIN" "$RESUME_UNIT"; do
+    for p in "$PROFILE" "$HWDB" "$DROPIN" "$RESUME_UNIT" "$RESUME_HELPER"; do
         manifest_has "$p"
         manifest_verify "$p"
     done

@@ -146,13 +146,38 @@ and enables it with symlinks in the `.wants/` directories of `suspend.target`,
 `hibernate.target`, `hybrid-sleep.target` and `suspend-then-hibernate.target`
 (manifest entries, like everything else). A unit wanted by a sleep target and
 ordered after it starts once `systemd-suspend.service` has returned, that is
-after the resume. It sleeps 3 s and runs
-`systemctl try-restart inputplumber.service`: after some resumes the gamepad
-(sticks included) stays dead until the daemon is restarted
-([issue #63](https://github.com/cchulo/ally-x20-steamos/issues/63), where
-this delay and restart were verified). `try-restart` leaves a stopped daemon
-alone. Steam sees the virtual pad disappear and come back, as on any daemon
-restart. Component `xboxled` orders its own resume unit after this one.
+after the resume. The unit runs
+`/etc/ally-x20-steamos/inputplumber-resume-check`, also installed by `apply`.
+
+After some resumes the gamepad (sticks included) stays dead until the daemon
+is restarted ([issue #63](https://github.com/cchulo/ally-x20-steamos/issues/63)).
+A restart makes Steam see the virtual pad disappear and come back, so the
+helper restarts the daemon only when the gamepad did not come back by itself:
+
+1. It waits 3 s, so a controller that re-enumerates after the resume has left
+   the bus first.
+2. Until 10 s after its start it checks once a second whether the gamepad is
+   connected: `inputplumber.service` is active, the kernel has an input
+   device of the controller (USB `0b05:1b4c`) with absolute axes, and the
+   event node of every such device is listed in the `SourceDevicePaths`
+   property of an InputPlumber `CompositeDevice` on the system bus.
+3. Connected in time: nothing happens, and the journal gets one line
+   (`journalctl -t ally-x20-steamos-inputplumber-resume`). Otherwise it runs
+   `systemctl try-restart inputplumber.service`, which leaves a stopped
+   daemon alone, and logs the reason.
+
+`/etc/ally-x20-steamos/inputplumber-resume.conf` (not installed; create it
+when needed) changes this with one line: `restart=always` restarts after
+every resume, as versions up to v0.1.10 did, `restart=never` never restarts,
+`restart=check` is the default.
+
+TODO(hw): the D-Bus names and the property format come from InputPlumber's
+sources and have not been read from the daemon on a real X20. It is also not
+known yet whether the rare dead-sticks state shows up as a missing source
+device; if the gamepad stays dead after a resume and the journal line says
+"gamepad connected", use `restart=always` and report it.
+
+Component `xboxled` orders its own resume unit after this one.
 
 After installing the files, `apply` runs these steps on a live system. It
 skips them for `--root`/`--slot` prefixes.

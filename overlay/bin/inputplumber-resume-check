@@ -1,0 +1,168 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# inputplumber-resume-check — after a suspend/resume cycle, restart
+# InputPlumber only when the ROG Xbox Ally X20's gamepad did not come back.
+#
+# Installed to /etc/ally-x20-steamos/inputplumber-resume-check and started
+# by ally-x20-steamos-inputplumber-resume.service after every resume
+# (component inputplumber, docs/inputplumber.md).
+#
+# After some resumes the gamepad (sticks included) stays dead until the
+# daemon is restarted (issue #63). Up to v0.1.10 the daemon was restarted
+# after every resume; a restart makes Steam see the virtual pad disappear and
+# come back, so it now happens only when needed:
+#   1. wait IP_RESUME_SETTLE seconds (default 3) so a controller that
+#      re-enumerates after the resume has dropped off the bus first;
+#   2. until IP_RESUME_WAIT seconds (default 10) after the start, look once a
+#      second for a connected gamepad;
+#   3. connected in time: do nothing. Otherwise
+#      `systemctl try-restart inputplumber.service` (a stopped or disabled
+#      daemon is left alone).
+#
+# "Connected" means all of:
+#   - inputplumber.service is active;
+#   - the kernel has at least one input device of the controller
+#     (USB 0b05:1b4c) with absolute axes, that is the gamepad with its sticks;
+#   - every such device's event node is listed in the SourceDevicePaths
+#     property of an InputPlumber CompositeDevice on the system bus.
+# The comparison uses the node name (eventN), not the path: InputPlumber
+# hides the nodes it grabs, and the property may carry either path.
+#
+# TODO(hw): the D-Bus names and the SourceDevicePaths format are taken from
+# InputPlumber's sources, not yet read from the daemon on a real X20.
+# TODO(hw): not yet known whether the rare "sticks dead" state of issue #63
+# shows up as a missing source device. If the daemon still lists the node
+# while the sticks are dead, this check cannot see it; set restart=always
+# (below) to get the old behaviour back.
+#
+# Setting: /etc/ally-x20-steamos/inputplumber-resume.conf
+#   restart=check    (default) restart only when the gamepad is not connected
+#   restart=always   restart after every resume, as up to v0.1.10
+#   restart=never    never restart
+#
+# POSIX sh. Never fails loudly: problems are logged and exit 0.
+set -u
+
+AX20_NAME=ally-x20-steamos
+ROOT=${AX20_ROOT:-}
+CONF="$ROOT/etc/$AX20_NAME/inputplumber-resume.conf"
+SYS_INPUT="$ROOT/sys/class/input"
+DRY=${IP_RESUME_DRY_RUN:-0}
+SETTLE=${IP_RESUME_SETTLE:-3}
+WAIT=${IP_RESUME_WAIT:-10}
+VENDOR=0b05
+PRODUCT=1b4c
+BUS_NAME=org.shadowblip.InputPlumber
+BUS_IFACE=org.shadowblip.Input.CompositeDevice
+
+log() {
+    if command -v logger >/dev/null 2>&1 && [ "$DRY" != 1 ]; then
+        logger -t "$AX20_NAME-inputplumber-resume" -- "$*"
+    fi
+    printf '%s: %s\n' "$AX20_NAME-inputplumber-resume" "$*" >&2
+}
+
+# nap <seconds> : sleep unless dry-running (tests).
+nap() {
+    [ "$DRY" = 1 ] || sleep "$1"
+}
+
+restart_daemon() {
+    log "$1; restarting inputplumber.service"
+    if [ "$DRY" = 1 ]; then
+        printf 'systemctl try-restart inputplumber.service\n'
+        return 0
+    fi
+    systemctl try-restart inputplumber.service \
+        || log "systemctl try-restart inputplumber.service failed"
+}
+
+# gamepad_nodes : print the event node name (eventN) of every input device
+# of the controller that has absolute axes, one per line.
+gamepad_nodes() {
+    for e in "$SYS_INPUT"/event*; do
+        [ -d "$e" ] || continue
+        [ "$(cat "$e/device/id/vendor" 2>/dev/null)" = "$VENDOR" ] || continue
+        [ "$(cat "$e/device/id/product" 2>/dev/null)" = "$PRODUCT" ] || continue
+        abs=$(cat "$e/device/capabilities/abs" 2>/dev/null) || continue
+        case "$abs" in "" | 0) continue ;; esac
+        printf '%s\n' "${e##*/}"
+    done
+}
+
+# source_nodes : print the node name of every source device of every
+# InputPlumber CompositeDevice, one per line.
+source_nodes() {
+    busctl --system --no-pager tree --list "$BUS_NAME" 2>/dev/null \
+        | grep -E '/CompositeDevice[0-9]+$' \
+        | while IFS= read -r obj; do
+            busctl --system --no-pager get-property "$BUS_NAME" "$obj" \
+                "$BUS_IFACE" SourceDevicePaths 2>/dev/null
+        done \
+        | tr ' ' '\n' | sed -n 's|^"\(.*\)"$|\1|p' | sed 's|.*/||'
+}
+
+# connected : 0 when the gamepad is there and InputPlumber holds it.
+# Sets $why to the reason otherwise.
+connected() {
+    if ! systemctl is-active --quiet inputplumber.service 2>/dev/null; then
+        why="inputplumber.service is not active"
+        return 1
+    fi
+    pads=$(gamepad_nodes)
+    if [ -z "$pads" ]; then
+        why="no gamepad input device ($VENDOR:$PRODUCT)"
+        return 1
+    fi
+    held=$(source_nodes)
+    for n in $pads; do
+        if ! printf '%s\n' "$held" | grep -qx "$n"; then
+            why="InputPlumber does not hold the gamepad ($n)"
+            return 1
+        fi
+    done
+    return 0
+}
+
+mode=check
+if [ -r "$CONF" ]; then
+    m=$(sed -n 's/^restart=//p' "$CONF" | head -n1)
+    case "$m" in
+        check | always | never) mode=$m ;;
+        "") ;;
+        *) log "ignoring unknown restart=$m in $CONF" ;;
+    esac
+fi
+[ "$mode" = never ] && exit 0
+
+command -v systemctl >/dev/null 2>&1 || {
+    log "systemctl missing; nothing to do"
+    exit 0
+}
+# A stopped or disabled daemon is none of our business (try-restart would
+# leave it alone as well); do not wait for it.
+systemctl is-active --quiet inputplumber.service 2>/dev/null || exit 0
+
+nap "$SETTLE"
+if [ "$mode" = always ]; then
+    restart_daemon "restart=always"
+    exit 0
+fi
+command -v busctl >/dev/null 2>&1 || {
+    restart_daemon "busctl missing, cannot check the gamepad"
+    exit 0
+}
+
+why=""
+t=$SETTLE
+while :; do
+    if connected; then
+        log "gamepad connected ${t} s after resume; inputplumber.service left running"
+        exit 0
+    fi
+    [ "$t" -ge "$WAIT" ] && break
+    nap 1
+    t=$((t + 1))
+done
+restart_daemon "gamepad not connected ${WAIT} s after resume: $why"
+exit 0

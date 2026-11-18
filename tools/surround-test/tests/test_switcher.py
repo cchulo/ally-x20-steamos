@@ -475,6 +475,26 @@ def test_tone_blind_ab_counts_preferences(rig):
     assert pw.configured is None
 
 
+def test_tone_live_keeps_a_71_candidate_as_default_while_the_game_starts(rig):
+    paths, pw = rig
+    seen = {}
+
+    class Spy(io.StringIO):
+        def readline(self):
+            seen.setdefault("default_at_first_prompt", pw.configured)
+            return super().readline()
+    out = io.StringIO()
+    rc = switcher.main(["tone", "--live", "--candidates", "syn-full", "--rounds", "1"], pw=pw,
+                       io=switcher.IO(Spy("\np0\n"), out), paths=paths)
+    assert rc == 0, out.getvalue()
+    assert seen["default_at_first_prompt"].startswith("x20test-")
+    assert "HEADPHONES OFF YOUR EARS" in out.getvalue()
+    assert not pw.played  # live: the rig plays nothing itself
+    (record,) = log(rig)
+    assert record["material"] == "live" and record["conditions"][0]["none"] == 1
+    assert pw.configured is None
+
+
 def test_tone_needs_material(rig):
     rc, out = run(rig, ["tone"], "")
     assert rc == 1 and "--file FILE or --live" in out

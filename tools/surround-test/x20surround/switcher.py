@@ -501,8 +501,10 @@ def cmd_tone(args, paths, pw, io):
     io.say("p0 for no preference, + / - for volume, q to stop early. Starting volume %.2f."
            % session.volume)
     if args.live:
-        io.say("Live material: start the game (or player) now, on the DEFAULT output, and")
-        io.say("keep it running; see the README for the game check.")
+        io.say("Live material: when asked, start the game (or player) on the DEFAULT output and")
+        io.say("keep it running. A candidate (7.1) is the default while you start it, so the")
+        io.say("game opens a 7.1 stream. HEADPHONES OFF YOUR EARS for the first launch: some")
+        io.say("games play a full-volume tone on a 7.1 output. See the README, \"Game check\".")
     rounds = {cid: [] for cid in order}
     record = base_record(session, "tone")
     record["material"] = "live" if args.live else os.path.basename(args.file)
@@ -513,6 +515,11 @@ def cmd_tone(args, paths, pw, io):
         if args.file:
             looper = Looper(pw, args.file)
             looper.tick()
+        else:
+            # A game picks its channel count from the default sink when it
+            # opens its stream: keep an 8-channel candidate there until the
+            # game is running, or it will only ever send stereo.
+            session.select(order[0])
         io.ask("Press Enter when the material is playing. ")
         record["streams"] = playing_streams(pw)
         for name, channels in record["streams"]:

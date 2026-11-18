@@ -9,4 +9,6 @@ RUN dnf -y install --setopt=install_weak_deps=False \
         pipewire pipewire-utils pipewire-libs pipewire-module-filter-chain-sofa \
         wireplumber dbus-daemon libmysofa libsndfile-utils procps-ng diffutils \
         bats ShellCheck jq git \
-    && dnf clean all
+    && dnf clean all \
+    && useradd -m deck
+# PipeWire sessions are per user and the rig refuses root: run tests as deck.

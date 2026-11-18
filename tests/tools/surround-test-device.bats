@@ -37,12 +37,18 @@ for cid, chans in (("syn-full", full), ("syn-dry", forms.dry_fronts(full))):
 manifest.save(out + "/manifest.json", data)' "$1"
 }
 
-# rig_copy : the rig files in a scratch directory, with a fake out/.
-rig_copy() {
+# rig_bare : the rig files in a scratch directory, without a build output
+# (the checkout may hold a real out/ from build.sh).
+rig_bare() {
     mkdir -p "$W/rig"
     cp "$RIG"/*.sh "$RIG"/*.py "$W/rig/"
     cp -R "$RIG/x20surround" "$W/rig/"
     rm -rf "$W/rig/x20surround/__pycache__"
+}
+
+# rig_copy : the same with a fake out/.
+rig_copy() {
+    rig_bare
     fake_out "$W/rig/out"
 }
 
@@ -73,7 +79,8 @@ as_root() {
 }
 
 @test "install: without rendered candidates it says how to get them" {
-    run "$RIG/install.sh"
+    rig_bare
+    run "$W/rig/install.sh"
     assert_success
     assert_output_contains "0 HRIR file(s)"
     assert_output_contains "build.sh"

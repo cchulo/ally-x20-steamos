@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Development image for tools/surround-test: everything build.sh, the unit
+# tests and pw-harness.sh need, so nothing has to be installed on the host.
+#   podman build -t x20-surround-dev -f tools/surround-test/Containerfile .
+# (docker works the same way). See README.md, "Development machine".
+FROM fedora:latest
+RUN dnf -y install --setopt=install_weak_deps=False \
+        python3 python3-numpy python3-scipy python3-h5py python3-pytest \
+        pipewire pipewire-utils pipewire-libs pipewire-module-filter-chain-sofa \
+        wireplumber dbus-daemon libmysofa libsndfile-utils procps-ng diffutils \
+        bats ShellCheck jq git \
+    && dnf clean all

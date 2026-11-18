@@ -254,7 +254,12 @@ resume_check() {
     input_dev event7 0b05 1b4c 3003f
     daemon active /dev/input/event7
     rm "$AX20_ROOT/stubs/busctl"
-    AX20_ROOT="$AX20_ROOT" IP_RESUME_DRY_RUN=1 PATH="$AX20_ROOT/stubs:/usr/bin:/bin" \
+    # A PATH with the helper's own tools only: a Linux host has a real busctl.
+    mkdir -p "$AX20_ROOT/tools"
+    for t in cat sed head grep tr; do
+        ln -s "$(command -v "$t")" "$AX20_ROOT/tools/$t"
+    done
+    AX20_ROOT="$AX20_ROOT" IP_RESUME_DRY_RUN=1 PATH="$AX20_ROOT/stubs:$AX20_ROOT/tools" \
         run "$OVL/bin/inputplumber-resume-check"
     assert_success
     assert_output_contains 'busctl missing'

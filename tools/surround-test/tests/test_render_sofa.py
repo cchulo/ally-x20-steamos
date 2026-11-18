@@ -15,36 +15,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import render_sofa  # noqa: E402
+from synthetic import write_sofa  # noqa: E402
 from x20surround import checks, wav  # noqa: E402
 from x20surround.layout import AZIMUTH, HESUVI_INDEX  # noqa: E402
-
-
-def write_sofa(path, rate=48000.0, step=5, cartesian=False, delay=None):
-    """Horizontal ring every `step` degrees (plus one elevated decoy per
-    direction): an impulse per ear whose position encodes the azimuth, so a
-    test can tell which measurement was picked."""
-    az = np.arange(0, 360, step, dtype=float)
-    pos = [(a, 0.0, 1.5) for a in az] + [(a, 40.0, 1.5) for a in az]
-    ir = np.zeros((len(pos), 2, 64))
-    for m, (a, el, _) in enumerate(pos):
-        lateral = np.sin(np.radians(a))
-        for ear, toward in ((0, lateral), (1, -lateral)):
-            at = int(round(20 - 10 * toward)) + (5 if el else 0)
-            ir[m, ear, at] = (0.6 + 0.4 * toward) * (0.1 if el else 1.0)
-            ir[m, ear, 60] = a / 3600.0  # azimuth marker, far behind the response
-    with h5py.File(path, "w") as f:
-        f.attrs["SOFAConventions"] = np.bytes_("SimpleFreeFieldHRIR")
-        f.attrs["License"] = np.bytes_("CC0-1.0 (synthetic test data)")
-        f.create_dataset("Data.IR", data=ir)
-        f.create_dataset("Data.SamplingRate", data=np.array([rate]))
-        f.create_dataset("Data.Delay", data=np.zeros((1, 2)) if delay is None else delay)
-        p = np.array(pos)
-        if cartesian:
-            a, e, r = np.radians(p[:, 0]), np.radians(p[:, 1]), p[:, 2]
-            p = np.stack([r * np.cos(e) * np.cos(a), r * np.cos(e) * np.sin(a), r * np.sin(e)], 1)
-        d = f.create_dataset("SourcePosition", data=p)
-        d.attrs["Type"] = np.bytes_("cartesian" if cartesian else "spherical")
-    return path
 
 
 def marker_azimuth(channel, gain):

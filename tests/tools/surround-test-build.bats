@@ -31,7 +31,7 @@ have_numpy() { python3 -c 'import numpy, scipy, h5py' 2>/dev/null; }
 synthetic_sofa() {
     PYTHONPATH="$RIG/tests" python3 -c '
 import sys
-from test_render_sofa import write_sofa
+from synthetic import write_sofa
 write_sofa(sys.argv[1])' "$1"
 }
 

@@ -85,6 +85,7 @@ SteamOS updates and troubleshooting: [user guide](docs/user-guide.md),
 | **Xbox button light** dark on Linux. | `xbox-led on\|off\|brightness\|breathe` sends the controller the reports Armoury Crate uses (captured on Windows, verified on the X20); the driver keeps on/off; a udev rule re-sends brightness/breathe at boot and a systemd unit after resume; no Steam menu for it | `xboxled`, `modules` · [docs/rgb.md](docs/rgb.md#xbox-button-light) |
 | **HDR not detected** (panel metadata lives in a DisplayID 2 block). | libdisplay-info 0.3.0 + DisplayID 2 backport via `ld.so.conf.d` (Desktop Mode); gamescope Lua display profile for the panel, loaded by stock gamescope (Game Mode); optional custom gamescope behind a stock-fallback wrapper | `hdr` · [docs/hdr.md](docs/hdr.md) |
 | **No power profiles in Steam's Performance menu.** steamos-manager 26.4.1 has no X20 device file. | The upstream steamos-manager RC74XA entry, merged into `/usr/share/steamos-manager/devices` by a boot-time bind mount of a copy in `/run` (nothing written to `/usr`, steps aside once SteamOS ships it): Low power / Balanced / Performance hold the APU at about 12 / 16-21 / 25-30 W on battery. No TDP slider on purpose: BIOS `RC74XA.303` ignores PPT writes (`power tdp-slider on` to re-test; the mainline `asus-armoury` RC74XA table is still built) | `power`, `modules` · [docs/power.md](docs/power.md) |
+| **Battery stops charging at 80 %** with no limit shown in Steam. The embedded controller falls back to its own stored charge limit (Armoury Crate's Battery Care) at every power-off; a limit written from Linux lasts until then. | A boot unit writes the limit last in force (Steam's charge limit or a write by hand; 100 % if none was recorded) before Steam starts, records it at shutdown, and a second unit writes it again after resume; `charge-limit follow\|off\|<20-100>` picks the behaviour | `chargelimit` · [docs/power.md](docs/power.md#10-battery-charge-limit-component-chargelimit) |
 | **SD Express card never mounts; Steam's Format button fails on it.** The card is a PCIe/NVMe device and stock's automount rule only matches `mmcblk*\|sd*`; `format-device.sh` rejects nvme nodes. | One udev rule that hands the card's partitions to the stock `block-device-event.sh` / `holo-automount.sh` (udisks mount at `/run/media/deck/<label>`), matched by the slot's PCIe root port because the card and the SSD swap `nvmeN` names between boots; `sdexpress format` runs the stock format sequence (GPT, ext4 casefold, owned by deck) | `sdexpress` · [docs/sdexpress.md](docs/sdexpress.md) |
 | **SteamOS updates wipe out-of-tree changes.** | RAUC pre/post-install handlers, boot service, user notifier; `block`/`degrade` policy when modules cannot be built for an incoming kernel | `update` · [docs/update-survival.md](docs/update-survival.md) |
 
@@ -136,6 +137,7 @@ ally-x20-steamos.sh [--root <dir>] [--dry-run] [--verbose] [--yes] [--i-know] <c
 | `rebuild [--kver <v>]` | fetch or build the patched kernel modules (cache → release asset → container build) |
 | `self-update [--channel stable\|beta] [--check] [--rollback]` | signed-tag update of the checkout, migrations, re-apply |
 | `power status\|tdp-slider [on\|off]` | power profiles; the TDP slider test switch (default off) |
+| `charge-limit status\|follow\|off\|<20-100>` | the battery charge limit written at every boot and after resume: the last one set in Steam (default), a fixed one, or none |
 | `sdexpress status\|format [--label <l>] [--full] [--validate]\|mount\|root-port [<bdf>]` | the SD Express slot: automount state, format a card like Steam does (root; the card is found by PCIe root port, never by `nvmeN`) |
 | `xbox-led on\|off\|brightness <0-3>\|breathe on\|off\|restore\|node` | the Xbox button light (root; kept across reboots: on/off by the patched driver, brightness/breathe by component `xboxled`) |
 | `update-policy show\|block\|degrade [--once]` | what an update does if modules cannot be built |
@@ -152,7 +154,7 @@ against a fixture tree, which is how the test suite works.
 
 ```
 ally-x20-steamos.sh   CLI dispatcher            lib/          common, manifest, probes, component, retired, slots, rauc, modules, selfupdate, status, notify
-cmd/                  one file per command      components/   audio, hdr, inputplumber, modules, power, sdexpress, update, xboxled
+cmd/                  one file per command      components/   audio, chargelimit, hdr, inputplumber, modules, power, sdexpress, update, xboxled
 overlay/              files installed on the device (manifest-tracked)   uninstall/   standalone POSIX uninstaller
 patches/kernel/       0001-0006 ASoC (audio), 0010-0015 hid-asus-ally, 0020 asus-armoury   patches/{gamescope,libdisplay-info}/
 build/                Containerfile, build-modules.sh, build-hdr.sh, build-inputplumber.sh, kernel-sources.md
@@ -191,15 +193,18 @@ the device, the VM round-trip tests, and the optional Decky plugin.
 Things the owner ran into that you may run into too.
 
 **My battery stops charging at 80 % and Steam shows no charge limit.**
-The limit lives in the controller's EC and survives reboots and operating
-systems; Armoury Crate's Battery Care on Windows sets it, and so does
-Steam's charge-limit setting (Settings → Power). After a reboot the kernel
-attribute reads 0 until something writes it, so Steam shows no limit while
-the EC still enforces the old one. Check with
-`sudo ./ally-x20-steamos.sh power status` (`charge_limit=`), clear it with
-`echo 100 | sudo tee /sys/class/power_supply/BAT1/charge_control_end_threshold`,
-or set the value you want in Steam. Nothing in ally-x20-steamos writes a
-limit. Details: [docs/power.md](docs/power.md).
+The device's embedded controller has a charge limit of its own, usually the
+80 % that Armoury Crate's Battery Care stored under Windows. A limit written
+from SteamOS works at once but is lost at power-off: the controller goes
+back to its stored value, and Steam shows no limit while the battery stops
+at 80 %. The `chargelimit` component writes the limit again at every boot
+and after resume. By default that is the last limit you set in Steam
+(Settings → Power), or 100 % if you never set one; pick another behaviour
+with `sudo ./ally-x20-steamos.sh charge-limit follow|off|<20-100>`. Check
+with `./ally-x20-steamos.sh charge-limit status`. Without the component,
+`echo 100 | sudo tee /sys/class/power_supply/BAT1/charge_control_end_threshold`
+lifts the limit until the next power-off. Details:
+[docs/power.md](docs/power.md#10-battery-charge-limit-component-chargelimit).
 
 **`self-update` says no release tag is signed by a pinned key.**
 Installs made from releases before v0.1.4 pinned placeholder keys, and their

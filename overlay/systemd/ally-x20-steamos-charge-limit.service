@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Component chargelimit (docs/power.md, "Battery charge limit"): write the
+# battery charge limit at every boot and record it at shutdown.
+#
+# The ROG Xbox Ally X20's embedded controller falls back to its own stored
+# charge limit (typically Armoury Crate's 80 %) at every power-off, while
+# the kernel attribute reads 0 and Steam shows no limit. The helper writes
+# the limit that was last in force (Steam's setting or a write by hand; 100
+# when none was ever recorded) before the display manager starts, so Steam
+# reads the restored value. ExecStop runs at shutdown and reboot and records
+# the limit in force then. Nothing Requires= this unit, and the helper
+# always exits 0.
+[Unit]
+Description=ally-x20-steamos: restore the battery charge limit at boot, record it at shutdown
+Documentation=file:///var/lib/ally-x20-steamos/src/docs/power.md
+After=local-fs.target
+Before=display-manager.service
+ConditionPathExists=/etc/ally-x20-steamos/charge-limit-restore
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/etc/ally-x20-steamos/charge-limit-restore boot
+ExecStop=/etc/ally-x20-steamos/charge-limit-restore save
+TimeoutStartSec=30s
+TimeoutStopSec=10s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

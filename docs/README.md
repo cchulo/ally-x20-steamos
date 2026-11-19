@@ -11,7 +11,7 @@ User-facing:
 | [inputplumber.md](inputplumber.md) | controller profile, hwdb autostart, fallback daemon |
 | [rgb.md](rgb.md) | joystick ring RGB in Steam, effect/speed sysfs |
 | [hdr.md](hdr.md) | Desktop and Game Mode HDR, the gamescope profile and wrapper |
-| [power.md](power.md) | Steam's power profiles (measured wattages), why there is no TDP slider (firmware ignores PPT writes), the steamos-manager device file shim, re-testing after a BIOS update |
+| [power.md](power.md) | Steam's power profiles (measured wattages), why there is no TDP slider (firmware ignores PPT writes), the steamos-manager device file shim, re-testing after a BIOS update, the battery charge limit that is lost at power-off and how `chargelimit` keeps it |
 | [sdexpress.md](sdexpress.md) | the SD Express slot: why stock ignores the card (NVMe, not MMC), the swapping `nvmeN` names and root-port matching, the automount rule, `sdexpress format`, migrating from an fstab mount |
 | [kernel-modules.md](kernel-modules.md) | what is rebuilt, when, lockdown, forcing a rebuild |
 | [update-survival.md](update-survival.md) | what a SteamOS update does to us and how we survive it; update policy |

@@ -313,14 +313,8 @@ steamos-manager exposes, from the device file (26.4.1, `manager/user.rs`):
   created when the choices list is not empty.
 - **Battery charge limit** via `acpi_sb` (Steam → Settings → Power). Steam
   writes the limit to `/sys/class/power_supply/BAT1/charge_control_end_threshold`
-  (asus-wmi), and the EC keeps it across reboots and across operating
-  systems. After a reboot that attribute reads 0 until something writes it,
-  so Steam's power daemon logs "100%" and the UI shows no limit while the EC
-  still stops at the old value. Seen on the owner's X20 on 2026-11-04: stuck
-  at 80 % with no limit shown. `power status` prints the EC's view
-  (`charge_limit=`); to clear a stale limit:
-  `echo 100 | sudo tee /sys/class/power_supply/BAT1/charge_control_end_threshold`.
-  Armoury Crate's Battery Care (Windows) sets the same EC value.
+  (asus-wmi). The EC does not keep that write across a power-off; component
+  `chargelimit` writes it again at every boot (section 10).
 - **GPU clock** (`gpu_performance` on amdgpu); Manual GPU Clock fails with
   `EINVAL` on this APU (section 1.3).
 - **No TDP limit** (`TdpLimit1`), unless `tdp_slider` is on.
@@ -443,3 +437,91 @@ the numbers in [hardware-data.md](hardware-data.md), and consider making
 - That Steam picks up `SuggestedDefaultPerformanceProfile` = `balanced` on a
   fresh install (and what it does on an existing one).
 - After a BIOS update: section 7.
+- Battery charge limit (section 10): the boot unit's write lands before
+  Steam's power daemon reads the attribute; whether the EC drops the limit
+  across s2idle and across a warm reboot; that Steam's limit control shows
+  the restored value.
+
+## 10. Battery charge limit (component `chargelimit`)
+
+### 10.1 What happens without it
+
+The EC holds a charge limit of its own. Armoury Crate's Battery Care
+(Windows) stores 80 % there, and it stays stored under any operating system.
+From Linux the limit is `/sys/class/power_supply/BAT1/charge_control_end_threshold`
+(asus-wmi), which is also what Steam's charge limit writes through
+steamos-manager (`battery_charge_limit`, method `acpi_sb`).
+
+Measured on the owner's X20:
+
+| Date | Observation |
+|---|---|
+| 2026-11-04 | Battery stuck at 80 %, Steam showing no limit. |
+| 2026-11-18 | Same again. Attribute reads `0`, `status` reads `Charging`, `current_now` reads `0` at 80 %. Writing `100`: about 2.5 A within 30 s, capacity rising. |
+| 2026-11-18 | After that write: cold shutdown, boot. Charging tapers to `0` at 84 %, attribute reads `0` again. |
+
+So a write from Linux takes effect at once but lasts only until the
+power-off; then the EC is back at its stored 80 %. After a boot the
+attribute reads `0` until something writes it. Steam's power daemon reads
+that as "no limit" (`vpower: New MaxChargeLevel value detected for battery =
+100%`) and writes nothing, so the stored limit applies and nothing shows
+it. The BIOS setup has no entry for the limit (checked on `RC74XA.303`;
+"Armoury Crate Control Interface" only enables the firmware device).
+
+### 10.2 What the component does
+
+`/etc/ally-x20-steamos/charge-limit-restore` (POSIX sh) writes the attribute:
+
+| When | Unit | What |
+|---|---|---|
+| Boot, before the display manager | `ally-x20-steamos-charge-limit.service` (`ExecStart`, mode `boot`) | writes the recorded limit, or 100 if none was recorded; waits up to 10 s for the attribute |
+| Shutdown and reboot | the same unit (`ExecStop`, mode `save`) | records the limit in force; an attribute reading `0` is not recorded |
+| After every sleep | `ally-x20-steamos-charge-limit-resume.service` (mode `resume`) | records the limit in force and writes it again |
+
+The record is one number in `/var/lib/ally-x20-steamos/state/charge-limit`.
+Every action is logged: `journalctl -t ally-x20-steamos-charge-limit`.
+
+This is how Steam's own limit is respected: a limit set in Steam reaches the
+attribute, is recorded at the next shutdown or resume, and is written back
+at the next boot before Steam starts, so Steam reads the value it set.
+Switching the limit off in Steam records 100 the same way. The component
+never overrides a value Steam wrote during the session.
+
+Limits of the approach:
+
+- A limit changed in Steam and followed by a hard power-off (holding the
+  power button, an empty battery) before any sleep is not recorded; the
+  previous record is used at the next boot.
+- On the first boot with the component nothing is recorded, so 100 is
+  written. Someone who wants the 80 % that Armoury Crate stored sets it once
+  in Steam (or `charge-limit 80`).
+- The component only acts while SteamOS runs. Charging with the device
+  shut down most likely stops at the EC's stored limit again, and continues
+  after the next boot. TODO(hw): not measured, neither for a shut-down
+  device nor for a sleeping one.
+- The EC's stored value is not changed. Without the component, or with
+  `charge-limit off`, it applies again after the next power-off.
+
+### 10.3 Settings
+
+```sh
+ally-x20-steamos charge-limit status       # setting, record, limit in force
+sudo ally-x20-steamos charge-limit follow  # default: the last limit set in Steam or by hand
+sudo ally-x20-steamos charge-limit 80      # always 80 (20..100); Steam's change lasts until the next boot
+sudo ally-x20-steamos charge-limit off     # write nothing
+```
+
+The setting is `limit=` in `/etc/ally-x20-steamos/charge-limit.conf` (a
+manifest entry of the component). `follow` and a number also act at once.
+
+### 10.4 Verify
+
+```sh
+ally-x20-steamos charge-limit status
+journalctl -b -t ally-x20-steamos-charge-limit
+cat /sys/class/power_supply/BAT1/{charge_control_end_threshold,capacity,status,current_now}
+```
+
+After a cold boot the journal has one `charge limit set to … % after boot`
+line and the attribute reads that value, not `0`. Set a limit in Steam, shut
+down, boot: the journal says `the limit recorded earlier` with Steam's value.

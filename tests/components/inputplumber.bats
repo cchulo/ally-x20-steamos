@@ -116,7 +116,7 @@ inputplumber
     grep -qx "ConditionPathExists=$RESUME_HELPER" "$u"
     grep -qx "After=$SLEEP_TARGETS" "$u"
     grep -qx "WantedBy=$SLEEP_TARGETS" "$u"
-    # the restart is the helper's decision, never unconditional
+    # a restart is the helper's fallback, never unconditional
     run grep -E 'try-restart|^ExecStartPre=' <(grep -v '^#' "$u")
     assert_failure
     # nothing is ordered after it, so it must never block the sleep
@@ -125,117 +125,85 @@ inputplumber
 }
 
 # ------------------------------------------------------ resume check helper --
-# stub_bin <name> <body> : a fake command on PATH for the helper.
-stub_bin() {
-    mkdir -p "$AX20_ROOT/stubs"
-    printf '#!/bin/sh\n%s\n' "$2" >"$AX20_ROOT/stubs/$1"
-    chmod +x "$AX20_ROOT/stubs/$1"
-}
+GP=/sys/bus/hid/devices/0003:0B05:1B4C.0003/gamepad_mode
+QAM=/sys/bus/hid/devices/0003:0B05:1B4C.0006/qam_mode
 
-# input_dev <eventN> <vendor> <product> <abs> : a kernel input device.
-input_dev() {
-    fixture_file "/sys/class/input/$1/device/id/vendor" "$2
+# mode_attrs <gamepad_mode> <qam_mode> : the controller's driver attributes,
+# plus the same names on another device, which must be left alone.
+mode_attrs() {
+    fixture_file "$GP" "$1
 "
-    fixture_file "/sys/class/input/$1/device/id/product" "$3
+    fixture_file "$QAM" "$2
 "
-    fixture_file "/sys/class/input/$1/device/capabilities/abs" "$4
+    fixture_file /sys/bus/hid/devices/0003:046D:C52B.0009/gamepad_mode "7
 "
-}
-
-# daemon <active|inactive> [source path]... : stub systemctl and busctl so
-# InputPlumber reports one CompositeDevice with the given source devices.
-daemon() {
-    local state=$1 props="" n=0 p
-    shift
-    for p in "$@"; do
-        props="$props \"$p\""
-        n=$((n + 1))
-    done
-    if [ "$state" = active ]; then
-        stub_bin systemctl '[ "$1" = is-active ] && exit 0; echo "systemctl $*"'
-    else
-        stub_bin systemctl '[ "$1" = is-active ] && exit 3; echo "systemctl $*"'
-    fi
-    stub_bin busctl "case \"\$*\" in
-*tree*) printf '%s\\n' /org/shadowblip/InputPlumber /org/shadowblip/InputPlumber/Manager /org/shadowblip/InputPlumber/CompositeDevice0 /org/shadowblip/InputPlumber/devices/target/gamepad0 ;;
-*CompositeDevice0*SourceDevicePaths*) echo 'as $n$props' ;;
-*) exit 1 ;;
-esac"
 }
 
 resume_check() {
-    AX20_ROOT="$AX20_ROOT" IP_RESUME_DRY_RUN=1 PATH="$AX20_ROOT/stubs:$PATH" \
+    AX20_ROOT="$AX20_ROOT" IP_RESUME_DRY_RUN=1 run "$OVL/bin/inputplumber-resume-check"
+}
+
+@test "resume check: writes both mode attributes back with their current values, twice, no restart" {
+    mode_attrs 1 0
+    resume_check
+    assert_success
+    [ "${lines[0]}" = "$AX20_ROOT$GP <- 1" ]
+    [ "${lines[1]}" = "$AX20_ROOT$QAM <- 0" ]
+    [ "${lines[2]}" = "$AX20_ROOT$GP <- 1" ]
+    [ "${lines[3]}" = "$AX20_ROOT$QAM <- 0" ]
+    assert_output_contains 're-sent the controller settings after resume: gamepad_mode=1 qam_mode=0; inputplumber.service left running'
+    [[ "$output" != *try-restart* ]]
+    [[ "$output" != *046D* ]]
+}
+
+@test "resume check: whatever value the attribute holds is the one written" {
+    mode_attrs 2 1
+    resume_check
+    assert_success
+    assert_output_contains "$AX20_ROOT$GP <- 2"
+    assert_output_contains "$AX20_ROOT$QAM <- 1"
+}
+
+@test "resume check: a real write puts the value into the attribute file" {
+    mode_attrs 1 0
+    AX20_ROOT="$AX20_ROOT" IP_RESUME_SETTLE=0 IP_RESUME_AGAIN=0 PATH="/usr/bin:/bin" \
         run "$OVL/bin/inputplumber-resume-check"
+    assert_success
+    [ "$(cat "$AX20_ROOT$GP")" = 1 ]
+    [ "$(cat "$AX20_ROOT$QAM")" = 0 ]
+    [ "$(cat "$AX20_ROOT/sys/bus/hid/devices/0003:046D:C52B.0009/gamepad_mode")" = 7 ]
+    assert_output_contains 'inputplumber.service left running'
 }
 
-@test "resume check: gamepad present and held by InputPlumber, no restart" {
-    input_dev event7 0b05 1b4c 3003f
-    input_dev event8 0b05 1b4c 0 # the controller's keyboard interface
-    input_dev event2 0001 0001 0
-    daemon active /dev/hidraw4 /dev/hidraw6 /dev/input/event7 /dev/input/event8
+@test "resume check: only one attribute present, it is still re-sent" {
+    fixture_file "$GP" "1
+"
     resume_check
     assert_success
-    assert_output_contains 'gamepad connected 3 s after resume'
+    assert_output_contains 'after resume: gamepad_mode=1;'
     [[ "$output" != *try-restart* ]]
 }
 
-@test "resume check: a hidden source node (other directory) still counts as held" {
-    input_dev event7 0b05 1b4c 3003f
-    daemon active /dev/inputplumber/sources/event7
+@test "resume check: no attribute (controller gone or other driver), the daemon is restarted as before" {
     resume_check
     assert_success
-    [[ "$output" != *try-restart* ]]
-}
-
-@test "resume check: no gamepad input device after the wait, restart" {
-    input_dev event2 0001 0001 0
-    daemon active /dev/input/event7
+    assert_output_contains 'no gamepad_mode/qam_mode attribute of the controller found; restarting'
+    assert_output_contains 'systemctl try-restart inputplumber.service'
+    # an unreadable value counts as none
+    fixture_file "$GP" "garbage
+"
     resume_check
-    assert_success
-    assert_output_contains 'gamepad not connected 10 s after resume: no gamepad input device (0b05:1b4c)'
     assert_output_contains 'systemctl try-restart inputplumber.service'
 }
 
-@test "resume check: gamepad re-enumerated under a node InputPlumber does not hold, restart" {
-    input_dev event9 0b05 1b4c 3003f
-    daemon active /dev/hidraw4 /dev/input/event7
-    resume_check
-    assert_success
-    assert_output_contains 'InputPlumber does not hold the gamepad (event9)'
-    assert_output_contains 'systemctl try-restart inputplumber.service'
-    # event17 must not match a held event1
-    rm -rf "$AX20_ROOT/sys"
-    input_dev event1 0b05 1b4c 3003f
-    daemon active /dev/input/event17
-    resume_check
-    assert_output_contains 'InputPlumber does not hold the gamepad (event1)'
-}
-
-@test "resume check: no CompositeDevice on the bus, restart" {
-    input_dev event7 0b05 1b4c 3003f
-    daemon active
-    stub_bin busctl 'case "$*" in *tree*) echo /org/shadowblip/InputPlumber/Manager ;; *) exit 1 ;; esac'
-    resume_check
-    assert_success
-    assert_output_contains 'systemctl try-restart inputplumber.service'
-}
-
-@test "resume check: daemon not running, nothing happens" {
-    input_dev event7 0b05 1b4c 3003f
-    daemon inactive
-    resume_check
-    assert_success
-    [ -z "$output" ]
-}
-
-@test "resume check: restart=always restarts, restart=never does not, junk falls back to the check" {
-    input_dev event7 0b05 1b4c 3003f
-    daemon active /dev/input/event7
+@test "resume check: restart=always restarts, restart=never does nothing, junk falls back to re-sending" {
+    mode_attrs 1 0
     fixture_file "$RESUME_CONF" 'restart=always
 '
     resume_check
     assert_success
     assert_output_contains 'systemctl try-restart inputplumber.service'
+    [[ "$output" != *"<- 1"* ]]
     fixture_file "$RESUME_CONF" 'restart=never
 '
     resume_check
@@ -246,24 +214,8 @@ resume_check() {
     resume_check
     assert_success
     assert_output_contains 'ignoring unknown restart=sometimes'
-    assert_output_contains 'gamepad connected'
+    assert_output_contains "$AX20_ROOT$GP <- 1"
     [[ "$output" != *try-restart* ]]
-}
-
-@test "resume check: without busctl the daemon is restarted as before" {
-    input_dev event7 0b05 1b4c 3003f
-    daemon active /dev/input/event7
-    rm "$AX20_ROOT/stubs/busctl"
-    # A PATH with the helper's own tools only: a Linux host has a real busctl.
-    mkdir -p "$AX20_ROOT/tools"
-    for t in cat sed head grep tr; do
-        ln -s "$(command -v "$t")" "$AX20_ROOT/tools/$t"
-    done
-    AX20_ROOT="$AX20_ROOT" IP_RESUME_DRY_RUN=1 PATH="$AX20_ROOT/stubs:$AX20_ROOT/tools" \
-        run "$OVL/bin/inputplumber-resume-check"
-    assert_success
-    assert_output_contains 'busctl missing'
-    assert_output_contains 'systemctl try-restart inputplumber.service'
 }
 
 @test "stock >= 0.82.0: installs the verbatim upstream profile and no capability map" {

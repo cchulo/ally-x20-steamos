@@ -122,8 +122,8 @@ relights the button. Both delays can be changed with a drop-in that sets
 `XBOX_LED_RESUME_WAIT` and `XBOX_LED_RESUME_DELAY` in the unit's environment;
 `journalctl -t ally-x20-steamos-xbox-led` shows what was sent. The light does
 not need the InputPlumber restart from the issue's workaround (component
-`inputplumber` restarts the daemon after a resume when the gamepad did not
-come back, and this unit runs after that).
+`inputplumber` re-sends the controller's mode settings after a resume, and
+this unit runs after that).
 
 The reports were captured from Armoury Crate on Windows
 ([xbox-led-capture.md](xbox-led-capture.md)) and verified on an X20 on

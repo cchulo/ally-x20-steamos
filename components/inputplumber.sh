@@ -20,8 +20,9 @@
 #       runs the helper below after every suspend/resume cycle. Enabled
 #       through manifest symlinks in the sleep targets' .wants/ directories.
 #   /etc/ally-x20-steamos/inputplumber-resume-check
-#       restarts the daemon when the gamepad is not connected 10 s after a
-#       resume: it can come back dead otherwise (issue #63).
+#       re-sends the controller's gamepad_mode and qam_mode after a resume:
+#       the MCU can lose them while the host sleeps, which leaves the sticks
+#       dead (issue #63).
 
 # shellcheck disable=SC2034  # read by lib/component.sh
 COMPONENT_DESCRIPTION="InputPlumber X20 profile + hwdb autostart for the stock daemon (optional upstream build fallback)"

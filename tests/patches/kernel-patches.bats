@@ -62,6 +62,46 @@ outside_mdirs() {
     done
 }
 
+@test "the resume fixes 0007/0008 keep their author, name their source commit and a Valve-Upstream tag" {
+    local p sha n=0
+    for p in "$KDIR"/000[78]-*.patch; do
+        n=$((n + 1))
+        sha=$(head -n 1 "$p" | cut -d' ' -f2)
+        grep -qx 'From: Andrey Golovko <andrey.golovko@gmail.com>' "$p"
+        grep -q "^ally-x20-steamos: backport of Valve linux-integration commit\$" "$p"
+        grep -qx "$sha (mirror" "$p"
+        [ "$(awk '/^---$/ { exit } /^Valve-Upstream: / { print $2 }' "$p")" = 7.2.10-valve1 ]
+    done
+    [ "$n" -eq 2 ]
+    [ "$(head -n 1 "$KDIR"/0007-*.patch | cut -d' ' -f2)" = 2700598cc20cf111aac5611a16086138eca2f731 ]
+    [ "$(head -n 1 "$KDIR"/0008-*.patch | cut -d' ' -f2)" = 5c9979eb19176343e43b6ae8c666c458cb78eedb ]
+}
+
+@test "0007 prepares the stream on RESUME; 0008 powers PDE23 up in the port prepare" {
+    local p7 p8
+    p7=$(echo "$KDIR"/0007-*.patch)
+    p8=$(echo "$KDIR"/0008-*.patch)
+    grep -q '^+	case SNDRV_PCM_TRIGGER_RESUME:$' "$p7"
+    grep -q '^+		ret = sdw_prepare_stream(sdw_stream);$' "$p7"
+    grep -q '^-	case SNDRV_PCM_TRIGGER_RESUME:$' "$p7"
+    [ "$(grep -c '^+++ b/' "$p7")" -eq 1 ]
+    grep -q '^+++ b/sound/soc/sdw_utils/soc_sdw_utils.c$' "$p7"
+    grep -q '^+		scoped_guard(mutex, &tas_dev->pde_lock)$' "$p8"
+    grep -q 'TAS2783_SDCA_POW_STATE_ON);$' "$p8"
+    [ "$(grep -c '^+++ b/' "$p8")" -eq 1 ]
+    grep -q '^+++ b/sound/soc/codecs/tas2783-sdw.c$' "$p8"
+    # pure additions: nothing of the 0006 check is removed
+    run grep -c '^-[^-]' "$p8"
+    [ "$output" = 0 ]
+}
+
+@test "modules.list rebuilds sdw-utils for 0007 and tas2783 for 0008" {
+    local l="$KDIR/modules.list" t
+    t=$(printf '\t')
+    grep -qxF "0007-ASoC-sdw_utils-prepare-the-stream-again-when-resuming.patch${t}sound/soc/sdw_utils${t}snd-soc-sdw-utils.ko" "$l"
+    grep -qxF "0008-ASoC-tas2783-sdw-power-the-Function-up-before-preparing-the-port.patch${t}sound/soc/codecs${t}snd-soc-tas2783-sdw.ko" "$l"
+}
+
 @test "modules.list rebuilds every user of the struct changed by 0003, and tas2783 for 0004-0006" {
     local l="$KDIR/modules.list" p
     p=0003-ASoC-sdw_utils-honor-empty-DisCo-port-lists.patch

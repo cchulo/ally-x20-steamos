@@ -6,3 +6,5 @@
 0004-ASoC-tas2783-sdw-keep-the-volume-settings-across-resets.patch	sound/soc/codecs	snd-soc-tas2783-sdw.ko
 0005-ASoC-tas2783-sdw-load-the-firmware-synchronously.patch	sound/soc/codecs	snd-soc-tas2783-sdw.ko
 0006-ASoC-tas2783-sdw-refuse-playback-when-init-writes-failed.patch	sound/soc/codecs	snd-soc-tas2783-sdw.ko
+0007-ASoC-sdw_utils-prepare-the-stream-again-when-resuming.patch	sound/soc/sdw_utils	snd-soc-sdw-utils.ko
+0008-ASoC-tas2783-sdw-power-the-Function-up-before-preparing-the-port.patch	sound/soc/codecs	snd-soc-tas2783-sdw.ko

@@ -156,7 +156,7 @@ against a fixture tree, which is how the test suite works.
 ally-x20-steamos.sh   CLI dispatcher            lib/          common, manifest, probes, component, retired, slots, rauc, modules, selfupdate, status, notify
 cmd/                  one file per command      components/   audio, chargelimit, hdr, inputplumber, modules, power, sdexpress, update, xboxled
 overlay/              files installed on the device (manifest-tracked)   uninstall/   standalone POSIX uninstaller
-patches/kernel/       0001-0006 ASoC (audio), 0010-0015 hid-asus-ally, 0020 asus-armoury   patches/{gamescope,libdisplay-info}/
+patches/kernel/       0001-0008 ASoC (audio), 0010-0015 hid-asus-ally, 0020 asus-armoury   patches/{gamescope,libdisplay-info}/
 build/                Containerfile, build-modules.sh, build-hdr.sh, build-inputplumber.sh, kernel-sources.md
 acpi/                 patch-acp-flag.py (DSDT flag patch + early initrd), dump-dsdt.md, fixtures/, tests/
 firmware/             tas2783.lock, fetch-tas2783.sh, speaker-id.map       keys/        release signing key (OpenPGP)   
@@ -294,7 +294,10 @@ section and the docs linked below name the exact commits.
   mirror of `gitlab.steamos.cloud/jupiter/linux-integration`): every module
   is rebuilt from its `7.2.7-valve2` tree. Patches 0003-0006 are backported
   from `7.2.10-valve1` and keep their author, **Matthew Schwartz**
-  (`9a0dabd2637d`, `021e9da34c58`, `5ce75814c28a`, `2ce1d48892f3`). Patches
+  (`9a0dabd2637d`, `021e9da34c58`, `5ce75814c28a`, `2ce1d48892f3`).
+  Patches 0007 and 0008, the fixes for silent speakers after a resume, come
+  from the same tag and keep their author, **Andrey Golovko**
+  (`2700598cc20c`, `5c9979eb1917`). Patches
   0001 and 0002 match his RC74XA commits `5f7b3941a10f` and `045b13e03d29`
   in the same release, and the firmware naming in
   [firmware/README.md](firmware/README.md) follows `8ba654cb1c44`.

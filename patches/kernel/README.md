@@ -6,7 +6,7 @@ Each file is in `git format-patch` format and applies with `git apply` or
 GPL-2.0 kernel code and are licensed GPL-2.0-only (see `LICENSE.md`).
 
 This file documents the speaker-audio patches, listed in `modules.list`:
-`0001`/`0002` (plan §1.1, problems 1 and 2) and `0003`–`0006`, four fixes
+`0001`/`0002` (plan §1.1, problems 1 and 2) and `0003`–`0008`, six fixes
 backported from Valve's `7.2.10-valve1` kernel. The `hid-asus-ally` patches (`0010`–`0015`,
 joystick-ring RGB in Steam, Aura effects, X20 top-right key `0xa0`, unbind fixes) are documented
 in [`README-hid.md`](README-hid.md) and listed in `modules-hid.list`. The
@@ -15,7 +15,7 @@ in [`README-hid.md`](README-hid.md) and listed in `modules-hid.list`. The
 [`docs/power.md`](../../docs/power.md)) is listed in `modules-power.list`.
 The build script reads every `modules*.list` file. Note the difference in source
 trees: `0001`/`0002` apply to linux-stable `v7.2.7` and Valve's tree
-alike, `0003`–`0006` were checked against Valve's `7.2.7-valve2` only, and
+alike, `0003`–`0008` were checked against Valve's `7.2.7-valve2` only, and
 `hid-asus-ally.c` exists only in Valve's tree.
 
 ## Target kernel
@@ -47,7 +47,7 @@ that a kernel no longer needs them. The same kernel also carries
 `a15043a1338a` "ASoC: tas2783-sdw: split a stereo stream across the two mono
 amps", the change that 0001 deliberately avoids (see below). Whether stereo
 still works on that kernel is `TODO(hw)`. It also carries the originals of
-`0003`–`0006`; those backports do not reverse-apply there (see
+`0003`–`0008`; those backports do not reverse-apply there (see
 [Valve backports](#00030006-valve-7210-valve1-backports)), so they carry a
 `Valve-Upstream: 7.2.10-valve1` line that `build/build-modules.sh` reads
 instead.
@@ -267,6 +267,42 @@ prepare write. Applies on top of 0004 and 0005.
 hundreds of codecs, and `rt1320-sdw.h` includes
 `../../../drivers/soundwire/bus.h`, which the sparse checkout does not have).
 
+## 0007/0008: silent speakers after resume
+
+Two upstream fixes by Andrey Golovko that Valve's `7.2.10-valve1` carries as
+`[FROM-UPSTREAM]` commits (`2700598cc20c`, `5c9979eb1917`; mainline
+`6fd1b9225de1`, `119046319e77`) and `7.2.7-valve2` lacks. Same form as
+`0003`–`0006`: `git format-patch -1` of Valve's commit with the original
+author and description, an `ally-x20-steamos:` note, and a
+`Valve-Upstream: 7.2.10-valve1` line.
+
+**What they fix:** on the X20 the speakers are sometimes silent after a
+suspend/resume cycle and come back by themselves once the sink has idled
+long enough for PipeWire to close and reopen the PCM
+([issue #63](https://github.com/cchulo/ally-x20-steamos/issues/63)).
+Observed on 2026-11-18: at every resume PipeWire logs
+`spa.alsa: hw:amdsoundwire,2p: snd_pcm_avail after recover: Broken pipe`,
+the kernel logs nothing, and two of three resumes were silent. Both commit
+messages describe this: the amps lose their port configuration and go back
+to the PS3 power state while the host sleeps, and a stream that is resumed
+or only prepared again never restores them, so "playback silently produces
+nothing ... until the stream is torn down and set up again".
+
+| Patch | Path it repairs | Change |
+|---|---|---|
+| `0007-ASoC-sdw_utils-prepare-the-stream-again-when-resuming.patch` | `SNDRV_PCM_IOCTL_RESUME` (trigger only, no `.prepare`) | `asoc_sdw_trigger()` calls `sdw_prepare_stream()` before enabling the stream on `SNDRV_PCM_TRIGGER_RESUME` |
+| `0008-ASoC-tas2783-sdw-power-the-Function-up-before-preparing-the-port.patch` | `snd_pcm_prepare()` without `hw_params()`, which is what PipeWire's recover does | `tas_port_prep()` writes PDE23 = PS0 before the PrepareCtrl write |
+
+`0007` applies unchanged. `0008` is adjusted: `tas_port_prep()` already has
+the `tas_dev` local from `0006`, and the power-up block goes after `0006`'s
+`hw_init` check. With both applied, `asoc_sdw_trigger()` and
+`tas_port_prep()` are identical to Valve's `7.2.10-valve1`.
+
+**Validation:** `git apply` in order after `0003`–`0006` on the three files
+from `7.2.7-valve2`. Not compiled on this host. `TODO(hw)`: which of the two
+paths the X20 hits is not measured (the PipeWire log points at `0008`), and
+whether the silence is gone needs many resumes on the device.
+
 ## 0020: asus-armoury RC74XA power limits
 
 `0020-asus-armoury-add-ROG-Xbox-Ally-X20-RC74XA-power-limits.patch`, listed
@@ -371,4 +407,6 @@ See [`firmware-names.md`](firmware-names.md): which `.bin` names the v7.2.7
   sink suspending and resuming.
 - With `0005`: `journalctl -k` shows no `fw request, wait_event timeout`, and
   the card still comes up with the tuning firmware loaded.
-- That `0003`–`0006` compile against the `linux-neptune-72` headers (CI).
+- That `0003`–`0008` compile against the `linux-neptune-72` headers (CI).
+- With `0007`/`0008`: the speakers play after every suspend/resume cycle, in
+  Game Mode, without waiting for the sink to idle.

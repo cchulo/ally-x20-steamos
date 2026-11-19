@@ -188,7 +188,8 @@ two attributes matters, so both are written. A check of whether the gamepad
 "reconnected" cannot work: nothing the kernel or the daemon exposes differs
 between a good and a bad resume.
 
-Component `xboxled` orders its own resume unit after this one.
+Component `xboxled` has its own resume unit, which runs at the same time;
+neither waits for the other.
 
 After installing the files, `apply` runs these steps on a live system. It
 skips them for `--root`/`--slot` prefixes.

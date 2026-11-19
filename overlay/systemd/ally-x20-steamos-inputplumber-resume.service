@@ -11,8 +11,8 @@
 # resume and once more 3 s later); InputPlumber keeps running, so Steam does
 # not see the controller drop. Without the attributes it falls back to
 # `systemctl try-restart inputplumber.service`.
-# ally-x20-steamos-xbox-led-resume.service is ordered after this unit so the
-# Xbox-button light settings are sent once the controller is settled.
+# ally-x20-steamos-xbox-led-resume.service (component xboxled) runs at the
+# same time; neither depends on the other.
 [Unit]
 Description=ally-x20-steamos: re-send the controller settings after resume
 Documentation=file:///var/lib/ally-x20-steamos/src/docs/inputplumber.md

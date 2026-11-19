@@ -1,0 +1,131 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# inputplumber-resume-check — after a suspend/resume cycle, re-send the ROG
+# Xbox Ally X20 controller's mode settings so the gamepad keeps working.
+#
+# Installed to /etc/ally-x20-steamos/inputplumber-resume-check and started
+# by ally-x20-steamos-inputplumber-resume.service after every resume
+# (component inputplumber, docs/inputplumber.md).
+#
+# After some resumes the sticks stay dead (issue #63). Measured on the X20
+# on 2026-11-18: in that state the controller is still on the bus, the
+# kernel logs nothing unusual, InputPlumber still holds the gamepad's event
+# node and logs nothing, and the driver attributes gamepad_mode and qam_mode
+# still read the values InputPlumber wrote at start-up (1 and 0). Writing
+# those same values again brings the sticks back at once: the controller's
+# MCU loses the settings while the host sleeps, and the attributes only
+# report what the driver last sent. Up to v0.1.10 the daemon was restarted
+# after every resume, which re-sends them as a side effect but makes Steam
+# see the virtual pad disappear and come back.
+#
+# So, after every resume:
+#   1. wait IP_RESUME_SETTLE seconds (default 1), so the sticks are back
+#      almost at once;
+#   2. write every gamepad_mode and qam_mode attribute of the controller
+#      (USB 0b05:1b4c) back with the value it currently reads;
+#   3. do the same once more IP_RESUME_AGAIN seconds later (default 3), in
+#      case the MCU was still initialising the first time and overwrote the
+#      first write (as it does with the Xbox-button light).
+# The writes are unconditional: nothing the kernel or the daemon exposes
+# tells a resume with dead sticks from a good one.
+# When no such attribute exists (controller gone, or a driver without
+# them), the daemon is restarted as before.
+#
+# TODO(hw): one occurrence was repaired this way by hand, long after the
+# resume; the two delays are not measured. It is also not known which of the
+# two attributes matters, so both are written.
+#
+# Setting: /etc/ally-x20-steamos/inputplumber-resume.conf
+#   restart=resend   (default) re-send the settings, no restart
+#   restart=always   restart the daemon after every resume, as up to v0.1.10
+#   restart=never    do nothing
+#
+# POSIX sh. Never fails loudly: problems are logged and exit 0.
+set -u
+
+AX20_NAME=ally-x20-steamos
+ROOT=${AX20_ROOT:-}
+CONF="$ROOT/etc/$AX20_NAME/inputplumber-resume.conf"
+HID="$ROOT/sys/bus/hid/devices"
+DRY=${IP_RESUME_DRY_RUN:-0}
+SETTLE=${IP_RESUME_SETTLE:-1}
+AGAIN=${IP_RESUME_AGAIN:-3}
+# HID device directories are named <bus>:<vendor>:<product>.<instance>.
+DEVICES='*:0B05:1B4C.*'
+ATTRS="gamepad_mode qam_mode"
+
+log() {
+    if command -v logger >/dev/null 2>&1 && [ "$DRY" != 1 ]; then
+        logger -t "$AX20_NAME-inputplumber-resume" -- "$*"
+    fi
+    printf '%s: %s\n' "$AX20_NAME-inputplumber-resume" "$*" >&2
+}
+
+# nap <seconds> : sleep unless dry-running (tests).
+nap() {
+    [ "$DRY" = 1 ] || sleep "$1"
+}
+
+restart_daemon() {
+    log "$1; restarting inputplumber.service"
+    if [ "$DRY" = 1 ]; then
+        printf 'systemctl try-restart inputplumber.service\n'
+        return 0
+    fi
+    command -v systemctl >/dev/null 2>&1 || {
+        log "systemctl missing; cannot restart"
+        return 0
+    }
+    systemctl try-restart inputplumber.service \
+        || log "systemctl try-restart inputplumber.service failed"
+}
+
+# resend : write every mode attribute back with its current value. Sets
+# $sent to what was written ("" when there was nothing to write).
+resend() {
+    sent=""
+    for a in $ATTRS; do
+        # shellcheck disable=SC2086  # the pattern must expand
+        for f in "$HID"/$DEVICES/"$a"; do
+            [ -f "$f" ] || continue
+            v=$(cat "$f" 2>/dev/null) || continue
+            case "$v" in "" | *[!0-9]*) continue ;; esac
+            if [ "$DRY" = 1 ]; then
+                printf '%s <- %s\n' "$f" "$v"
+            elif ! printf '%s\n' "$v" >"$f" 2>/dev/null; then
+                log "writing $a failed"
+                continue
+            fi
+            sent="$sent $a=$v"
+        done
+    done
+    [ -n "$sent" ]
+}
+
+mode=resend
+if [ -r "$CONF" ]; then
+    m=$(sed -n 's/^restart=//p' "$CONF" | head -n1)
+    case "$m" in
+        resend | always | never) mode=$m ;;
+        "") ;;
+        *) log "ignoring unknown restart=$m in $CONF" ;;
+    esac
+fi
+[ "$mode" = never ] && exit 0
+
+nap "$SETTLE"
+if [ "$mode" = always ]; then
+    restart_daemon "restart=always"
+    exit 0
+fi
+
+sent=""
+if ! resend; then
+    restart_daemon "no gamepad_mode/qam_mode attribute of the controller found"
+    exit 0
+fi
+first=$sent
+nap "$AGAIN"
+resend || true
+log "re-sent the controller settings after resume:$first; inputplumber.service left running"
+exit 0

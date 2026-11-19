@@ -146,13 +146,50 @@ and enables it with symlinks in the `.wants/` directories of `suspend.target`,
 `hibernate.target`, `hybrid-sleep.target` and `suspend-then-hibernate.target`
 (manifest entries, like everything else). A unit wanted by a sleep target and
 ordered after it starts once `systemd-suspend.service` has returned, that is
-after the resume. It sleeps 3 s and runs
-`systemctl try-restart inputplumber.service`: after some resumes the gamepad
-(sticks included) stays dead until the daemon is restarted
-([issue #63](https://github.com/cchulo/ally-x20-steamos/issues/63), where
-this delay and restart were verified). `try-restart` leaves a stopped daemon
-alone. Steam sees the virtual pad disappear and come back, as on any daemon
-restart. Component `xboxled` orders its own resume unit after this one.
+after the resume. The unit runs
+`/etc/ally-x20-steamos/inputplumber-resume-check`, also installed by `apply`.
+
+After some resumes the sticks stay dead
+([issue #63](https://github.com/cchulo/ally-x20-steamos/issues/63)). Measured
+on the X20 on 2026-11-18, in that state:
+
+- the controller is still on the bus and the kernel log of the resume looks
+  like any other;
+- InputPlumber still holds the gamepad's event node and logs nothing;
+- the driver attributes `gamepad_mode` and `qam_mode` still read the values
+  InputPlumber wrote at start-up (1 and 0);
+- writing those same values again brings the sticks back at once.
+
+So the controller's MCU loses the two settings while the host sleeps, and
+the attributes only report what the driver last sent. Restarting the daemon
+re-sends them as a side effect, which is why versions up to v0.1.10
+restarted it after every resume, but a restart makes Steam see the virtual
+pad disappear and come back. The helper re-sends the settings instead, on
+every resume, because a bad resume cannot be told from a good one:
+
+1. It waits 1 s.
+2. It writes every `gamepad_mode` and `qam_mode` attribute of the controller
+   (USB `0b05:1b4c`, under `/sys/bus/hid/devices/`) back with the value it
+   currently reads.
+3. 3 s later it does the same once more, in case the MCU was still
+   initialising the first time and overwrote the first write.
+4. The journal gets one line (`journalctl -t
+   ally-x20-steamos-inputplumber-resume`). When no such attribute exists, it
+   runs `systemctl try-restart inputplumber.service` as before.
+
+`/etc/ally-x20-steamos/inputplumber-resume.conf` (not installed; create it
+when needed) changes this with one line: `restart=always` restarts the
+daemon after every resume, as versions up to v0.1.10 did, `restart=never`
+does nothing, `restart=resend` is the default.
+
+TODO(hw): one occurrence was repaired by hand this way, minutes after the
+resume. The two delays are not measured, and it is not known which of the
+two attributes matters, so both are written. A check of whether the gamepad
+"reconnected" cannot work: nothing the kernel or the daemon exposes differs
+between a good and a bad resume.
+
+Component `xboxled` has its own resume unit, which runs at the same time;
+neither waits for the other.
 
 After installing the files, `apply` runs these steps on a live system. It
 skips them for `--root`/`--slot` prefixes.

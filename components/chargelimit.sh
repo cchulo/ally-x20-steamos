@@ -1,20 +1,22 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# components/chargelimit.sh — keep the ROG Xbox Ally X20's battery charge
-# limit across power-offs (docs/power.md, "Battery charge limit").
+# components/chargelimit.sh — keep the ROG Xbox Ally X20 charging to 100 %
+# unless a charge limit was set on purpose (docs/power.md, "Battery charge
+# limit").
 #
-# The embedded controller falls back to its own stored limit (typically the
-# 80 % Armoury Crate's Battery Care wrote under Windows) at every power-off;
-# a limit written from Linux lasts only until then, and after the boot the
-# kernel attribute reads 0, so Steam shows no limit while the battery stops
-# at 80 %. This component writes the limit at every boot and after resume:
-# the one last in force (Steam's charge limit or a write by hand), 100 when
-# none was ever recorded.
+# With Steam's charge limit off, Steam writes 0 to the battery's
+# charge_control_end_threshold at session start (0 is "no limit" on a Steam
+# Deck). This firmware takes only 100 as "no limit": with 0 the controller
+# stops charging at about 80 % while Steam shows no limit. Steam can write
+# the attribute because component power gives it the RC74XA device entry
+# ([battery_charge_limit]). This component replaces a 0 by 100, leaves a
+# real limit set in Steam alone, and writes that limit again at boot.
 #
 # Files:
 #   /etc/ally-x20-steamos/charge-limit-restore       the helper (overlay/bin)
 #   /etc/systemd/system/ally-x20-steamos-charge-limit.service
-#                                                    boot: restore; shutdown:
-#                                                    record
+#                                                    boot: write the recorded
+#                                                    limit, then watch the
+#                                                    attribute
 #   /etc/systemd/system/ally-x20-steamos-charge-limit-resume.service
 #                                                    after every sleep
 #   .../multi-user.target.wants/ and the sleep targets' .wants/
@@ -25,11 +27,11 @@
 # `ally-x20-steamos charge-limit follow|off|<20-100>` (cmd/charge-limit.sh)
 # as a manifest entry of this component. The record of the last limit is
 # state: /var/lib/ally-x20-steamos/state/charge-limit.
-# Stock SteamOS writes the limit only when the user changes it in Steam, so
-# the probe always says needed.
+# Stock SteamOS does not treat 0 differently on this device, so the probe
+# always says needed.
 
 # shellcheck disable=SC2034  # read by lib/component.sh
-COMPONENT_DESCRIPTION="Battery charge limit: write the last limit set (Steam's or by hand; 100 % if none) at every boot and after resume"
+COMPONENT_DESCRIPTION="Battery charge limit: charge to 100 % unless a limit is set in Steam (Steam's \"no limit\" write of 0 means about 80 % to this firmware)"
 
 CHARGE_LIMIT_HELPER_REL="${AX20_EARLY_REL}/charge-limit-restore"
 CHARGE_LIMIT_CONF_REL="${AX20_EARLY_REL}/charge-limit.conf"
@@ -86,8 +88,8 @@ chargelimit_recorded() {
 }
 
 # chargelimit_kernel : the battery's charge_control_end_threshold as the
-# kernel reports it, or "n/a". 0 means it was not written this boot, so the
-# controller is using its own stored limit.
+# kernel reports it, or "n/a". 0 was written by Steam as "no limit"; this
+# firmware then stops charging at about 80 %.
 chargelimit_kernel() {
     local f
     for f in "$(ax20_path /sys/class/power_supply)"/BAT*/charge_control_end_threshold; do
@@ -104,9 +106,9 @@ chargelimit_probe_details() {
     r=$(chargelimit_recorded)
     k=$(chargelimit_kernel)
     case "$s" in
-        follow) printf "setting=follow (the last limit set in Steam or by hand is written at boot and after resume)\n" ;;
+        follow) printf "setting=follow (100%% unless a limit is set in Steam or by hand; a 0 written by Steam becomes 100)\n" ;;
         off) printf 'setting=off (nothing is written)\n' ;;
-        *) printf 'setting=%s%% (written at boot and after resume; a change in Steam lasts until the next boot)\n' "$s" ;;
+        *) printf 'setting=%s%% (written at boot and after resume, and whenever the attribute reads 0; a limit set in Steam lasts until then)\n' "$s" ;;
     esac
     if [ -n "$r" ]; then
         printf 'recorded=%s%%\n' "$r"
@@ -115,7 +117,7 @@ chargelimit_probe_details() {
     fi
     case "$k" in
         n/a) printf 'in_force=n/a (no battery with charge_control_end_threshold)\n' ;;
-        0) printf "in_force=the controller's own stored limit (nothing written this boot)\n" ;;
+        0) printf "in_force=about 80%% (the attribute reads 0, which this firmware takes as a limit)\n" ;;
         *) printf 'in_force=%s%%\n' "$k" ;;
     esac
 }
@@ -147,8 +149,7 @@ chargelimit_apply() {
         return 0
     fi
     ax20_run systemctl daemon-reload || log_warn "chargelimit: systemctl daemon-reload failed"
-    # Start it now: writes the limit at once and arms the record at shutdown.
-    # A restart of the running unit records the limit in force first.
+    # (Re)start it now: writes the limit at once and starts the watch.
     ax20_run systemctl restart "$CHARGE_LIMIT_UNIT" \
         || log_warn "chargelimit: $CHARGE_LIMIT_UNIT failed to start; see: journalctl -u $CHARGE_LIMIT_UNIT"
     return 0
@@ -157,8 +158,8 @@ chargelimit_apply() {
 chargelimit_remove() {
     _chargelimit_system_steps || return 0
     ax20_have systemctl || return 0
-    # Stop it while the helper is still there (its ExecStop records the
-    # limit); the limit in force stays until the next power-off.
+    # Stop the watch; the limit in force stays until something writes
+    # another one (Steam writes 0 again at its next start).
     ax20_run systemctl stop "$CHARGE_LIMIT_UNIT" || log_warn "chargelimit: stopping $CHARGE_LIMIT_UNIT failed"
     return 0
 }

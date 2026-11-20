@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# summary: battery charge limit kept across power-offs: status | follow | off | <20-100>
+# summary: battery charge limit: 100 % unless set in Steam: status | follow | off | <20-100>
 #
-# The X20's embedded controller goes back to its own stored charge limit
-# (typically Armoury Crate's 80 %) at every power-off. Component chargelimit
-# writes the limit again at every boot and after resume; this command picks
-# which one (docs/power.md, "Battery charge limit").
+# With Steam's charge limit off, Steam writes 0 to the battery's charge
+# limit attribute, and the X20's firmware takes 0 as a limit of about 80 %.
+# Component chargelimit replaces the 0 by 100 and keeps a limit set in
+# Steam; this command picks the behaviour (docs/power.md, "Battery charge
+# limit").
 
 # shellcheck source=lib/component.sh
 . "$AX20_SRC/lib/component.sh"
@@ -14,12 +15,14 @@ _charge_limit_usage() {
 usage: $AX20_NAME charge-limit <command>
 
   status      the setting, the recorded limit and the limit in force
-  follow      (default) keep the last limit set in Steam (Settings → Power)
-              or by hand: it is recorded at shutdown and after resume and
-              written again at the next boot. 100 % until one is recorded
-  <20-100>    always write this limit at boot and after resume; a change
-              made in Steam then lasts until the next boot
-  off         write nothing: the controller keeps its own stored limit
+  follow      (default) charge to 100 % unless a limit is set in Steam
+              (Settings → Power) or by hand. Steam's limit wins; its "no
+              limit" (a 0) is replaced by 100
+  <20-100>    use this limit instead of 100: written at boot, after resume
+              and whenever Steam writes 0; a limit set in Steam lasts until
+              the next boot
+  off         write nothing: with Steam's limit off the battery stops at
+              about 80 %
 
 follow, off and a number need root and the chargelimit component
 ('$AX20_NAME apply'). See docs/power.md.
@@ -85,12 +88,12 @@ _charge_limit_set() {
     rm -f "$tmp"
     case "$want" in
         off)
-            log_info "charge-limit: off; the limit in force stays until the next power-off, then the controller's own applies"
+            log_info "charge-limit: off; nothing is written from now on (with Steam's limit off the battery stops at about 80 %)"
             return 0
             ;;
     esac
-    # "resume" records the limit in force (follow) and writes the one that
-    # now applies, without waiting for anything.
+    # "resume" writes the limit that now applies, without waiting for
+    # anything; the running watch reads the new setting on its next round.
     helper=$(ax20_path "$CHARGE_LIMIT_HELPER_REL")
     if [ -x "$helper" ]; then
         AX20_ROOT="$AX20_ROOT" "$helper" resume 2>/dev/null || true

@@ -1,29 +1,29 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# Component chargelimit (docs/power.md, "Battery charge limit"): write the
-# battery charge limit at every boot and record it at shutdown.
+# Component chargelimit (docs/power.md, "Battery charge limit"): keep the
+# battery charging to 100 % unless a charge limit was set on purpose.
 #
-# The ROG Xbox Ally X20's embedded controller falls back to its own stored
-# charge limit (typically Armoury Crate's 80 %) at every power-off, while
-# the kernel attribute reads 0 and Steam shows no limit. The helper writes
-# the limit that was last in force (Steam's setting or a write by hand; 100
-# when none was ever recorded) before the display manager starts, so Steam
-# reads the restored value. ExecStop runs at shutdown and reboot and records
-# the limit in force then. Nothing Requires= this unit, and the helper
-# always exits 0.
+# With Steam's charge limit off, Steam writes 0 to the battery's
+# charge_control_end_threshold when the session starts (0 is "no limit" on a
+# Steam Deck). The ROG Xbox Ally X20's firmware takes only 100 as "no
+# limit"; with 0 the controller stops charging at about 80 % while Steam
+# shows no limit. ExecStartPre writes the limit recorded earlier (100 when
+# none) before the display manager starts; the main process then looks at
+# the attribute every few seconds, replaces a 0 by 100 and records a limit
+# set in Steam or by hand. Nothing Requires= this unit.
 [Unit]
-Description=ally-x20-steamos: restore the battery charge limit at boot, record it at shutdown
+Description=ally-x20-steamos: keep the battery charge limit (a 0 written by Steam becomes 100)
 Documentation=file:///var/lib/ally-x20-steamos/src/docs/power.md
 After=local-fs.target
 Before=display-manager.service
 ConditionPathExists=/etc/ally-x20-steamos/charge-limit-restore
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/etc/ally-x20-steamos/charge-limit-restore boot
-ExecStop=/etc/ally-x20-steamos/charge-limit-restore save
+Type=simple
+ExecStartPre=/etc/ally-x20-steamos/charge-limit-restore boot
+ExecStart=/etc/ally-x20-steamos/charge-limit-restore watch
+Restart=on-failure
+RestartSec=10s
 TimeoutStartSec=30s
-TimeoutStopSec=10s
 StandardOutput=journal
 StandardError=journal
 

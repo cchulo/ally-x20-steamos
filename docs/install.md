@@ -8,7 +8,12 @@ covered by `uninstall` (see the plan, §5).
 
 ## Prerequisites
 
-- Stock SteamOS with read-only mode **on** (the default). The installer
+- Stock SteamOS on the **stable** channel. That is the only supported
+  channel. On beta, preview or main the installer still runs, but parts
+  that do not fit that system are skipped (a component that fails to
+  apply, a kernel patch that does not apply), and no support is provided
+  for the result.
+- Read-only mode **on** (the default). The installer
   refuses to run if someone ran `steamos-readonly disable`, because stock
   files may then have been changed by other tools. It never turns read-only
   mode off itself. `--i-know` overrides the refusal; only use it if you know
@@ -122,3 +127,22 @@ a post-update reboot check is pending, and the last self-update check. Each comp
 intact), `stock` (not installed or drifted; the boot service re-applies),
 `superseded` (stock SteamOS now provides it; remove ours with
 `uninstall --superseded`), `n/a` (cannot tell on this machine) or `error`.
+`modules` can also be `partial`: some kernel modules are patched, others
+stay stock because their patches do not apply to this kernel
+([kernel-modules.md](kernel-modules.md#partial-builds)).
+
+The `LAST APPLY` column is what the last `apply` (or boot re-apply) did to
+the component: `applied`, `unchanged`, `failed`, `skipped`, or `-` when
+nothing is recorded. Failures are listed under the table with their
+reason. The record is `/var/lib/ally-x20-steamos/state/last-apply.json`
+([architecture.md](architecture.md), "`state/last-apply.json`").
+
+## If a component fails to install
+
+`install` does not stop when one component cannot be applied. That
+component is skipped, the others are installed, the kernel modules are
+staged and the status is printed. `install` then ends with exit code `4`
+and says which components failed and why. Fix the cause and run `install`
+(or `apply`) again; both are safe to repeat. Exit codes of `install` and
+`apply`: `0` done, `1` stopped by an error, `2` wrong usage, `4` done
+except for the components reported as failed.

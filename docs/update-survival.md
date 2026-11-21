@@ -7,6 +7,27 @@ exceptions to the "only add drop-ins" rule (plan §5.2 rule 3). Code:
 `cmd/{apply,boot,boot-entry,notify,rauc-handler,update-policy}.sh`,
 `overlay/rauc/*.hook`, `overlay/systemd/*.service`.
 
+## Supported SteamOS channel
+
+Only the SteamOS **stable** channel is supported. Everything on this page
+is designed for, and tested against, the updates that channel delivers.
+The beta, preview and main channels move to new kernels and system
+versions before this project has seen them. On those channels an update
+can leave you with parts that no longer fit:
+
+- kernel patches that do not apply to the new kernel: the modules that need
+  them stay stock, the others are still built
+  ([partial builds](kernel-modules.md#partial-builds));
+- components that fail to apply: they are skipped, the others are applied,
+  and `status` and `state/last-apply.json` say which and why.
+
+Nothing is installed half-way to make something "fit", and nothing blocks
+the boot. But **no support is provided for channels other than stable**:
+if you switch to one of them, what stops working is yours to sort out, and
+going back to stable is the fix this project offers. Set
+`update-policy degrade` there, otherwise the default `block` policy holds
+back every update whose kernel only gets a partial module build.
+
 ## Read this first: `/var` is per slot, not shared
 
 The plan assumes `/var` is shared between slots. **It is not.** Stock
@@ -82,9 +103,9 @@ Steam: "update available"
        │         incoming kernel version?  ── unknown → let it through
        │         modules for it present?   ── yes → let it through
        │         rebuild --kver (if that command exists; failure cached per kver+commit)
-       │         still none → update-policy:
+       │         still none, or only a partial build → update-policy:
        │              block   → exit 1, RAUC aborts, state/update-blocked
-       │              degrade → exit 0, state/pending-rebuild
+       │              degrade → exit 0, state/pending-rebuild (none) / use the partial build
        │    2. chained stock pre-install handler (if system.conf had one)
        ├─ RAUC writes the new rootfs to the other slot
        └─ post-install = /var/lib/ally-x20-steamos/libexec/rauc-post-install.hook
@@ -101,7 +122,8 @@ Steam: "update available"
 reboot into the new slot
   └─ ally-x20-steamos.service  (system, before the display manager, ≤15 s)
        ally-x20-steamos.sh boot:
-         apply --missing-only     re-apply drifted components (files, RAUC block, boot entry)
+         apply --missing-only     re-apply drifted components (files, RAUC block, boot entry);
+                                  one that fails is skipped and recorded, never fatal
          modules for uname -r?    no → systemd-run a detached rebuild (next boot)
          probes → state/status.json
          summary → state/notify (consumes pending-reboot-check)
@@ -154,9 +176,18 @@ until `self-update` brings a new commit.
 - Something superseded by SteamOS: a notification; nothing is removed
   automatically (`uninstall --superseded`).
 
+- A component that could not be re-applied after the update: the
+  notification lists it as failed; `status` shows the reason. The other
+  components are re-applied as usual, and the next boot tries again.
+- A kernel some patches do not apply to (not the stable channel): `status`
+  shows `modules: partial` and lists which modules are patched and which
+  stay stock.
+
 `state/status.json` (written by `apply` and `boot`, via
 `status_write_json` in `lib/status.sh`) has the same information for
-scripts and the future Decky plugin.
+scripts and the future Decky plugin. `state/last-apply.json` records what
+the last `apply` or boot re-apply did to each component, with the reason
+for a failure ([architecture.md](architecture.md), "`state/last-apply.json`").
 
 ## Exception 1: the boot entry (`lib/slots.sh`, `boot-entry` command)
 

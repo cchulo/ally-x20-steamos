@@ -7,6 +7,19 @@ report a key, and fix use-after-free bugs when the driver's two interfaces
 unbind. They all produce one rebuilt module, `hid-asus-ally.ko`
 (see [`modules-hid.list`](modules-hid.list)).
 
+**Required and optional patches.** A line in `modules-hid.list` may have a
+fourth field. `0010` and `0011` have none, so they are required: without
+them there is no ring LED Steam can use, and the module is not built.
+`0012`–`0016` are `optional`: on a kernel one of them does not apply to, a
+local (partial) build leaves it out and still builds the module. `0015`
+has `needs=0012` (it changes how the key reported by `0012` is released)
+and `0016` has `needs=0011` (it extends the Aura code `0011` adds). This
+only affects builds on a device for kernels without a release artifact;
+release builds are strict and need every patch to apply. The rules are in
+[`docs/kernel-modules.md`](../../docs/kernel-modules.md#partial-builds).
+Without `0016` the `xbox-led` command and the `xboxled` component have
+nothing to write to; without `0012` the top-right button reports no key.
+
 ## Source tree: Valve's, not linux-stable
 
 `drivers/hid/hid-asus-ally.c` **is not in mainline or linux-stable**. In

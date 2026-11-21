@@ -51,6 +51,13 @@ staged or untracked files), self-update stops and lists them. It never
 runs `reset --hard`, `stash` or `clean`. Commit your change on a branch,
 move it elsewhere, or remove it, then retry.
 
+This also applies if you edited the patch set by hand to get a build on an
+unsupported kernel (moved patches aside, edited a `modules*.list`): put the
+files back first (`git status` lists them; `git restore <file>` and
+`git clean -n` show what would be undone before you run them). Since
+partial builds exist, that hand-editing should no longer be needed
+([kernel-modules.md](kernel-modules.md#partial-builds)).
+
 ## Kernel modules after an update
 
 After checking out the new release and running `apply`, self-update stages
@@ -138,7 +145,10 @@ stops the run, is not recorded, and is retried by the next self-update;
 ## Exit codes
 
 `0` updated or nothing to do; `1` refused or failed (message explains);
-`2` usage error; `3` origin unreachable (offline).
+`2` usage error; `3` origin unreachable (offline); `4` updated, but
+`apply` skipped one or more components that failed (the update itself went
+through and the modules were staged; see `status` and
+`state/last-apply.json`).
 
 ## Where the trusted keys come from
 

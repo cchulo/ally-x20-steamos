@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# Component chargelimit (docs/power.md, "Battery charge limit"): write the
-# battery charge limit in force again after a suspend/resume cycle (a 0
-# becomes 100). Units wanted by a sleep target and ordered after it start
-# once the system has resumed. TODO(hw): whether the embedded controller
-# drops the limit across s2idle is not measured; the write is harmless when
-# it does not.
+# Component chargelimit (docs/power.md, "Battery charge limit"): record the
+# battery charge limit in force and write it again after a suspend/resume
+# cycle. Units wanted by a sleep target and ordered after it start once the
+# system has resumed. TODO(hw): whether the embedded controller drops the
+# limit across s2idle, as it does across a power-off, is not measured; the
+# write is harmless when it does not.
 [Unit]
 Description=ally-x20-steamos: write the battery charge limit again after resume
 Documentation=file:///var/lib/ally-x20-steamos/src/docs/power.md

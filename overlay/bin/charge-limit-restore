@@ -1,49 +1,45 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
-# charge-limit-restore boot|watch|resume — keep the ROG Xbox Ally X20
-# charging to 100 % unless a charge limit was set on purpose.
+# charge-limit-restore boot|resume|save — keep the ROG Xbox Ally X20's
+# battery charge limit where the user put it.
 #
-# The quirk (measured on an X20, 2026-11-20). The battery charge limit is
-# /sys/class/power_supply/BAT*/charge_control_end_threshold (asus-wmi). The
-# driver starts every boot at 100. With Steam's charge limit off, Steam
-# writes 0 there when the session starts: on a Steam Deck 0 means "no
-# limit". The X20's firmware only takes 100 as "no limit"; any other value,
-# 0 included, switches the limit on, and with 0 the controller stops
-# charging at about 80 %. Written by hand on the charger: 100 -> 2.0 A,
-# 0 -> 0.6 A and falling within 20 s, 100 -> 1.9 A. So the battery stops at
-# 80 % while Steam shows no limit.
+# The embedded controller (EC) holds a charge limit of its own, typically
+# the 80 % that Armoury Crate's Battery Care stored under Windows. A limit
+# written from Linux (/sys/class/power_supply/BAT*/charge_control_end_threshold,
+# asus-wmi) works at once but is lost at power-off: the EC goes back to its
+# stored value, the kernel attribute reads 0 ("not written this boot"), and
+# Steam shows no limit while the battery stops at 80 %. Seen on an X20 on
+# 2026-11-18: 100 written, cold shutdown, charging stopped again above 80 %.
 #
-# What this does about it, per setting (/etc/ally-x20-steamos/
-# charge-limit.conf, written by `ally-x20-steamos charge-limit`):
+# So the limit has to be written at every boot. Which value:
 #   limit=follow (default, also with no settings file)
-#       a 0 in the attribute is replaced by 100. A real limit (1..100) set
-#       in Steam (Settings -> Power) or by hand is left alone, recorded in
-#       /var/lib/ally-x20-steamos/state/charge-limit, and written again at
-#       the next boot until Steam writes its own. Steam's setting wins.
+#       the last limit that was in force, whoever set it: Steam's charge
+#       limit (Settings -> Power, written through steamos-manager to the
+#       same attribute) or a write by hand. It is recorded by "save" (at
+#       shutdown) and "resume". Nothing recorded yet: 100.
 #   limit=<20..100>
-#       a 0 is replaced by this value, which is also written at boot and
-#       after resume; a limit set in Steam lasts until then.
+#       always this value; a change made in Steam lasts until the next boot.
 #   limit=off
 #       touch nothing.
+# Settings: /etc/ally-x20-steamos/charge-limit.conf, written by
+# `ally-x20-steamos charge-limit`. Record: /var/lib/ally-x20-steamos/state/
+# charge-limit (one number).
 #
 # Modes:
-#   boot    ExecStartPre of ally-x20-steamos-charge-limit.service, before
-#           the display manager: write the recorded limit (follow; 100 when
-#           none) or the fixed one. Waits up to CHARGE_LIMIT_WAIT seconds
-#           (default 10) for the attribute (asus-wmi may still be loading).
-#   watch   the same unit's main process: every CHARGE_LIMIT_POLL seconds
-#           (default 5) read the attribute; replace a 0, record a new limit.
-#           The read is a kernel variable, not a call to the controller. The
-#           settings file is read again on every round. Nothing announces a
-#           write to this attribute (no uevent, no inotify on sysfs), hence
-#           the polling.
+#   boot    ally-x20-steamos-charge-limit.service, before the display
+#           manager, so Steam reads the restored value when it starts.
+#           Waits up to CHARGE_LIMIT_WAIT seconds (default 10) for the
+#           attribute (asus-wmi may still be loading).
+#   save    the same unit's ExecStop (shutdown, reboot): record the limit in
+#           force. An attribute reading 0 was never written this boot and
+#           says nothing, so the record is kept.
 #   resume  ally-x20-steamos-charge-limit-resume.service after every sleep:
-#           write the limit in force again.
-#           TODO(hw): whether the controller drops the limit across s2idle
-#           is not measured; writing it again is harmless either way.
+#           record the limit in force and write it again.
+#           TODO(hw): whether the EC also drops the limit across s2idle is
+#           not measured; writing it again is harmless either way.
 #
-# POSIX sh. boot and resume never fail loudly: every problem is logged and
-# they exit 0, so neither boot nor resume is held up.
+# POSIX sh. Never fails loudly: every problem is logged and exits 0 so
+# systemd stays quiet and neither boot nor shutdown is held up.
 set -u
 
 AX20_NAME=ally-x20-steamos
@@ -53,9 +49,6 @@ STATE="$ROOT/var/lib/$AX20_NAME/state/charge-limit"
 SUPPLY="$ROOT/sys/class/power_supply"
 DRY=${CHARGE_LIMIT_DRY_RUN:-0}
 WAIT=${CHARGE_LIMIT_WAIT:-10}
-POLL=${CHARGE_LIMIT_POLL:-5}
-# Tests: stop the watch after this many rounds (empty: run until stopped).
-ROUNDS=${CHARGE_LIMIT_WATCH_ROUNDS:-}
 DEFAULT=100
 MODE=${1:-}
 
@@ -67,9 +60,9 @@ log() {
 }
 
 case "$MODE" in
-    boot | watch | resume) ;;
+    boot | resume | save) ;;
     *)
-        printf 'usage: %s boot|watch|resume\n' "$0" >&2
+        printf 'usage: %s boot|resume|save\n' "$0" >&2
         exit 0
         ;;
 esac
@@ -82,13 +75,10 @@ is_limit() {
     [ "$1" -le 100 ]
 }
 
-# read_setting : set $setting to follow | off | a number from 20 to 100.
-# Anything else counts as follow (reported once per value).
+# The setting: follow | off | a number from 20 to 100. Anything else counts
+# as follow.
 setting=follow
-bad_reported=""
-read_setting() {
-    setting=follow
-    [ -r "$CONF" ] || return 0
+if [ -r "$CONF" ]; then
     v=$(sed -n 's/^[[:space:]]*limit[[:space:]]*=[[:space:]]*//p' "$CONF" | tail -n 1 | tr -d '[:space:]')
     case "$v" in
         off) setting=off ;;
@@ -96,16 +86,15 @@ read_setting() {
         *)
             if is_limit "$v" && [ "$v" -ge 20 ]; then
                 setting=$v
-            elif [ "$bad_reported" != "$v" ]; then
-                bad_reported=$v
+            else
                 log "ignoring limit=$v in $CONF (expected follow, off or 20..100)"
             fi
             ;;
     esac
-}
+fi
+[ "$setting" != off ] || exit 0
 
 # find_attr : set $attr to the first battery's charge limit attribute.
-attr=""
 find_attr() {
     attr=""
     for f in "$SUPPLY"/BAT*/charge_control_end_threshold; do
@@ -114,19 +103,29 @@ find_attr() {
     [ -n "$attr" ]
 }
 
-# read_saved : set $saved to the recorded limit, or empty.
+attr=""
+if [ "$MODE" = boot ]; then
+    i=0
+    until find_attr || [ "$i" -ge "$WAIT" ] || [ "$DRY" = 1 ]; do
+        sleep 1
+        i=$((i + 1))
+    done
+fi
+if ! find_attr; then
+    [ "$MODE" = save ] || log "no battery with charge_control_end_threshold; nothing to do"
+    exit 0
+fi
+
+current=$(cat "$attr" 2>/dev/null || true)
 saved=""
-read_saved() {
-    saved=""
-    [ -r "$STATE" ] || return 0
+if [ -r "$STATE" ]; then
     saved=$(head -n 1 "$STATE" | tr -d '[:space:]')
     is_limit "$saved" || saved=""
-}
+fi
 
 # record <value> : remember the limit for the next boot (follow only).
 record() {
     [ "$setting" = follow ] || return 0
-    read_saved
     [ "$1" != "$saved" ] || return 0
     if [ "$DRY" = 1 ]; then
         printf '%s <- %s\n' "$STATE" "$1"
@@ -141,104 +140,48 @@ record() {
     fi
 }
 
-# put <value> <why> : write the attribute and log it. With QUIET=1 a failed
-# write is not reported again (the watch reports the first one only).
-QUIET=0
-put() {
-    if [ "$DRY" = 1 ]; then
-        printf '%s <- %s\n' "$attr" "$1"
-        return 0
-    fi
-    if printf '%s\n' "$1" >"$attr" 2>/dev/null; then
-        log "charge limit set to $1 % ($2)"
-    else
-        [ "$QUIET" = 1 ] || log "writing $1 to $attr failed; the controller keeps its own limit"
-        return 1
-    fi
-}
-
-# no_limit : the value that stands for "no limit set": 100, or the fixed one.
-no_limit() {
-    if [ "$setting" = follow ]; then
-        printf '%s\n' "$DEFAULT"
-    else
-        printf '%s\n' "$setting"
-    fi
-}
-
-# settle : one look at the attribute. A 0 is replaced; a real limit is
-# recorded. Returns 1 when a needed write failed.
-settle() {
-    current=$(cat "$attr" 2>/dev/null || true)
-    if [ "$current" = 0 ]; then
-        want=$(no_limit)
-        put "$want" "the attribute read 0, which this firmware takes as a limit of about 80 %, not as no limit" || return 1
-        record "$want"
-    elif is_limit "$current"; then
-        record "$current"
-    fi
-    return 0
-}
-
-read_setting
-if [ "$MODE" != watch ] && [ "$setting" = off ]; then
-    exit 0
-fi
-
-if [ "$MODE" = boot ]; then
-    i=0
-    until find_attr || [ "$i" -ge "$WAIT" ] || [ "$DRY" = 1 ]; do
-        sleep 1
-        i=$((i + 1))
-    done
-fi
-if ! find_attr; then
-    log "no battery with charge_control_end_threshold; nothing to do"
-    exit 0
-fi
-
+# Which value to write, and why (for the log).
 case "$MODE" in
-    boot)
-        current=$(cat "$attr" 2>/dev/null || true)
-        read_saved
-        if [ "$setting" != follow ]; then
-            put "$setting" "boot: limit=$setting in ${CONF#"$ROOT"}; the attribute read ${current:-nothing}" || true
-        elif [ -n "$saved" ]; then
-            put "$saved" "boot: the limit recorded earlier; the attribute read ${current:-nothing}" || true
-        else
-            put "$DEFAULT" "boot: no limit recorded, default; the attribute read ${current:-nothing}" || true
-        fi
+    save)
+        # 0 = never written this boot: no information.
+        if is_limit "$current"; then record "$current"; fi
+        exit 0
         ;;
     resume)
-        current=$(cat "$attr" 2>/dev/null || true)
         if [ "$setting" != follow ]; then
-            put "$setting" "resume: limit=$setting in ${CONF#"$ROOT"}" || true
+            want=$setting
+            why="limit=$setting in ${CONF#"$ROOT"}"
         elif is_limit "$current"; then
             record "$current"
-            put "$current" "resume: the limit in force before the sleep" || true
+            want=$current
+            why="the limit in force before the sleep"
         else
-            settle || true
+            want=${saved:-$DEFAULT}
+            why=${saved:+"the limit recorded earlier"}
+            why=${why:-"no limit recorded, default"}
         fi
         ;;
-    watch)
-        n=0
-        while :; do
-            read_setting
-            if [ "$setting" != off ] && find_attr; then
-                # Do not fill the journal: a failing write is reported
-                # once, then not again until a write has worked.
-                if settle; then
-                    QUIET=0
-                else
-                    QUIET=1
-                fi
-            fi
-            n=$((n + 1))
-            if [ -n "$ROUNDS" ] && [ "$n" -ge "$ROUNDS" ]; then
-                break
-            fi
-            sleep "$POLL"
-        done
+    boot)
+        if [ "$setting" != follow ]; then
+            want=$setting
+            why="limit=$setting in ${CONF#"$ROOT"}"
+        elif [ -n "$saved" ]; then
+            want=$saved
+            why="the limit recorded earlier"
+        else
+            want=$DEFAULT
+            why="no limit recorded, default"
+        fi
         ;;
 esac
+
+if [ "$DRY" = 1 ]; then
+    printf '%s <- %s\n' "$attr" "$want"
+    exit 0
+fi
+if printf '%s\n' "$want" >"$attr" 2>/dev/null; then
+    log "charge limit set to $want % after $MODE ($why; the attribute read ${current:-nothing} before)"
+else
+    log "writing $want to $attr failed; the controller keeps its own limit"
+fi
 exit 0

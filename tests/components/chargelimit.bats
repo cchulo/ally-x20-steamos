@@ -2,11 +2,10 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # components/chargelimit.sh, overlay/bin/charge-limit-restore and
 # `charge-limit` against fixture roots: the helper and two units are
-# installed under /etc; the helper replaces a 0 in the battery's
-# charge_control_end_threshold (Steam's "no limit", which this firmware
-# takes as about 80 %) by 100, leaves a real limit alone and records it,
-# and writes the recorded limit at boot and after resume; or uses a fixed
-# limit from /etc/ally-x20-steamos/charge-limit.conf.
+# installed under /etc; the helper writes the battery's
+# charge_control_end_threshold at boot and after resume with the limit last
+# in force (recorded at shutdown and after resume), 100 when none was
+# recorded, or a fixed limit from /etc/ally-x20-steamos/charge-limit.conf.
 load '../test_helper'
 
 HELPER=/etc/ally-x20-steamos/charge-limit-restore
@@ -26,12 +25,12 @@ setup() {
 }
 
 # battery <value> : a battery whose charge limit attribute reads <value>
-# (0 = Steam's "no limit").
+# (0 = not written this boot).
 battery() { fixture_file "$ATTR" "$1
 "; }
 
 # helper <mode> : run the helper against the fixture root.
-helper() { AX20_ROOT="$AX20_ROOT" CHARGE_LIMIT_WAIT=0 CHARGE_LIMIT_POLL=0 CHARGE_LIMIT_WATCH_ROUNDS="${ROUNDS:-1}" "$OVL/bin/charge-limit-restore" "$@"; }
+helper() { AX20_ROOT="$AX20_ROOT" CHARGE_LIMIT_WAIT=0 "$OVL/bin/charge-limit-restore" "$@"; }
 
 attr() { cat "$AX20_ROOT$ATTR"; }
 recorded() { cat "$AX20_ROOT$STATE"; }
@@ -52,7 +51,7 @@ tree_listing() { (cd "$AX20_ROOT" && find . -path ./var/lib/ally-x20-steamos -pr
     [ "$output" = "$(printf 'bin/charge-limit-restore\t%s\t0755\nsystemd/ally-x20-steamos-charge-limit.service\t%s\t0644\nsystemd/ally-x20-steamos-charge-limit-resume.service\t%s\t0644' "$HELPER" "$UNIT" "$RESUME_UNIT")" ]
 }
 
-@test "probe: always needed (stock does not treat a 0 differently on this device)" {
+@test "probe: always needed (stock writes the limit only when it is changed in Steam)" {
     run component_probe chargelimit
     [ "$status" -eq 1 ]
 }
@@ -104,12 +103,12 @@ systemctl restart ally-x20-steamos-charge-limit.service" ]
     [ "$(tree_listing)" = "$before" ]
 }
 
-@test "boot unit: writes the limit before the display manager, then watches the attribute" {
+@test "boot unit: a oneshot before the display manager that restores at start and records at stop" {
     u="$OVL/systemd/ally-x20-steamos-charge-limit.service"
-    grep -qx 'Type=simple' "$u"
-    grep -qx "ExecStartPre=$HELPER boot" "$u"
-    grep -qx "ExecStart=$HELPER watch" "$u"
-    grep -qx 'Restart=on-failure' "$u"
+    grep -qx 'Type=oneshot' "$u"
+    grep -qx 'RemainAfterExit=yes' "$u"
+    grep -qx "ExecStart=$HELPER boot" "$u"
+    grep -qx "ExecStop=$HELPER save" "$u"
     grep -qx 'After=local-fs.target' "$u"
     grep -qx 'Before=display-manager.service' "$u"
     grep -qx "ConditionPathExists=$HELPER" "$u"
@@ -129,80 +128,52 @@ systemctl restart ally-x20-steamos-charge-limit.service" ]
 }
 
 @test "helper boot: nothing recorded, writes 100" {
-    battery 100
+    battery 0
     run helper boot
     assert_success
     [ "$(attr)" = 100 ]
-    assert_output_contains 'charge limit set to 100 % (boot: no limit recorded, default; the attribute read 100)'
+    assert_output_contains 'charge limit set to 100 % after boot (no limit recorded, default'
 }
 
-@test "helper boot: writes the limit recorded earlier" {
-    fixture_file "$STATE" '80
-'
-    battery 100
+@test "helper save: records the limit Steam set; the next boot writes it back" {
+    battery 80
+    run helper save
+    assert_success
+    [ "$(recorded)" = 80 ]
+    battery 0
     run helper boot
     assert_success
     [ "$(attr)" = 80 ]
-    assert_output_contains 'boot: the limit recorded earlier'
+    assert_output_contains 'the limit recorded earlier'
 }
 
-@test "helper watch: a 0 written by Steam (no limit) becomes 100 and is recorded" {
-    fixture_file "$STATE" '90
+@test "helper save: an attribute reading 0 (never written this boot) keeps the record" {
+    fixture_file "$STATE" '70
 '
     battery 0
-    run helper watch
+    run helper save
     assert_success
-    [ "$(attr)" = 100 ]
-    [ "$(recorded)" = 100 ]
-    assert_output_contains 'the attribute read 0, which this firmware takes as a limit of about 80 %'
+    [ "$(recorded)" = 70 ]
+    [ "$(attr)" = 0 ]
 }
 
-@test "helper watch: a limit set in Steam is left alone and recorded" {
-    battery 85
-    run helper watch
-    assert_success
-    [ "$(attr)" = 85 ]
-    [ "$(recorded)" = 85 ]
-}
-
-@test "helper watch: nothing to do, nothing logged or written" {
-    fixture_file "$STATE" '100
+@test "helper save: the limit switched off in Steam (100) replaces an older record" {
+    fixture_file "$STATE" '80
 '
     battery 100
-    ROUNDS=3 run helper watch
-    assert_success
-    [ -z "$output" ]
-    [ "$(attr)" = 100 ]
+    helper save
+    [ "$(recorded)" = 100 ]
 }
 
-@test "helper watch: reads the settings again on every round" {
-    battery 0
-    fixture_file "$CONF" 'limit=off
+@test "helper save never writes the attribute" {
+    fixture_file "$STATE" '80
 '
-    run helper watch
-    [ "$(attr)" = 0 ]
-    fixture_file "$CONF" 'limit=follow
-'
-    run helper watch
-    [ "$(attr)" = 100 ]
+    battery 60
+    helper save
+    [ "$(attr)" = 60 ]
 }
 
-@test "helper watch: a failing write is reported once, not on every round" {
-    [ "$(id -u)" != 0 ] || skip "root ignores file modes"
-    battery 0
-    chmod 0444 "$AX20_ROOT$ATTR"
-    ROUNDS=4 run helper watch
-    assert_success
-    [ "$(printf '%s\n' "$output" | grep -c 'failed; the controller keeps its own limit')" = 1 ]
-}
-
-@test "helper watch: no battery attribute, exits with a note" {
-    run helper watch
-    assert_success
-    assert_output_contains 'no battery with charge_control_end_threshold'
-}
-
-@test "helper resume: writes the limit in force again and records it" {
+@test "helper resume: records the limit in force and writes it again" {
     fixture_file "$STATE" '100
 '
     battery 85
@@ -210,42 +181,41 @@ systemctl restart ally-x20-steamos-charge-limit.service" ]
     assert_success
     [ "$(recorded)" = 85 ]
     [ "$(attr)" = 85 ]
-    assert_output_contains 'resume: the limit in force before the sleep'
+    assert_output_contains 'the limit in force before the sleep'
 }
 
-@test "helper resume: a 0 becomes 100" {
+@test "helper resume: attribute reads 0, falls back to the record, then to 100" {
+    battery 0
+    helper resume
+    [ "$(attr)" = 100 ]
     fixture_file "$STATE" '75
 '
     battery 0
     helper resume
-    [ "$(attr)" = 100 ]
-    [ "$(recorded)" = 100 ]
+    [ "$(attr)" = 75 ]
 }
 
-@test "helper: limit=<n> replaces a 0 by n, is written at boot and resume, and leaves the record alone" {
+@test "helper: limit=<n> always wins and leaves the record alone" {
     fixture_file "$CONF" 'limit=90
 '
     fixture_file "$STATE" '80
 '
-    battery 0
-    helper watch
-    [ "$(attr)" = 90 ]
     battery 60
-    helper watch
-    [ "$(attr)" = 60 ]
+    helper save
+    [ "$(recorded)" = 80 ]
     helper resume
     [ "$(attr)" = 90 ]
-    battery 100
+    [ "$(recorded)" = 80 ]
+    battery 0
     helper boot
     [ "$(attr)" = 90 ]
-    [ "$(recorded)" = 80 ]
 }
 
 @test "helper: limit=off touches neither the attribute nor the record" {
     fixture_file "$CONF" 'limit=off
 '
     battery 0
-    for m in boot resume watch; do
+    for m in boot resume save; do
         run helper "$m"
         assert_success
         [ -z "$output" ]
@@ -258,7 +228,7 @@ systemctl restart ally-x20-steamos-charge-limit.service" ]
     for bad in 19 101 abc 080 -5; do
         fixture_file "$CONF" "limit=$bad
 "
-        battery 100
+        battery 0
         run helper boot
         assert_success
         assert_output_contains "ignoring limit=$bad"
@@ -270,24 +240,25 @@ systemctl restart ally-x20-steamos-charge-limit.service" ]
     for bad in 0 101 x ''; do
         fixture_file "$STATE" "$bad
 "
-        battery 100
+        battery 0
         helper boot
         [ "$(attr)" = 100 ]
     done
 }
 
-@test "helper: no battery attribute, exit 0 with a note" {
-    for m in boot resume; do
-        run helper "$m"
-        assert_success
-        assert_output_contains 'no battery with charge_control_end_threshold'
-    done
+@test "helper: no battery attribute, exit 0 with a note (silent for save)" {
+    run helper boot
+    assert_success
+    assert_output_contains 'no battery with charge_control_end_threshold'
+    run helper save
+    assert_success
+    [ -z "$output" ]
 }
 
 @test "helper: a write the kernel refuses is logged, exit 0" {
-    [ "$(id -u)" != 0 ] || skip "root ignores file modes"
-    battery 100
+    battery 0
     chmod 0444 "$AX20_ROOT$ATTR"
+    [ "$(id -u)" != 0 ] || skip "root ignores file modes"
     run helper boot
     assert_success
     assert_output_contains 'failed; the controller keeps its own limit'
@@ -295,9 +266,9 @@ systemctl restart ally-x20-steamos-charge-limit.service" ]
 
 @test "helper: dry run prints the write and changes nothing" {
     battery 0
-    CHARGE_LIMIT_DRY_RUN=1 run helper watch
+    CHARGE_LIMIT_DRY_RUN=1 run helper boot
     assert_success
-    assert_output_contains "$AX20_ROOT$ATTR <- 100"
+    [ "$output" = "$AX20_ROOT$ATTR <- 100" ]
     [ "$(attr)" = 0 ]
 }
 
@@ -325,14 +296,14 @@ systemctl restart ally-x20-steamos-charge-limit.service" ]
 '
     run "$CLI" --root "$AX20_ROOT" charge-limit status
     assert_output_contains 'recorded=80%'
-    assert_output_contains 'in_force=about 80% (the attribute reads 0'
+    assert_output_contains "in_force=the controller's own stored limit"
     battery 80
     run "$CLI" --root "$AX20_ROOT" charge-limit status
     assert_output_contains 'in_force=80%'
 }
 
 @test "charge-limit <n>: writes the settings file as a manifest entry and the limit at once" {
-    battery 100
+    battery 0
     "$CLI" --root "$AX20_ROOT" apply --only chargelimit 2>/dev/null
     run "$CLI" --root "$AX20_ROOT" charge-limit 85
     assert_success

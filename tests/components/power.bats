@@ -428,7 +428,7 @@ PY
     assert_output_contains 'charge_limit=n/a'
     fixture_file /sys/class/power_supply/BAT1/charge_control_end_threshold '0'
     run power_probe_details
-    assert_output_contains 'charge_limit=0 (Steam wrote "no limit"; this firmware stops charging at about 80%)'
+    assert_output_contains 'charge_limit=0 (not written this boot; the EC may still hold an older limit)'
     fixture_file /sys/class/power_supply/BAT1/charge_control_end_threshold '80'
     run power_probe_details
     assert_output_contains 'charge_limit=80%'

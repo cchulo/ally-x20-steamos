@@ -14,7 +14,8 @@ usage: x20-surround COMMAND
   conf PROFILE --device D   print the PipeWire config a profile would use
 
 A profile is "stereo" (no filter: the hardware output as it is), one of the
-shipped head-related impulse response sets, or "user": the first .wav file,
+shipped head-related impulse response sets (each as "-dry" and "-full"), or
+"user": the first .wav file,
 in lexical order, in ~/.config/ally-x20-steamos/surround-user/. A "user"
 profile without a usable file falls back to the output's default.
 
@@ -54,8 +55,17 @@ BUILTIN = {
     "hutubs-pp1-dry": ("hutubs-pp1-dry.wav", -1.69, "FABIAN mannequin, HUTUBS subject pp1 (TU Berlin)"),
     "mit-kemar-dry": ("mit-kemar-dry.wav", -5.03, "KEMAR mannequin, normal ears (MIT)"),
     "mit-kemar-large-dry": ("mit-kemar-large-dry.wav", -6.70, "KEMAR mannequin, large ears (MIT)"),
+    "sadie-d2-full": ("sadie-d2-full.wav", -0.85, "KEMAR mannequin, SADIE II (University of York)"),
+    "hutubs-pp1-full": ("hutubs-pp1-full.wav", -1.52, "FABIAN mannequin, HUTUBS subject pp1 (TU Berlin)"),
+    "mit-kemar-full": ("mit-kemar-full.wav", -4.67, "KEMAR mannequin, normal ears (MIT)"),
+    "mit-kemar-large-full": ("mit-kemar-large-full.wav", -6.42, "KEMAR mannequin, large ears (MIT)"),
 }
-PROFILES = (STEREO, "mit-kemar-dry", "mit-kemar-large-dry", "hutubs-pp1-dry", "sadie-d2-dry", USER)
+# "-dry": front left, front right and centre pass through unfiltered, only
+# the sides and rears are processed. "-full": every channel is processed.
+PROFILES = (STEREO,
+            "sadie-d2-dry", "hutubs-pp1-dry", "mit-kemar-dry", "mit-kemar-large-dry",
+            "sadie-d2-full", "hutubs-pp1-full", "mit-kemar-full", "mit-kemar-large-full",
+            USER)
 DEFAULT = {"headphones": "sadie-d2-dry", "speakers": STEREO}
 
 # The sink's channel order, and the HeSuVi order of the 14 channels in the
@@ -527,15 +537,18 @@ def describe(profile):
         return "no filter: the output as it is"
     if profile == USER:
         return "your own 14-channel 48 kHz HeSuVi file"
-    return BUILTIN[profile][2]
+    form = "fronts unfiltered" if profile.endswith("-dry") else "every channel filtered"
+    return "%s; %s" % (BUILTIN[profile][2], form)
 
 
 def cmd_list(args, paths):
     for profile in PROFILES:
         marks = [d for d in DEVICES if DEFAULT[d] == profile]
-        print("%-20s %s%s" % (profile, describe(profile),
+        print("%-21s %s%s" % (profile, describe(profile),
                               "  (default for %s)" % " and ".join(marks) if marks else ""))
     print("")
+    print("-dry: stereo material sounds as without the filter. -full: sounds are easier")
+    print("to place, and everything is coloured by the filter.")
     print("user: the first .wav in lexical order in %s" % paths.user_dir)
     return 0
 

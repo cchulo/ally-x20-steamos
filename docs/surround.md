@@ -20,10 +20,10 @@ X20 yet; the open points are in [Needs the device](#needs-the-device-todohw).
 | Profile | What it is |
 |---|---|
 | `stereo` | no filter: the output as stock SteamOS has it |
-| `sadie-d2-dry` | KEMAR mannequin, SADIE II database (default for headphones) |
-| `hutubs-pp1-dry` | FABIAN head and torso simulator, HUTUBS database, subject pp1 |
-| `mit-kemar-dry` | KEMAR mannequin with normal ears, MIT |
-| `mit-kemar-large-dry` | the same mannequin with large ears |
+| `sadie-d2-dry`, `sadie-d2-full` | KEMAR mannequin, SADIE II database (`-dry` is the default for headphones) |
+| `hutubs-pp1-dry`, `hutubs-pp1-full` | FABIAN head and torso simulator, HUTUBS database, subject pp1 |
+| `mit-kemar-dry`, `mit-kemar-full` | KEMAR mannequin with normal ears, MIT |
+| `mit-kemar-large-dry`, `mit-kemar-large-full` | the same mannequin with large ears |
 | `user` | your own file (below) |
 
 Each shipped profile is a set of head-related impulse responses: how sound
@@ -31,10 +31,17 @@ from seven directions reaches the two ears of one head. All four heads are
 acoustic mannequins, not people. Ears differ, so try them; the one that
 comes closest to your ears places sounds best.
 
-"Dry" means the front left, front right and centre channels pass through
-unfiltered and only the side and rear channels are processed. Stereo
-material, which uses only the front channels, therefore sounds as it does
-without the component.
+Every head comes in two forms:
+
+| Form | Front left, front right, centre | Sides and rears | In the listening tests |
+|---|---|---|---|
+| `-dry` | unfiltered, as in plain stereo | filtered | preferred over stereo in games; sounds a little easier to place than in stereo |
+| `-full` | filtered, like speakers in front of you | filtered | sounds far easier to place; stereo was preferred for its tone |
+
+With `-dry`, stereo material, which uses only the front channels, sounds as
+it does without the component. With `-full`, everything is coloured by the
+filter. `-dry` is the default because it was the listener's preference;
+`-full` is there for those who want the sharper positioning.
 
 Sources, licences and what was changed: `overlay/surround/NOTICE.md`
 (installed next to the files).
@@ -70,6 +77,13 @@ ally-x20-steamos surround set user
 
 - The file name does not matter. With several files the first in lexical
   order is used.
+- This is how to use a Dolby Atmos for Headphones profile, or any other
+  HeSuVi impulse response: such files are not shipped because they are not
+  ours to redistribute. The owner's Atmos file came from the HRIR collection
+  at <https://airtable.com/appayGNkn3nSuXkaz/shruimhjdSakUPg2m/tbloLjoZKWJDnLtTc>
+  (the 14-channel 48 kHz `.wav` of the Atmos entry) and was used as it is.
+  In the listening tests it was preferred over stereo in both game
+  comparisons it was part of; nothing more was measured for it.
 - It must be a 14-channel, 48 kHz impulse response set in the HeSuVi channel
   order (PCM 16/24/32-bit or 32-bit float), at most one second long.
 - With no file, or a file that is not usable, the output's default is used
@@ -125,10 +139,11 @@ test rig (pull request #70, 2026-11-20, one listener):
 | fronts unfiltered ("dry") | a little better (54 to 62 %) | 10 of 12 comparisons |
 
 The full forms located sounds best but changed the tone of everything, and
-lost against stereo on music 0 to 3. The dry forms were preferred, so only
-dry forms ship. `sadie-d2-dry` is the owner's pick. The project's pass rule
-for the rig (better than stereo at locating sounds and not worse in tone,
-on two different days) was not completed; this is a choice by ear.
+lost against stereo on music 0 to 3. The dry forms were preferred, so a dry
+form is the default; the full forms ship as an option. `sadie-d2-dry` is the
+owner's pick. The project's pass rule for the rig (better than stereo at
+locating sounds and not worse in tone, on two different days) was not
+completed; this is a choice by ear.
 
 ## Checking and debugging
 

@@ -1,6 +1,6 @@
 # Head-related impulse response sets shipped by component `surround`
 
-The four files in `hrir/` are 14-channel, 48 kHz impulse response sets in the
+The eight files in `hrir/` are 14-channel, 48 kHz impulse response sets in the
 HeSuVi channel layout. They are derived from published measurements and stay
 under the licences of those measurements, not under the GPL-2.0-only licence
 of the rest of ally-x20-steamos.
@@ -11,6 +11,10 @@ of the rest of ally-x20-steamos.
 | `hutubs-pp1-dry.wav` | `c564d819b4725b4c4c536d690d008d783932fe704d7b532663f9963c0c45ead1` | HUTUBS database, subject pp1, measured | CC BY 4.0, https://creativecommons.org/licenses/by/4.0/ |
 | `mit-kemar-dry.wav` | `0fd292d7061f5861342223034ce56b0897aba2ee2589d9651c884607ffdf59f7` | MIT KEMAR, normal pinna | no usage restrictions; citation requested |
 | `mit-kemar-large-dry.wav` | `b7d6d1694061f3389029298b8574558681a6a7152f7ffaaabd5004016c889768` | MIT KEMAR, large pinna | no usage restrictions; citation requested |
+| `sadie-d2-full.wav` | `7a09372ea5c0e3075bb1fe1839829b4823d3cff225c3b4693f7e99217e0d9ee0` | SADIE II database, subject D2 (KEMAR mannequin) | Apache-2.0 (`LICENSE.Apache-2.0`) |
+| `hutubs-pp1-full.wav` | `1d4139ce0c721b155a2132c1ea0592862b3ed5b525e9cfbdb4ea3e2b08966ef3` | HUTUBS database, subject pp1, measured | CC BY 4.0, https://creativecommons.org/licenses/by/4.0/ |
+| `mit-kemar-full.wav` | `8b178beea3ef43a053f69d0a9333b2122bfb00f41c28b42c3276a516989a39d8` | MIT KEMAR, normal pinna | no usage restrictions; citation requested |
+| `mit-kemar-large-full.wav` | `e902876f4c7b40755379a16d50f3f32ba0bc2374af5b013b65b64fe3928fa381` | MIT KEMAR, large pinna | no usage restrictions; citation requested |
 
 ## Attribution
 
@@ -48,11 +52,12 @@ The files are not the original data. For each set:
    right at 30 degrees, centre at 0, sides at 90, rears at 150. The MIT sets
    were resampled to 48 kHz.
 2. They were written in the HeSuVi channel order, with one common gain.
-3. The front left, front right and centre responses were replaced by plain
-   delayed impulses ("dry fronts"): front left to the left ear only, front
-   right to the right ear only, the centre to both. The impulses sit where
-   the original front responses began and are as loud as those were. The
-   side and rear responses are unchanged.
+3. In the `-dry` files only, the front left, front right and centre
+   responses were replaced by plain delayed impulses ("dry fronts"): front
+   left to the left ear only, front right to the right ear only, the centre
+   to both. The impulses sit where the original front responses began and
+   are as loud as those were. The side and rear responses are unchanged. The
+   `-full` files keep all seven measured responses.
 
 They were produced with `tools/surround-test` of this project (pull request
 #70: `fetch-sofa.sh`, `render_sofa.py`, `hrir_tool.py dry`), which pins the

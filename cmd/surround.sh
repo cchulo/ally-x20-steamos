@@ -20,8 +20,9 @@ usage: $AX20_NAME surround <command>
               takes effect within a few seconds and is kept across reboots
               and SteamOS updates
 
-Profiles: stereo (no filter), sadie-d2-dry (default for headphones),
-hutubs-pp1-dry, mit-kemar-dry, mit-kemar-large-dry, and user: the first
+Profiles: stereo (no filter); sadie-d2, hutubs-pp1, mit-kemar and
+mit-kemar-large, each as -dry (fronts unfiltered; sadie-d2-dry is the
+default for headphones) and -full (every channel filtered); and user: the first
 .wav file, in lexical order, in ~/.config/$AX20_NAME/surround-user/ (a
 14-channel 48 kHz HeSuVi file). The speakers default to stereo.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # SPDX-License-Identifier: GPL-2.0-only
 # components/surround.sh and the `surround` command against fixture roots:
-# the helper, the four impulse response sets with their notice and licence,
+# the helper, the eight impulse response sets with their notice and licence,
 # and the user unit are installed under /etc; the command passes status,
 # list and set to the helper, which keeps the choice in the user's
 # ~/.config. The helper's own logic is in tests/surround/.
@@ -12,7 +12,7 @@ HELPER=$DIR/x20-surround
 UNIT=/etc/systemd/user/ally-x20-steamos-surround.service
 LINK=/etc/systemd/user/default.target.wants/ally-x20-steamos-surround.service
 OVL="$REPO_ROOT/overlay"
-SETS="sadie-d2-dry hutubs-pp1-dry mit-kemar-dry mit-kemar-large-dry"
+SETS="sadie-d2-dry hutubs-pp1-dry mit-kemar-dry mit-kemar-large-dry sadie-d2-full hutubs-pp1-full mit-kemar-full mit-kemar-large-full"
 
 setup() {
     make_root >/dev/null
@@ -40,7 +40,7 @@ stubs() {
 
 tree_listing() { (cd "$AX20_ROOT" && find . -path ./var/lib/ally-x20-steamos -prune -o -print | sort); }
 
-@test "files: helper, four sets, notice, licence, user unit" {
+@test "files: helper, eight sets, notice, licence, user unit" {
     run component_files surround
     assert_success
     assert_output_contains "$(printf 'bin/x20-surround.py\t%s\t0755' "$HELPER")"
@@ -50,7 +50,7 @@ tree_listing() { (cd "$AX20_ROOT" && find . -path ./var/lib/ally-x20-steamos -pr
     assert_output_contains "$(printf 'surround/NOTICE.md\t%s/NOTICE.md\t0644' "$DIR")"
     assert_output_contains "$(printf 'surround/LICENSE.Apache-2.0\t%s/LICENSE.Apache-2.0\t0644' "$DIR")"
     assert_output_contains "$(printf 'systemd/ally-x20-steamos-surround.service\t%s\t0644' "$UNIT")"
-    [ "$(printf '%s\n' "$output" | wc -l)" -eq 8 ]
+    [ "$(printf '%s\n' "$output" | wc -l)" -eq 12 ]
 }
 
 @test "the overlay ships exactly the sets the component installs" {

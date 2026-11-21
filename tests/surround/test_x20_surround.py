@@ -87,6 +87,8 @@ def test_every_builtin_profile_ships_a_valid_file_and_is_selectable(paths):
         frames, _, _ = sur.check_hrir(os.path.join(paths.hrir, filename))
         assert 0 < frames <= 1024 and -12 < trim < 3
     assert sur.DEFAULT == {"headphones": "sadie-d2-dry", "speakers": "stereo"}
+    heads = {n.rsplit("-", 1)[0] for n in sur.BUILTIN}
+    assert set(sur.BUILTIN) == {h + f for h in heads for f in ("-dry", "-full")} and len(heads) == 4
 
 
 def test_notice_lists_every_shipped_file_with_its_checksum():
@@ -340,7 +342,8 @@ def test_status_and_list(paths, monkeypatch):
     assert "headphones sadie-d2-dry  (sadie-d2-dry.wav, trim -1.10 dB)  [in use]" in out
     assert "speakers   stereo" in out and "running: Headphones (7.1 surround)" in out
     rc, out, _ = run(["list"], paths)
-    assert [line.split()[0] for line in out.splitlines()[:6]] == list(sur.PROFILES)
+    assert [line.split()[0] for line in out.splitlines()[:10]] == list(sur.PROFILES)
+    assert "sadie-d2-full" in out and "every channel filtered" in out
     assert "(default for headphones)" in out and "(default for speakers)" in out
 
 

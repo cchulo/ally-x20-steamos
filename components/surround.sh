@@ -10,7 +10,8 @@
 # Files:
 #   /etc/ally-x20-steamos/surround/x20-surround      the helper (overlay/bin,
 #                                                    python3, stdlib only)
-#   /etc/ally-x20-steamos/surround/hrir/*.wav        the four shipped sets
+#   /etc/ally-x20-steamos/surround/hrir/*.wav        the shipped sets (four heads,
+#                                                    each dry and full)
 #   /etc/ally-x20-steamos/surround/NOTICE.md, LICENSE.Apache-2.0
 #                                                    their sources and
 #                                                    licences
@@ -35,7 +36,7 @@ SURROUND_DIR_REL="${AX20_EARLY_REL}/surround"
 SURROUND_HELPER_REL="${SURROUND_DIR_REL}/x20-surround"
 SURROUND_UNIT="${AX20_NAME}-surround.service"
 SURROUND_UNIT_REL="/etc/systemd/user/${SURROUND_UNIT}"
-SURROUND_HRIRS="sadie-d2-dry hutubs-pp1-dry mit-kemar-dry mit-kemar-large-dry"
+SURROUND_HRIRS="sadie-d2-dry hutubs-pp1-dry mit-kemar-dry mit-kemar-large-dry sadie-d2-full hutubs-pp1-full mit-kemar-full mit-kemar-large-full"
 export SURROUND_DIR_REL SURROUND_HELPER_REL SURROUND_UNIT SURROUND_UNIT_REL SURROUND_HRIRS
 
 surround_files() {

@@ -17,6 +17,7 @@ PYTEST := $(shell command -v pytest 2>/dev/null || echo python3 -m pytest)
 
 test-python:
 	$(PYTEST) -q acpi/tests tests/surround
+	$(PYTEST) -q tools/surround-test/tests
 
 fmt:
 	shfmt -w -i 4 -ci -bn $$(git ls-files '*.sh' '*.bash' 'cmd/*' 'lib/*' 'scripts/*' 2>/dev/null | grep -v '\.bats$$')

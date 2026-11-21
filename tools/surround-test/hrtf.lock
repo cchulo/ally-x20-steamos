@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# ally-x20-steamos, tools/surround-test: HRTF (SOFA) sets for the blind test.
+#
+# Same format as the lock file of the removed audio_dsp component
+# (899ba9b:overlay/home/hrtf/hrtf.lock). The .sofa files are never committed;
+# fetch-sofa.sh downloads them and verifies the SHA-256 below. The licence of
+# every set was read from the file's own `License` attribute on 2026-11-18.
+#
+# Line formats (whitespace separated, one record per line):
+#   set <name> <sha256> <size-bytes> <license> <url>
+#   attribution <name> <free text...>
+
+set mit-kemar e7035994f5fd754058424c061380ee92b1d5ed58fccef2887a4266916616acdf 1171764 LicenseRef-MIT-KEMAR https://sofacoustics.org/data/database/mit/mit_kemar_normal_pinna.sofa
+attribution mit-kemar MIT Media Lab KEMAR HRTF measurements (normal pinna), B. Gardner and K. Martin, "HRTF Measurements of a KEMAR", J. Acoust. Soc. Am. 97(6), 1995. "Provided without any usage restrictions; please cite Gardner and Martin (1995)." SOFA conversion by ARI (sofacoustics.org).
+
+set mit-kemar-large 93a6f4e1a21fb2f16162fbe49508c35e5ddbcc60acfe7e3c4aa2847364d066d7 1161691 LicenseRef-MIT-KEMAR https://sofacoustics.org/data/database/mit/mit_kemar_large_pinna.sofa
+attribution mit-kemar-large MIT Media Lab KEMAR HRTF measurements (large pinna), B. Gardner and K. Martin, "HRTF Measurements of a KEMAR", J. Acoust. Soc. Am. 97(6), 1995. "Provided without any usage restrictions; please cite Gardner and Martin (1995)." SOFA conversion by ARI (sofacoustics.org).
+
+set hutubs-pp1 f626d335c590db687608fff5992972725230d594067b2e6906893bddc85e5173 1659720 CC-BY-4.0 https://sofacoustics.org/data/database/hutubs/pp1_HRIRs_measured.sofa
+attribution hutubs-pp1 HUTUBS head-related transfer function database, subject pp1 (measured), Audio Communication Group, TU Berlin; HUAWEI Munich Research Center; Sennheiser. F. Brinkmann et al., "A cross-evaluated database of measured and simulated HRTFs including 3D head meshes, anthropometric features, and headphone impulse responses", J. Audio Eng. Soc. 67(9), 2019. Licensed CC BY 4.0.
+
+set cipic-003 a9db5f938ed1113b118dcbeb43f5fe1b27b9e191d1bbdb63fbc4803b6959b220 1837391 LicenseRef-CIPIC https://sofacoustics.org/data/database/cipic/subject_003.sofa
+attribution cipic-003 CIPIC HRTF Database, subject 003, Copyright (c) 2001 The Regents of the University of California, CIPIC Interface Laboratory (V. R. Algazi, R. O. Duda, D. M. Thompson, C. Avendano, "The CIPIC HRTF Database", IEEE WASPAA 2001). Use for any purpose permitted; reproductions must keep the copyright notice.
+
+set sadie-d1 e6c72a84dd947b5ef75438ab96a9c2a32ed10f033472b9c4c11a49aff00a8a31 36591729 Apache-2.0 https://sofacoustics.org/data/database/sadie/D1_48K_24bit_256tap_FIR_SOFA.sofa
+attribution sadie-d1 SADIE II database, subject D1 (Neumann KU100 dummy head), Copyright 2018 University of York, AudioLab, Department of Electronic Engineering. C. Armstrong, L. Thresh, D. Murphy, G. Kearney, "A Perceptual Evaluation of Individual and Non-Individual HRTFs: A Case Study of the SADIE II Database", Applied Sciences 8(11), 2018. Licensed under the Apache License 2.0.
+
+set sadie-d2 bb5980288fc5c990c821e02c5ddfa274759079b723973cd6ca47ac577243aa0c 36591729 Apache-2.0 https://sofacoustics.org/data/database/sadie/D2_48K_24bit_256tap_FIR_SOFA.sofa
+attribution sadie-d2 SADIE II database, subject D2 (KEMAR mannequin), Copyright 2018 University of York, AudioLab, Department of Electronic Engineering. C. Armstrong, L. Thresh, D. Murphy, G. Kearney, "A Perceptual Evaluation of Individual and Non-Individual HRTFs: A Case Study of the SADIE II Database", Applied Sciences 8(11), 2018. Licensed under the Apache License 2.0.

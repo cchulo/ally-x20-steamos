@@ -12,6 +12,11 @@
 #                                                    python3, stdlib only)
 #   /etc/ally-x20-steamos/surround/hrir/*.wav        the shipped sets (four heads,
 #                                                    each dry and full)
+#   /etc/ally-x20-steamos/surround/x20dsp/*.py       what the helper needs to
+#                                                    derive the speaker
+#                                                    variants (crosstalk
+#                                                    cancellation), their
+#                                                    level and their checks
 #   /etc/ally-x20-steamos/surround/NOTICE.md, LICENSE.Apache-2.0
 #                                                    their sources and
 #                                                    licences
@@ -25,25 +30,31 @@
 # ~/.config/ally-x20-steamos/surround.conf (written by `surround set`, no
 # root needed) and so do the user's own files (surround-user/*.wav). Neither
 # is a manifest entry; both survive SteamOS updates with the home directory
-# and are left alone by uninstall.
+# and are left alone by uninstall. The same goes for the speaker variants the
+# helper generates: they are a cache (~/.cache/ally-x20-steamos/surround/)
+# and are made again when missing.
 # Stock SteamOS has no virtual surround for these outputs, so the probe
 # always says needed.
 
 # shellcheck disable=SC2034  # read by lib/component.sh
-COMPONENT_DESCRIPTION="Virtual 7.1 surround for the built-in headphones and speakers (PipeWire filter, switchable profiles; speakers default to stereo)"
+COMPONENT_DESCRIPTION="Virtual 7.1 surround for the built-in headphones and speakers (PipeWire filter, switchable profiles; crosstalk cancellation on the speakers)"
 
 SURROUND_DIR_REL="${AX20_EARLY_REL}/surround"
 SURROUND_HELPER_REL="${SURROUND_DIR_REL}/x20-surround"
 SURROUND_UNIT="${AX20_NAME}-surround.service"
 SURROUND_UNIT_REL="/etc/systemd/user/${SURROUND_UNIT}"
 SURROUND_HRIRS="sadie-d2-dry hutubs-pp1-dry mit-kemar-dry mit-kemar-large-dry sadie-d2-full hutubs-pp1-full mit-kemar-full mit-kemar-large-full"
-export SURROUND_DIR_REL SURROUND_HELPER_REL SURROUND_UNIT SURROUND_UNIT_REL SURROUND_HRIRS
+SURROUND_DSP="__init__ checks dsp layout level wav xtc"
+export SURROUND_DIR_REL SURROUND_HELPER_REL SURROUND_UNIT SURROUND_UNIT_REL SURROUND_HRIRS SURROUND_DSP
 
 surround_files() {
     local n
     printf 'bin/x20-surround.py\t%s\t0755\n' "$SURROUND_HELPER_REL"
     for n in $SURROUND_HRIRS; do
         printf 'surround/hrir/%s.wav\t%s/hrir/%s.wav\t0644\n' "$n" "$SURROUND_DIR_REL" "$n"
+    done
+    for n in $SURROUND_DSP; do
+        printf 'surround/x20dsp/%s.py\t%s/x20dsp/%s.py\t0644\n' "$n" "$SURROUND_DIR_REL" "$n"
     done
     printf 'surround/NOTICE.md\t%s/NOTICE.md\t0644\n' "$SURROUND_DIR_REL"
     printf 'surround/LICENSE.Apache-2.0\t%s/LICENSE.Apache-2.0\t0644\n' "$SURROUND_DIR_REL"
@@ -57,6 +68,7 @@ surround_probe() {
 surround_probe_details() {
     printf 'stock SteamOS offers the built-in headphones and speakers as stereo only\n'
     printf "profiles: '%s surround list'; the choice is per user (~/.config/%s/surround.conf)\n" "$AX20_NAME" "$AX20_NAME"
+    printf 'speakers: crosstalk cancellation, generated on the device per user (~/.cache/%s/surround/)\n' "$AX20_NAME"
 }
 
 # _surround_system_steps : touch the running systemd only on a live system

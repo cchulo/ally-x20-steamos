@@ -17,6 +17,9 @@ usage: surround-test COMMAND [options]
   localise              blind localisation test (single-channel call-outs)
   tone (--file F|--live)
                         blind A/B preference against raw
+  pick (--file F|--live)
+                        not blind: switch freely between the candidates by
+                        number, names shown, and name the one you keep
   results               summarise the log and apply the pass rule
   restore               put volumes and the default sink back after a crash
 
@@ -581,6 +584,94 @@ def cmd_tone(args, paths, pw, io):
     return 0 if complete else 1
 
 
+def cmd_pick(args, paths, pw, io):
+    """Free switching between the candidates, names shown, no A/B against
+    raw. The listener ends it by naming the one to keep."""
+    if not args.live and not args.file:
+        raise Abort("pick needs --file FILE or --live")
+    if args.file and not os.path.isfile(args.file):
+        raise Abort("no such file: %s" % args.file)
+    args.open = True
+    session = make_session(args, paths, pw, io)
+    warn_uncalibrated(session, io)
+    order = [c["id"] for c in session.candidates]
+    menu = [RAW] + order
+
+    def show():
+        for n, cid in enumerate(menu):
+            mark = "*" if cid == session.current else " "
+            io.say("  %s %2d  %s" % (mark, n, cid))
+
+    io.say("Pick: %d candidate(s), not blind. Type a number to switch (0 is raw), k to keep"
+           % len(order))
+    io.say("the one that is playing and finish, l for the list, + / - for volume, q to stop")
+    io.say("without keeping one. Starting volume %.2f." % session.volume)
+    if args.live:
+        io.say("Live material: when asked, start the game (or player) on the DEFAULT output and")
+        io.say("keep it running. A candidate (7.1) is the default while you start it, so the")
+        io.say("game opens a 7.1 stream. HEADPHONES OFF YOUR EARS for the first launch: some")
+        io.say("games play a full-volume tone on a 7.1 output. See the README, \"Game check\".")
+    record = base_record(session, "pick")
+    record["material"] = "live" if args.live else os.path.basename(args.file)
+    record["heard"] = []
+    record["kept"] = None
+    looper = None
+    complete = False
+    try:
+        session.start()
+        if args.file:
+            looper = Looper(pw, args.file)
+            looper.tick()
+        # An 8-channel candidate is the default while a game starts, or the
+        # game will only ever send stereo (as in tone --live).
+        session.select(order[0])
+        io.ask("Press Enter when the material is playing. ")
+        record["streams"] = playing_streams(pw)
+        for name, channels in record["streams"]:
+            io.say("stream %s: %s channel(s)" % (name, channels))
+        if not any(ch == len(INPUTS) for _, ch in record["streams"]):
+            io.say("NOTE: no 8-channel stream is playing; the candidates only get %s material."
+                   % "/".join(sorted({str(ch) for _, ch in record["streams"]}) or ["no"]))
+        show()
+        record["heard"].append(session.current)
+        while True:
+            if looper:
+                looper.tick()
+            ans = io.ask("playing %s: " % session.current)
+            if ans.isdigit() and int(ans) < len(menu):
+                session.select(menu[int(ans)])
+                if session.current not in record["heard"]:
+                    record["heard"].append(session.current)
+            elif ans == "k":
+                record["kept"] = session.current
+                complete = True
+                break
+            elif ans == "l":
+                show()
+            elif ans in ("+", "-"):
+                session.nudge(1 if ans == "+" else -1)
+            elif ans == "q":
+                raise Abort("stopped by the listener")
+            else:
+                io.say("a number from 0 to %d, k, l, +, - or q" % (len(menu) - 1))
+    except (Abort, PwError) as e:
+        io.say("pick: %s" % e)
+    finally:
+        if looper:
+            looper.stop()
+        session.stop()
+    record["complete"] = complete
+    record["volume"] = round(session.volume, 2)
+    if not complete:
+        return 1  # nothing was kept: nothing to log
+    append_log(paths.log, record)
+    io.say("")
+    io.say("Kept: %s (heard %d of %d). Not blind, so it does not count towards the pass rule."
+           % (record["kept"], len(record["heard"]), len(menu)))
+    io.say("Logged to %s (session %s)." % (paths.log, session.id))
+    return 0
+
+
 def measure(session, path, cid, tag):
     """Play `path` as condition `cid` and return the stereo recording of
     the hardware sink's monitor."""
@@ -826,6 +917,10 @@ def parser():
     p.add_argument("--live", action="store_true")
     p.add_argument("--rounds", type=int, default=3)
     p.set_defaults(fn=cmd_tone)
+    p = common(sub.add_parser("pick"))
+    p.add_argument("--file")
+    p.add_argument("--live", action="store_true")
+    p.set_defaults(fn=cmd_pick)
     sub.add_parser("results").set_defaults(fn=cmd_results)
     sub.add_parser("restore").set_defaults(fn=cmd_restore)
     return ap

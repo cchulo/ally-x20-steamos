@@ -183,6 +183,7 @@ surround-test calibrate          # silent: measures every candidate against raw
 surround-test localise           # blind localisation test
 surround-test tone --file ~/Music/track.flac    # blind A/B against raw
 surround-test tone --live        # the same on a running game
+surround-test pick --live        # not blind: switch between the candidates by number
 surround-test results            # the log, with the pass rule applied
 ```
 
@@ -206,6 +207,11 @@ surround-test results            # the log, with the pass rule applied
   candidate in random order. `1`/`2` switch, `p1`/`p2` state a preference,
   `p0` is no preference. It prints how many channels each playing stream
   has.
+- **`pick`**: for choosing by ear once the blind tests have narrowed the
+  field. All candidates run at once with their names shown; a number
+  switches to that candidate (`0` is raw), `l` lists them, `k` keeps the one
+  playing and ends. Takes `--live` or `--file` like `tone`. It is not blind,
+  so `results` ignores it for the pass rule.
 - **Blind**: conditions get random letters and nothing on screen names
   them until the test ends. `--open` shows the names.
 - **Results** are appended to

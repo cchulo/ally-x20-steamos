@@ -495,6 +495,45 @@ def test_tone_live_keeps_a_71_candidate_as_default_while_the_game_starts(rig):
     assert pw.configured is None
 
 
+def test_pick_switches_between_candidates_by_number_and_logs_the_one_kept(rig):
+    paths, pw = rig
+    rc, out = run(rig, ["pick", "--live", "--candidates", "syn-full,syn-dry"],
+                  "\n2\n1\n0\n2\nl\nx\nk\n")
+    assert rc == 0, out
+    # not blind: the names are on screen from the start
+    assert "syn-full" in out and "syn-dry" in out and "HEADPHONES OFF YOUR EARS" in out
+    assert "a number from 0 to 2" in out  # the unknown key
+    (record,) = log(rig)
+    assert record["test"] == "pick" and record["complete"] and not record["blind"]
+    assert record["kept"] == "syn-dry"
+    assert set(record["heard"]) == {"raw", "syn-full", "syn-dry"}
+    # the default sink moved between two candidate nodes and the hardware sink
+    defaults = [e[1] for e in pw.events if e[0] == "default"]
+    assert SINK_HEADPHONES in defaults
+    assert len({d for d in defaults if str(d).startswith("x20test-")}) == 2
+    assert pw.configured is None  # put back afterwards
+    assert not pw.played  # live: the rig plays nothing itself
+
+
+def test_pick_stopped_without_keeping_logs_nothing_and_restores(rig):
+    paths, pw = rig
+    rc, out = run(rig, ["pick", "--live", "--candidates", "syn-full"], "\n1\nq\n")
+    assert rc == 1 and "stopped by the listener" in out
+    assert log(rig) == []
+    assert pw.configured is None
+
+
+def test_pick_does_not_count_towards_the_pass_rule(rig):
+    run(rig, ["pick", "--live", "--candidates", "syn-full"], "\n1\nk\n")
+    rc, out = run(rig, ["results"], "")
+    assert rc == 0 and "PASS" not in out
+
+
+def test_pick_needs_material(rig):
+    rc, out = run(rig, ["pick"], "")
+    assert rc == 1 and "--file FILE or --live" in out
+
+
 def test_tone_needs_material(rig):
     rc, out = run(rig, ["tone"], "")
     assert rc == 1 and "--file FILE or --live" in out

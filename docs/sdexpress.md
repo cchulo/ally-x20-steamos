@@ -105,6 +105,17 @@ label defaults to `sdcard` and must be 1 to 16 characters of `A-Za-z0-9._-`.
 `--dry-run` prints the commands without running them; do that once and check
 that every line names the card's node.
 
+**Do not format a card that is mounted through `/etc/fstab`.** The command
+only knows the mounts the automount made. A card you mounted yourself with
+an fstab line (especially with `x-systemd.automount`) is mounted again right
+after the unmount, and the format then runs on a disk that is in use.
+Measured on the X20 with v0.1.10: `dd` zeroed the first 512 KiB, `parted`
+failed with "unable to inform the kernel of the change ... in use", and
+`mkfs` never ran. The old filesystem survived that time, because it starts at
+1 MiB and `parted` re-created the same partition, but nothing guarantees it.
+Remove the fstab line first (next section); the command does not check for
+it.
+
 Afterwards the card is mounted at `/run/media/deck/<label>` and can be added
 as a library in Steam → Settings → Storage.
 
@@ -113,11 +124,17 @@ rejects every device that is not `/dev/mmcblk[0-9]` or `/dev/sd[a-z]` before
 reading any option, and the script lives under `/usr`, which this project
 never touches. The button keeps failing for this slot; format from the CLI.
 
-## Migrating from a hand-made fstab mount
+## Do not mount the card through /etc/fstab
 
-If you mounted the card yourself through `/etc/fstab` (for example at
+With this component the card is mounted for you at `/run/media/deck/<label>`,
+like a microSD card. An `/etc/fstab` line for the card is not needed and not
+supported: the card and the SSD swap `nvmeN` names between boots, the two
+mounts compete, and `sdexpress format` must not be run on a card mounted
+that way (see above).
+
+If you mounted the card yourself through `/etc/fstab` before (for example at
 `/home/deck/sdcard` with `x-systemd.automount`) and added that path as a
-Steam library:
+Steam library, move to the automount:
 
 1. In Steam → Settings → Storage, remove the library at the old path.
    Steam identifies libraries by path, so the old entry would otherwise
@@ -130,8 +147,9 @@ Steam library:
    card. It appears at `/run/media/deck/<label>`.
 4. Add the new path as a library in Steam → Settings → Storage.
 
-The component never touches an existing mount, so nothing breaks while the
-fstab line is still there; the card is simply mounted the old way.
+The component never touches an existing mount, so while the fstab line is
+still there the card is simply mounted the old way. Only `sdexpress format`
+is unsafe in that state.
 
 ## Checking and debugging
 

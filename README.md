@@ -201,6 +201,13 @@ the EC still enforces the old one. Check with
 or set the value you want in Steam. Nothing in ally-x20-steamos writes a
 limit. Details: [docs/power.md](docs/power.md).
 
+**Should I add the SD Express card to `/etc/fstab`?**
+No. The `sdexpress` component mounts it at `/run/media/deck/<label>` by
+itself. If you added an fstab line for the card earlier, remove it before
+you run `sdexpress format`: the format does not check for it and would run
+on a card that is still in use. Steps:
+[docs/sdexpress.md](docs/sdexpress.md#do-not-mount-the-card-through-etcfstab).
+
 **`self-update` says no release tag is signed by a pinned key.**
 Installs made from releases before v0.1.4 pinned placeholder keys, and their
 `self-update` does not understand them. Clone fresh, check out the newest

@@ -206,16 +206,16 @@ power_probe_details() {
 }
 
 # power_charge_limit : the battery's charge_control_end_threshold as the
-# kernel reports it. The EC keeps the real limit across reboots while this
-# attribute reads 0 again after boot, so "0 (unset this boot)" means the EC
-# may still hold an older limit (docs/power.md, "Battery charge limit").
+# kernel reports it. 0 is what Steam writes for "no limit"; this firmware
+# takes it as a limit of about 80 %. Component chargelimit replaces it by
+# 100 (docs/power.md, section 10).
 power_charge_limit() {
     local f v
     for f in "$(ax20_path /sys/class/power_supply)"/BAT*/charge_control_end_threshold; do
         [ -r "$f" ] || continue
         v=$(cat "$f")
         case "$v" in
-            0) printf '0 (not written this boot; the EC may still hold an older limit)\n' ;;
+            0) printf '0 (Steam wrote "no limit"; this firmware stops charging at about 80%%)\n' ;;
             *) printf '%s%%\n' "$v" ;;
         esac
         return 0

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Component chargelimit (docs/power.md, "Battery charge limit"): keep the
+# battery charging to 100 % unless a charge limit was set on purpose.
+#
+# With Steam's charge limit off, Steam writes 0 to the battery's
+# charge_control_end_threshold when the session starts (0 is "no limit" on a
+# Steam Deck). The ROG Xbox Ally X20's firmware takes only 100 as "no
+# limit"; with 0 the controller stops charging at about 80 % while Steam
+# shows no limit. ExecStartPre writes the limit recorded earlier (100 when
+# none) before the display manager starts; the main process then looks at
+# the attribute every few seconds, replaces a 0 by 100 and records a limit
+# set in Steam or by hand. Nothing Requires= this unit.
+[Unit]
+Description=ally-x20-steamos: keep the battery charge limit (a 0 written by Steam becomes 100)
+Documentation=file:///var/lib/ally-x20-steamos/src/docs/power.md
+After=local-fs.target
+Before=display-manager.service
+ConditionPathExists=/etc/ally-x20-steamos/charge-limit-restore
+
+[Service]
+Type=simple
+ExecStartPre=/etc/ally-x20-steamos/charge-limit-restore boot
+ExecStart=/etc/ally-x20-steamos/charge-limit-restore watch
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=30s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

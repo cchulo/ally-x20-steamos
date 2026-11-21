@@ -313,14 +313,9 @@ steamos-manager exposes, from the device file (26.4.1, `manager/user.rs`):
   created when the choices list is not empty.
 - **Battery charge limit** via `acpi_sb` (Steam → Settings → Power). Steam
   writes the limit to `/sys/class/power_supply/BAT1/charge_control_end_threshold`
-  (asus-wmi), and the EC keeps it across reboots and across operating
-  systems. After a reboot that attribute reads 0 until something writes it,
-  so Steam's power daemon logs "100%" and the UI shows no limit while the EC
-  still stops at the old value. Seen on the owner's X20 on 2026-11-04: stuck
-  at 80 % with no limit shown. `power status` prints the EC's view
-  (`charge_limit=`); to clear a stale limit:
-  `echo 100 | sudo tee /sys/class/power_supply/BAT1/charge_control_end_threshold`.
-  Armoury Crate's Battery Care (Windows) sets the same EC value.
+  (asus-wmi). With the limit off it writes `0`, which this firmware takes as
+  a limit of about 80 %; component `chargelimit` replaces it by `100`
+  (section 10).
 - **GPU clock** (`gpu_performance` on amdgpu); Manual GPU Clock fails with
   `EINVAL` on this APU (section 1.3).
 - **No TDP limit** (`TdpLimit1`), unless `tdp_slider` is on.
@@ -443,3 +438,133 @@ the numbers in [hardware-data.md](hardware-data.md), and consider making
 - That Steam picks up `SuggestedDefaultPerformanceProfile` = `balanced` on a
   fresh install (and what it does on an existing one).
 - After a BIOS update: section 7.
+- Battery charge limit (section 10): the component has not run on the
+  device in its current form (the watch that replaces a `0`). To check: a
+  cold boot with Steam's limit off charges past 80 %; a limit set in Steam
+  survives a reboot and Steam still shows it; whether the controller drops
+  the limit across s2idle; which process writes the `0`.
+
+## 10. Battery charge limit (component `chargelimit`)
+
+### 10.1 The quirk
+
+The battery charge limit is `/sys/class/power_supply/BAT1/charge_control_end_threshold`
+(asus-wmi; firmware call `DEVS` with device ID `0x00120057`). Steam's charge
+limit (Settings → Power) reaches it through steamos-manager
+(`battery_charge_limit`, method `acpi_sb`), which exists on this device
+because component `power` adds the RC74XA device entry.
+
+With Steam's charge limit **off**, a `0` is written to the attribute when
+the Steam session starts. On a Steam Deck `0` means "no limit". This
+firmware knows only `100` as "no limit": in the `DEVS` handler (DSDT of BIOS
+`RC74XA.303`) the value `100` clears the limit-enabled flag, and every
+other value, `0` included, stores the value and sets the flag. With `0`
+stored the controller stops charging at about 80 %. The battery then stops
+at 80 % while Steam shows no limit.
+
+Measured on the owner's X20:
+
+| Date | Observation |
+|---|---|
+| 2026-11-04, 2026-11-18 | Battery stuck at 80 %, Steam showing no limit; attribute reads `0`, `status` reads `Charging`, `current_now` reads `0`. |
+| 2026-11-18 | Writing `100` at 80 %: about 2.5 A within 30 s. After the next boot charging stops again and the attribute reads `0`. |
+| 2026-11-20 | At boot, before the display manager, the attribute reads `100` (the driver's start value). Later in the session it reads `0`, unless a limit is set in Steam. |
+| 2026-11-20 | On the 65 W charger at about 91 %, written by hand, 20 s apart: `100` → 2.03 A, `0` → 0.61 A and falling, `100` → 1.92 A. |
+
+Which process writes the `0` (Steam's `vpower` daemon or steamos-manager) is
+not identified; nothing logs the write. The controller's own handler that
+sets 80 % (`_QDB` in the DSDT) was not seen to run, and the BIOS setup has
+no entry for the limit.
+
+A level above 80 % creeps up a little at every boot: the battery charges
+from the driver's `100` until Steam writes its `0`.
+
+### 10.2 What the component does
+
+`/etc/ally-x20-steamos/charge-limit-restore` (POSIX sh):
+
+| When | Unit | What |
+|---|---|---|
+| Boot, before the display manager | `ally-x20-steamos-charge-limit.service` (`ExecStartPre`, mode `boot`) | writes the recorded limit, or 100 if none was recorded |
+| While the system runs | the same unit's main process (mode `watch`) | every 5 s reads the attribute; replaces a `0` by `100`; records a limit of 1 to 100 |
+| After every sleep | `ally-x20-steamos-charge-limit-resume.service` (mode `resume`) | writes the limit in force again (a `0` becomes `100`) |
+
+The attribute is polled because nothing announces a write to it (no uevent,
+and sysfs has no inotify for it). The read returns a kernel variable and
+does not reach the controller. The record is one number in
+`/var/lib/ally-x20-steamos/state/charge-limit`. Every write is logged:
+`journalctl -t ally-x20-steamos-charge-limit`.
+
+Steam's own limit wins: a limit of 1 to 100 set in Steam is left alone,
+recorded, and written again at the next boot before Steam starts. Only the
+`0` is replaced. Measured with the first version of the component on
+2026-11-20: 90 % set in Steam was in force after a cold boot and after a
+sleep.
+
+Limits of the approach:
+
+- For up to 5 s after Steam writes `0` the firmware limit is in force.
+- With the component installed a charger that is too weak shows at every
+  level, not only below 80 % (section 10.4).
+- Charging with the device shut down is not measured. TODO(hw).
+- The device has a protection of its own that this component does not
+  touch. The user manual ("Battery safety information", "Battery
+  protection") says that once the battery is fully charged the system may
+  stop charging between 90 % and 100 % and resume later, and that it may
+  reduce or stop charging when the battery is too hot. A stop in that range
+  after a full charge is expected.
+
+### 10.3 Settings
+
+```sh
+sudo ally-x20-steamos charge-limit status  # setting, record, limit in force
+sudo ally-x20-steamos charge-limit follow  # default: 100 % unless a limit is set in Steam or by hand
+sudo ally-x20-steamos charge-limit 80      # last resort: 80 instead of 100 (20..100)
+sudo ally-x20-steamos charge-limit off     # write nothing
+```
+
+The rules, in order:
+
+1. A limit set in Steam (Settings → Power) is respected and kept in force:
+   it is left alone, recorded, and written again at boot and after resume.
+2. With no limit set in Steam, and none set with this command, the battery
+   charges to 100 %.
+3. A number given to this command is a last resort, for when the limit
+   cannot be set in Steam. It takes the place of the 100 in rule 2; a limit
+   set in Steam still applies until the next boot.
+
+The setting is `limit=` in `/etc/ally-x20-steamos/charge-limit.conf` (a
+manifest entry of the component). The running watch reads it again on every
+round. `status` needs root to read the record.
+
+### 10.4 A weak charger: beeps and rumble every second or two
+
+Seen on 2026-11-20 with a low-power USB-C charger right after the limit was
+lifted at 91 %: the device beeped and rumbled every few seconds and showed
+the battery as full. Steam plays its charger sound at every connect, and
+the connection was dropping and coming back:
+
+```
+vpower: AC Adapter status changed 'Disconnected'->'Connected', battery 90.72%, status: 'Full'
+vpower: AC Adapter status unknown: ac_status='Disconnected', status='Not charging'
+vpower: AC Adapter status changed 'Disconnected'->'Connected slow', battery 88.27%, status: 'Discharging'
+kernel: ucsi_acpi USBC000:00: UCSI_GET_PDOS failed (-70)
+```
+
+With the 65 W charger that came with the device: one `Connected`, 2.86 A.
+The charge limit is not the cause; above the firmware's 80 % stop the device
+asks a charger for nothing, which hides the problem.
+
+### 10.5 Verify
+
+```sh
+sudo ally-x20-steamos charge-limit status
+journalctl -b -t ally-x20-steamos-charge-limit
+cat /sys/class/power_supply/BAT1/{charge_control_end_threshold,status,current_now}
+```
+
+With Steam's limit off, a minute after a cold boot: the journal has a
+`boot:` line and a line `the attribute read 0, …`; the attribute reads
+`100`; above 80 % on the charger `current_now` is not 0. With 90 % set in
+Steam and a reboot: the journal says `boot: the limit recorded earlier` with
+90 and the attribute reads `90`.

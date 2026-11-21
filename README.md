@@ -85,6 +85,7 @@ SteamOS updates and troubleshooting: [user guide](docs/user-guide.md),
 | **Xbox button light** dark on Linux. | `xbox-led on\|off\|brightness\|breathe` sends the controller the reports Armoury Crate uses (captured on Windows, verified on the X20); the driver keeps on/off; a udev rule re-sends brightness/breathe at boot and a systemd unit after resume; no Steam menu for it | `xboxled`, `modules` · [docs/rgb.md](docs/rgb.md#xbox-button-light) |
 | **HDR not detected** (panel metadata lives in a DisplayID 2 block). | libdisplay-info 0.3.0 + DisplayID 2 backport via `ld.so.conf.d` (Desktop Mode); gamescope Lua display profile for the panel, loaded by stock gamescope (Game Mode); optional custom gamescope behind a stock-fallback wrapper | `hdr` · [docs/hdr.md](docs/hdr.md) |
 | **No power profiles in Steam's Performance menu.** steamos-manager 26.4.1 has no X20 device file. | The upstream steamos-manager RC74XA entry, merged into `/usr/share/steamos-manager/devices` by a boot-time bind mount of a copy in `/run` (nothing written to `/usr`, steps aside once SteamOS ships it): Low power / Balanced / Performance hold the APU at about 12 / 16-21 / 25-30 W on battery. No TDP slider on purpose: BIOS `RC74XA.303` ignores PPT writes (`power tdp-slider on` to re-test; the mainline `asus-armoury` RC74XA table is still built) | `power`, `modules` · [docs/power.md](docs/power.md) |
+| **Battery stops charging at 80 %** with no limit shown in Steam. With its charge limit off, Steam writes `0` ("no limit" on a Steam Deck) to `charge_control_end_threshold`; this firmware takes only `100` as "no limit" and stops at about 80 % with `0`. | A unit writes the recorded limit (100 % when none) before Steam starts, then replaces every `0` by `100` and records a real limit set in Steam, which is left alone; a second unit writes it again after resume; `charge-limit follow\|off\|<20-100>` picks the behaviour | `chargelimit` · [docs/power.md](docs/power.md#10-battery-charge-limit-component-chargelimit) |
 | **Built-in headphones and speakers are stereo only**, so games send a stereo mix. | A user service puts an 8-channel PipeWire sink in front of the built-in output in use and convolves it with a head-related impulse response set; it becomes the default by priority, no default is forced. Four heads, each as `-dry` (fronts unfiltered) and `-full`; `-dry` is recommended on both outputs (by the owner's ear, `-full` makes the fronts sound quieter on the speakers and may suit headphones for sharper positioning). Each output has its own profile: headphones default to `sadie-d2-dry`, speakers to `sadie-d2-dry` with crosstalk cancellation (60 µs, 50 %), which is generated on the device and applies to the speakers only. `surround set <headphones\|speakers> <profile>` switches on the fly, the new filter starting before the old one stops, and `user` takes your own HeSuVi file | `surround` · [docs/surround.md](docs/surround.md) |
 | **SD Express card never mounts; Steam's Format button fails on it.** The card is a PCIe/NVMe device and stock's automount rule only matches `mmcblk*\|sd*`; `format-device.sh` rejects nvme nodes. | One udev rule that hands the card's partitions to the stock `block-device-event.sh` / `holo-automount.sh` (udisks mount at `/run/media/deck/<label>`), matched by the slot's PCIe root port because the card and the SSD swap `nvmeN` names between boots; `sdexpress format` runs the stock format sequence (GPT, ext4 casefold, owned by deck) | `sdexpress` · [docs/sdexpress.md](docs/sdexpress.md) |
 | **SteamOS updates wipe out-of-tree changes.** | RAUC pre/post-install handlers, boot service, user notifier; `block`/`degrade` policy when modules cannot be built for an incoming kernel | `update` · [docs/update-survival.md](docs/update-survival.md) |
@@ -138,6 +139,7 @@ ally-x20-steamos.sh [--root <dir>] [--dry-run] [--verbose] [--yes] [--i-know] <c
 | `self-update [--channel stable\|beta] [--check] [--rollback]` | signed-tag update of the checkout, migrations, re-apply |
 | `buttons status\|layout [deck\|legacy]` | what the two top buttons do: `deck` (default) = action button opens Quick Access, Armoury Crate is the Steam button; `legacy` = Armoury Crate opens Quick Access, action button takes a screenshot |
 | `power status\|tdp-slider [on\|off]` | power profiles; the TDP slider test switch (default off) |
+| `charge-limit status\|follow\|off\|<20-100>` | the battery charge limit: 100 % unless one is set in Steam (default), a fixed one, or hands off |
 | `surround status\|list\|set <headphones\|speakers> <profile>\|xtc off\|xtc <delay_us> <strength_pct>\|prepare` | virtual 7.1 surround for the built-in outputs: pick a profile per output, set the speakers' crosstalk cancellation, generate and check its tested settings for the speakers' profile (as the user, no sudo; kept across updates) |
 | `sdexpress status\|format [--label <l>] [--full] [--validate]\|mount\|root-port [<bdf>]` | the SD Express slot: automount state, format a card like Steam does (root; the card is found by PCIe root port, never by `nvmeN`) |
 | `xbox-led on\|off\|brightness <0-3>\|breathe on\|off\|restore\|node` | the Xbox button light (root; kept across reboots: on/off by the patched driver, brightness/breathe by component `xboxled`) |
@@ -155,7 +157,7 @@ against a fixture tree, which is how the test suite works.
 
 ```
 ally-x20-steamos.sh   CLI dispatcher            lib/          common, manifest, probes, component, retired, slots, rauc, modules, selfupdate, status, notify
-cmd/                  one file per command      components/   audio, hdr, inputplumber, modules, power, sdexpress, surround, update, xboxled
+cmd/                  one file per command      components/   audio, chargelimit, hdr, inputplumber, modules, power, sdexpress, surround, update, xboxled
 overlay/              files installed on the device (manifest-tracked)   uninstall/   standalone POSIX uninstaller
 patches/kernel/       0001-0008 ASoC (audio), 0010-0015 hid-asus-ally, 0020 asus-armoury   patches/{gamescope,libdisplay-info}/
 build/                Containerfile, build-modules.sh, build-hdr.sh, build-inputplumber.sh, kernel-sources.md
@@ -206,15 +208,26 @@ is planned to open a settings screen of this project later. Details:
 [docs/inputplumber.md](docs/inputplumber.md#6-x20-buttons).
 
 **My battery stops charging at 80 % and Steam shows no charge limit.**
-The limit lives in the controller's EC and survives reboots and operating
-systems; Armoury Crate's Battery Care on Windows sets it, and so does
-Steam's charge-limit setting (Settings → Power). After a reboot the kernel
-attribute reads 0 until something writes it, so Steam shows no limit while
-the EC still enforces the old one. Check with
-`sudo ./ally-x20-steamos.sh power status` (`charge_limit=`), clear it with
-`echo 100 | sudo tee /sys/class/power_supply/BAT1/charge_control_end_threshold`,
-or set the value you want in Steam. Nothing in ally-x20-steamos writes a
-limit. Details: [docs/power.md](docs/power.md).
+With Steam's charge limit off, Steam writes `0` to the battery's limit
+attribute when the session starts; on a Steam Deck that means "no limit".
+The X20's firmware only takes `100` as "no limit": with `0` it stops
+charging at about 80 %. The `chargelimit` component replaces that `0` by
+`100`. A limit you set in Steam (Settings → Power) is left alone and kept
+across reboots. `sudo ./ally-x20-steamos.sh charge-limit status` shows what
+is in force; `charge-limit follow|off|<20-100>` changes the behaviour.
+Without the component,
+`echo 100 | sudo tee /sys/class/power_supply/BAT1/charge_control_end_threshold`
+lifts the limit until Steam starts again. Details:
+[docs/power.md](docs/power.md#10-battery-charge-limit-component-chargelimit).
+
+**The device beeps and rumbles every second or two on the charger.**
+The charger is too weak. Steam plays its charger sound each time the
+connection is made, and a charger that cannot supply what the device asks
+for drops out and reconnects in a loop (the journal shows `vpower` lines
+flipping between `Connected` and `Disconnected`, or `Connected slow`). Use
+the 65 W charger that came with the device. With the 80 % stop described
+above the loop only shows below 80 %, because above it the device asks for
+nothing; with `chargelimit` installed it shows at any level.
 
 **Should I add the SD Express card to `/etc/fstab`?**
 No. The `sdexpress` component mounts it at `/run/media/deck/<label>` by

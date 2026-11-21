@@ -5,6 +5,7 @@ load '../test_helper'
 
 PROFILE=/etc/inputplumber/devices.d/50-rog_xbox_ally_x20.yaml
 CAPMAP=/etc/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml
+BUTTONS_CONF=/etc/ally-x20-steamos/buttons.conf
 HWDB=/etc/udev/hwdb.d/60-ally-x20-steamos-inputplumber.hwdb
 DROPIN=/etc/systemd/system/inputplumber.service.d/50-ally-x20-steamos.conf
 RESUME_UNIT=/etc/systemd/system/ally-x20-steamos-inputplumber-resume.service
@@ -12,6 +13,8 @@ RESUME_HELPER=/etc/ally-x20-steamos/inputplumber-resume-check
 RESUME_CONF=/etc/ally-x20-steamos/inputplumber-resume.conf
 SLEEP_TARGETS="suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target"
 OVL="$REPO_ROOT/overlay"
+MAP_DECK="$OVL/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml"
+MAP_LEGACY="$OVL/inputplumber/capability_maps.d/ally-x20-steamos-aly2.legacy.yaml"
 
 setup() {
     make_root >/dev/null
@@ -92,9 +95,11 @@ inputplumber
     run component_apply inputplumber
     assert_success
     assert_output_contains "profile variant: stock"
+    assert_output_contains "button layout: deck (action button = Quick Access, Armoury Crate = Steam, Xbox = Steam)"
+    [ ! -e "$AX20_ROOT$BUTTONS_CONF" ]
     assert_output_contains "skipping systemd-hwdb update"
     same_file "$AX20_ROOT$PROFILE" "$OVL/inputplumber/devices.d/50-rog_xbox_ally_x20.stock.yaml"
-    same_file "$AX20_ROOT$CAPMAP" "$OVL/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml"
+    same_file "$AX20_ROOT$CAPMAP" "$MAP_DECK"
     same_file "$AX20_ROOT$HWDB" "$OVL/udev/hwdb.d/60-ally-x20-steamos-inputplumber.hwdb"
     same_file "$AX20_ROOT$RESUME_UNIT" "$OVL/systemd/ally-x20-steamos-inputplumber-resume.service"
     same_file "$AX20_ROOT$RESUME_HELPER" "$OVL/bin/inputplumber-resume-check"
@@ -401,34 +406,147 @@ yaml_check() {
     grep -qx 'capability_map_id: ally_x20_steamos_aly2' "$OVL/inputplumber/devices.d/50-rog_xbox_ally_x20.stock.yaml"
 }
 
-@test "capability map parses and carries the id the stock profile references" {
-    y="$OVL/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml"
-    yaml_check "$y"
-    grep -qx 'kind: CapabilityMap' "$y"
-    grep -qx 'id: ally_x20_steamos_aly2' "$y"
+@test "both capability maps parse and carry the id the stock profile references" {
+    for y in "$MAP_DECK" "$MAP_LEGACY"; do
+        yaml_check "$y"
+        grep -qx 'kind: CapabilityMap' "$y"
+        grep -qx 'id: ally_x20_steamos_aly2' "$y"
+        head -n 1 "$y" | grep -q 'SPDX-License-Identifier: GPL-3.0-or-later'
+    done
 }
 
+# capmap_targets [file] : "<source key> <target button>" per mapping
 capmap_targets() {
-    # "<source key> <target button>" per mapping of the X20 capability map
-    awk '/^      - keyboard: / { k = $3 } /^        button: / { print k, $2 }' \
-        "$OVL/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml"
+    awk '/^      - keyboard: / { k = $3 } /^        button: / { print k, $2 }' "${1:-$MAP_DECK}"
 }
 
-@test "X20 map: Armoury Crate -> QuickAccess, capture -> Screenshot, no Steam chords" {
-    run capmap_targets
+@test "X20 map, deck layout: action -> QuickAccess, Armoury Crate -> Guide, nothing -> Screenshot" {
+    run capmap_targets "$MAP_DECK"
     assert_success
-    printf '%s\n' "$output" | grep -qx 'KeyF16 QuickAccess'
-    printf '%s\n' "$output" | grep -qx 'KeyProg1 QuickAccess'
-    printf '%s\n' "$output" | grep -qx 'KeyF21 QuickAccess'
-    printf '%s\n' "$output" | grep -qx 'KeyProg2 Screenshot'
-    printf '%s\n' "$output" | grep -qx 'KeyF22 Screenshot'
-    printf '%s\n' "$output" | grep -qx 'KeyF14 LeftPaddle1'
-    printf '%s\n' "$output" | grep -qx 'KeyF15 RightPaddle1'
-    # Keyboard (Steam+X via the default profile), Guide and QuickAccess2 leak
-    # Steam chords or a bare Steam press
-    run grep -E '^        button: (Keyboard|Guide|QuickAccess2|South|North)$' \
-        "$OVL/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml"
+    [ "$output" = "KeyF16 Guide
+KeyProg1 Guide
+KeyF21 Guide
+KeyProg2 QuickAccess
+KeyF22 QuickAccess
+KeyF14 LeftPaddle1
+KeyF15 RightPaddle1" ]
+    # Keyboard is Steam+X via the default profile; QuickAccess2 is Screenshot
+    # there; a Screenshot press is a Steam+R1 chord on the Deck target
+    run grep -E '^        button: (Keyboard|QuickAccess2|Screenshot|South|North)$' "$MAP_DECK"
     assert_failure
+}
+
+@test "X20 map, legacy layout: Armoury Crate -> QuickAccess, action -> Screenshot, no Steam press" {
+    run capmap_targets "$MAP_LEGACY"
+    assert_success
+    [ "$output" = "KeyF16 QuickAccess
+KeyProg1 QuickAccess
+KeyF21 QuickAccess
+KeyProg2 Screenshot
+KeyF22 Screenshot
+KeyF14 LeftPaddle1
+KeyF15 RightPaddle1" ]
+    run grep -E '^        button: (Keyboard|Guide|QuickAccess2|South|North)$' "$MAP_LEGACY"
+    assert_failure
+}
+
+@test "the two layouts map the same keys and differ only in the Armoury Crate and action targets" {
+    [ "$(capmap_targets "$MAP_DECK" | awk '{ print $1 }')" = "$(capmap_targets "$MAP_LEGACY" | awk '{ print $1 }')" ]
+    run diff <(grep -v '^#' "$MAP_DECK" | grep -vE '^(name:|        button: )') \
+        <(grep -v '^#' "$MAP_LEGACY" | grep -vE '^(name:|        button: )')
+    assert_success
+    # the Armoury Crate rebinding planned for later is these three mappings
+    [ "$(grep -c '^  - name: Armoury Crate ' "$MAP_DECK")" -eq 3 ]
+}
+
+# ------------------------------------------------------------ button layout --
+@test "button layout setting: deck without a file, legacy only for legacy, last line wins" {
+    [ "$(inputplumber_button_layout)" = deck ]
+    fixture_file "$BUTTONS_CONF" 'layout=old'
+    [ "$(inputplumber_button_layout)" = deck ]
+    fixture_file "$BUTTONS_CONF" '# x
+layout = legacy'
+    [ "$(inputplumber_button_layout)" = legacy ]
+    fixture_file "$BUTTONS_CONF" 'layout=legacy
+layout=deck'
+    [ "$(inputplumber_button_layout)" = deck ]
+}
+
+@test "CLI buttons layout: refuses before inputplumber is installed" {
+    stock_inputplumber 0.78.0
+    run "$CLI" --root "$AX20_ROOT" buttons layout legacy
+    assert_failure
+    assert_output_contains "apply --only inputplumber"
+    [ ! -e "$AX20_ROOT$BUTTONS_CONF" ]
+}
+
+@test "CLI buttons layout legacy|deck swaps the installed map, keeps the manifest verifying; bad value is a usage error" {
+    stock_inputplumber 0.78.0
+    "$CLI" --root "$AX20_ROOT" apply --only inputplumber 2>/dev/null
+    same_file "$AX20_ROOT$CAPMAP" "$MAP_DECK"
+    run "$CLI" --root "$AX20_ROOT" buttons layout
+    [ "$output" = layout=deck ]
+    run "$CLI" --root "$AX20_ROOT" buttons layout legacy
+    assert_success
+    assert_output_contains "buttons: layout legacy (Armoury Crate = Quick Access, action button = screenshot, Xbox = Steam)"
+    [ "$(sed -n 's/^layout=//p' "$AX20_ROOT$BUTTONS_CONF")" = legacy ]
+    same_file "$AX20_ROOT$CAPMAP" "$MAP_LEGACY"
+    manifest_verify "$CAPMAP"
+    manifest_verify "$BUTTONS_CONF"
+    [ "$(component_status inputplumber)" = active ]
+    [ "$(manifest_paths inputplumber | grep -c ally-x20-steamos-aly2.yaml)" = 1 ]
+    # a re-apply (self-update, apply after a SteamOS update) keeps the choice
+    component_apply inputplumber
+    same_file "$AX20_ROOT$CAPMAP" "$MAP_LEGACY"
+    run "$CLI" --root "$AX20_ROOT" buttons status
+    assert_success
+    assert_output_contains "status: active"
+    assert_output_contains "layout=legacy ("
+    assert_output_contains "applies=yes"
+    run "$CLI" --root "$AX20_ROOT" buttons layout deck
+    assert_success
+    same_file "$AX20_ROOT$CAPMAP" "$MAP_DECK"
+    manifest_verify "$CAPMAP"
+    manifest_verify "$BUTTONS_CONF"
+    [ "$(component_status inputplumber)" = active ]
+    run "$CLI" --root "$AX20_ROOT" buttons layout sideways
+    assert_failure 2
+    run "$CLI" --root "$AX20_ROOT" buttons
+    assert_failure 2
+    assert_output_contains "usage:"
+}
+
+@test "CLI buttons layout restarts inputplumber.service on a live system" {
+    stock_inputplumber 0.78.0
+    component_apply inputplumber
+    stub="$BATS_TEST_TMPDIR/stub"
+    mkdir -p "$stub"
+    for c in systemd-hwdb udevadm systemctl; do
+        printf '#!/bin/sh\necho "%s $*" >>"%s/calls"\nexit 0\n' "$c" "$stub" >"$stub/$c"
+        chmod +x "$stub/$c"
+    done
+    PATH="$stub:$PATH" AX20_INPUTPLUMBER_SYSTEM_STEPS=always run "$CLI" --root "$AX20_ROOT" buttons layout legacy
+    assert_success
+    grep -qx 'systemctl restart inputplumber.service' "$stub/calls"
+}
+
+@test "CLI buttons layout with the upstream profile: saved, no map installed, says it has no effect" {
+    stock_inputplumber 0.83.1
+    component_apply inputplumber
+    run "$CLI" --root "$AX20_ROOT" buttons layout legacy
+    assert_success
+    assert_output_contains "has no effect"
+    [ "$(sed -n 's/^layout=//p' "$AX20_ROOT$BUTTONS_CONF")" = legacy ]
+    [ ! -e "$AX20_ROOT$CAPMAP" ]
+    run "$CLI" --root "$AX20_ROOT" buttons status
+    assert_output_contains "applies=no"
+}
+
+@test "the settings file is removed with the component's other manifest entries" {
+    stock_inputplumber 0.78.0
+    component_apply inputplumber
+    inputplumber_write_button_settings legacy
+    manifest_paths inputplumber | grep -qx "$BUTTONS_CONF"
 }
 
 @test "X20 stock profile: every mapped key is in the evdev include list, KeyProg2 matches patch 0012" {

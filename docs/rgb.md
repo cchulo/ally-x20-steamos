@@ -14,8 +14,8 @@ name, and the LED's colour layout does not match what Steam writes, so
 2. New sysfs attributes select the ring's built-in effects (breathe, strobe,
    colour cycle, rainbow), their speed and direction, and turn the rings
    on or off.
-3. The X20's top-right (capture) button, vendor code `0xa0`, reports
-   `KEY_PROG2`. InputPlumber maps it to Steam's screenshot
+3. The X20's top-right (action) button, vendor code `0xa0`, reports
+   `KEY_PROG2`. InputPlumber maps it to Steam's Quick Access menu
    ([`docs/inputplumber.md`](inputplumber.md) §6). This patch is not
    RGB-related but ships in the same module.
 4. Unloading or reloading the module no longer uses freed memory. This

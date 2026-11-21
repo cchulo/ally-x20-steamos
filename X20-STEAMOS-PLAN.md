@@ -73,7 +73,7 @@ stoneharborent/aquarius-os PR #40, anatase-org/kernel-anatase 7.2.7-an22):
   (`/etc/systemd/system/inputplumber.service.d/50-ally-x20-steamos.conf`,
   `ExecStart=` replaced). No stock file edited; removing the drop-in restores
   the stock daemon.
-- The top-right button (ovenham: "Quick Access"; owner: Capture) sends `0xa0`
+- The top-right button (ASUS: action button; ovenham: "Quick Access"; called Capture here until 2026-11-20) sends `0xa0`
   on the ASUS N-KEY HID interface; stock `hid-asus-ally` only knows `0xa6`
   (older Allys) and drops it.
   Fix: report it as its own key (`KEY_PROG2`) in our `hid-asus-ally` patch (we

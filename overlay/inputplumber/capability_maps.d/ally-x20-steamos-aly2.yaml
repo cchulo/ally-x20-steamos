@@ -1,27 +1,39 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) the InputPlumber authors (https://github.com/ShadowBlip/InputPlumber)
-# ally-x20-steamos: X20 button map, derived from upstream
+# ally-x20-steamos: X20 button map, layout "deck" (the default), derived from upstream
 #   rootfs/usr/share/inputplumber/capability_maps/ally_type2.yaml
 #   tag v0.83.0, commit 4ed1f50c7801e4f91fd17ce1a7b2b9d8d8b82e69, git blob 9ab261dde44fcb1e618ee4fb3e08cfd8f5182537
 #   https://github.com/ShadowBlip/InputPlumber/blob/v0.83.0/rootfs/usr/share/inputplumber/capability_maps/ally_type2.yaml
 # Installed only for daemons older than 0.82.0, together with
 # 50-rog_xbox_ally_x20.stock.yaml, under its own id so the stock `aly2` map
 # (used by the stock Xbox Ally profile) is left untouched.
+# Installed as /etc/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml
+# unless `ally-x20-steamos buttons layout legacy` selected
+# ally-x20-steamos-aly2.legacy.yaml (same id, same destination).
 #
 # Differences from upstream (button table and reasons: docs/inputplumber.md §6):
+#  - Action button (top right, N-KEY 0xa0 -> KEY_PROG2 with our hid-asus-ally
+#    patch 0012; called "capture" in this project before 2026-11-20) is
+#    QuickAccess, as on the Steam Deck, where Quick Access is on the right
+#    (issue #68). KeyF22 (the Xbox Ally's right hold) is QuickAccess too.
+#    Upstream has no mapping for KeyProg2.
 #  - Armoury Crate (top left, N-KEY 0xa6 -> KEY_F16 with qam_mode=0) is
-#    QuickAccess, not Keyboard. Upstream's Keyboard goes through the daemon's
-#    default profile as Guide+North, i.e. Steam+X, which Steam sometimes
-#    reads as a bare Steam press.
+#    Guide, the Steam button, the same as the Xbox button. Upstream's
+#    Keyboard goes through the daemon's default profile as Guide+North, i.e.
+#    Steam+X, which Steam sometimes reads as a bare Steam press.
+#    PLANNED: this button is meant to open a control-centre GUI later. The
+#    three "Armoury Crate" mappings below are the only place to change for
+#    that; nothing else in the project depends on what they send.
 #  - Armoury Crate long press: KeyProg1 (0x38/0x93, what the Ally firmware
-#    sends on a hold) and KeyF21 (the Xbox Ally's left hold) also open Quick
-#    Access, so a long press does the same as a short one and never sends a
-#    Steam chord. TODO(hw): confirm which code the X20 sends on a hold.
-#  - Capture (top right, N-KEY 0xa0 -> KEY_PROG2 with our hid-asus-ally
-#    patch 0012) is Screenshot: the Steam Deck target sends Steam+R1, the
-#    Xbox targets KEY_RECORD. KeyF22 (the Xbox Ally's right hold) is
-#    Screenshot too.
+#    sends on a hold) and KeyF21 (the Xbox Ally's left hold) are Guide too,
+#    so a long press does the same as a short one and never sends a Steam
+#    chord. TODO(hw): confirm which code the X20 sends on a hold.
+#  - No button is Screenshot. In Game Mode a screenshot is Steam's own chord,
+#    Xbox button + R1 (docs/inputplumber.md §6).
 #  - Paddles: unchanged from upstream.
+#  - 2026-11-20: the two top buttons changed places (Armoury Crate was
+#    QuickAccess, the action button Screenshot); the previous map is kept as
+#    ally-x20-steamos-aly2.legacy.yaml.
 
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v1.json
 # Schema version number
@@ -43,31 +55,31 @@ mapping:
       - keyboard: KeyF16
     target_event:
       gamepad:
-        button: QuickAccess
+        button: Guide
   - name: Armoury Crate (Top Left Long, Ally code)
     source_events:
       - keyboard: KeyProg1
     target_event:
       gamepad:
-        button: QuickAccess
+        button: Guide
   - name: Armoury Crate (Top Left Long, Xbox Ally code)
     source_events:
       - keyboard: KeyF21
     target_event:
       gamepad:
-        button: QuickAccess
-  - name: Capture (Top Right Short)
+        button: Guide
+  - name: Action (Top Right Short)
     source_events:
       - keyboard: KeyProg2
     target_event:
       gamepad:
-        button: Screenshot
-  - name: Capture (Top Right Long, Xbox Ally code)
+        button: QuickAccess
+  - name: Action (Top Right Long, Xbox Ally code)
     source_events:
       - keyboard: KeyF22
     target_event:
       gamepad:
-        button: Screenshot
+        button: QuickAccess
   - name: Left Paddle
     source_events:
       - keyboard: KeyF14

@@ -15,7 +15,7 @@ What to expect on an X20 with the patched hid-asus-ally (kernel 7.2.7-valve2)
 and qam_mode=0 (InputPlumber sets it; docs/inputplumber.md section 6):
   Xbox button          -> BTN_MODE from "ASUS ROG Ally X Gamepad"
   Armoury Crate (TL)   -> raw "5a a6 ..." then "5a 00 ...", KEY_F16
-  Capture (TR)         -> raw "5a a0 ..." then "5a 00 ...", KEY_PROG2
+  Action button (TR)   -> raw "5a a0 ..." then "5a 00 ...", KEY_PROG2
   A button             -> BTN_SOUTH
 Stock driver: the top-right button gives the raw report and no input event.
 
@@ -47,7 +47,7 @@ KEY_NAMES = {
     57: "KEY_SPACE", 102: "KEY_HOME", 103: "KEY_UP", 105: "KEY_LEFT", 106: "KEY_RIGHT",
     108: "KEY_DOWN", 113: "KEY_MUTE", 114: "KEY_VOLUMEDOWN", 115: "KEY_VOLUMEUP",
     116: "KEY_POWER", 125: "KEY_LEFTMETA", 139: "KEY_MENU", 148: "KEY_PROG1",
-    149: "KEY_PROG2 (X20 capture)", 167: "KEY_RECORD", 184: "KEY_F14", 185: "KEY_F15",
+    149: "KEY_PROG2 (X20 action button)", 167: "KEY_RECORD", 184: "KEY_F14", 185: "KEY_F15",
     186: "KEY_F16", 187: "KEY_F17", 188: "KEY_F18", 191: "KEY_F21", 192: "KEY_F22",
     202: "KEY_PROG3", 203: "KEY_PROG4",
     224: "KEY_BRIGHTNESSDOWN", 225: "KEY_BRIGHTNESSUP", 240: "KEY_UNKNOWN",

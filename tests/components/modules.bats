@@ -265,3 +265,107 @@ stage_build() {
     [ "${lines[0]}" = "https://github.com/cchulo/ally-x20-steamos/releases/download/v0.1.7" ]
     [ "${lines[1]}" = "https://github.com/cchulo/ally-x20-steamos/releases/latest/download" ]
 }
+
+# ------------------------------------------------------- partial builds --
+
+# stage_partial_build : the ASoC module could not be built (its patch does
+# not apply), hid-asus-ally is patched.
+stage_partial_build() {
+    local d="$BATS_TEST_TMPDIR/pbuild"
+    mkdir -p "$d"
+    patch_files
+    {
+        printf 'kver=%s\npartial=1\nlists_sha256=%s\n' "$KV" "$(modules_lists_digest)"
+        build_info_patches
+        printf 'module.snd-soc-acpi-amd-match=stock\n'
+        printf 'module.snd-soc-acpi-amd-match.reason=0001-a.patch does not apply to the %s source\n' "$KV"
+    } >"$d/BUILD-INFO"
+    printf 'h' >"$d/hid-asus-ally.ko.zst"
+    modules_stage "$KV" "$d" 1
+}
+
+@test "status: partial when a partial build is staged; the details name each module" {
+    stock_modules "nothing" "nothing"
+    component_apply modules
+    stage_partial_build
+    run component_status modules
+    [ "$output" = partial ]
+    run modules_status_detail
+    assert_output_contains "partial build staged for $KV: 1 patched, 1 stock, 0 already in this kernel"
+    run modules_probe_details
+    assert_success
+    assert_output_contains "hid-asus-ally: patched"
+    assert_output_contains "snd-soc-acpi-amd-match: stock (0001-a.patch does not apply to the $KV source)"
+    # Lockdown still wins: nothing of ours can load.
+    fixture_file /sys/kernel/security/lockdown "none [integrity] confidentiality"
+    run component_status modules
+    [ "$output" = stock ]
+}
+
+@test "status: stock when the partial build could not patch any module" {
+    stock_modules "nothing" "nothing"
+    component_apply modules
+    d="$BATS_TEST_TMPDIR/pbuild"
+    mkdir -p "$d"
+    patch_files
+    {
+        printf 'kver=%s\npartial=1\nlists_sha256=%s\n' "$KV" "$(modules_lists_digest)"
+        build_info_patches
+        printf 'module.snd-soc-acpi-amd-match=stock\nmodule.snd-soc-acpi-amd-match.reason=x\n'
+        printf 'module.hid-asus-ally=stock\nmodule.hid-asus-ally.reason=y\n'
+    } >"$d/BUILD-INFO"
+    modules_stage "$KV" "$d" 1
+    run component_status modules
+    [ "$output" = stock ]
+    run modules_status_detail
+    assert_output_contains "no module could be patched for $KV"
+}
+
+@test "boot re-apply leaves a partial modules component alone and starts no second build" {
+    stock_modules "nothing" "nothing"
+    component_apply modules
+    stage_partial_build
+    run "$CLI" --root "$AX20_ROOT" boot
+    assert_success
+    [[ "$output" != *"applying component: modules"* ]]
+    [[ "$output" != *"detached rebuild"* ]]
+    [ "$(jq -r '.components[] | select(.name == "modules") | .status' "$AX20_ROOT/var/lib/ally-x20-steamos/state/status.json")" = partial ]
+    [ "$(jq -r .kernel.modules_state "$AX20_ROOT/var/lib/ally-x20-steamos/state/status.json")" = partial ]
+}
+
+@test "rebuild command: a staged partial build is reused and reported again; --strict is passed on" {
+    component_apply modules
+    stage_partial_build
+    run env AX20_OFFLINE=1 "$CLI" --root "$AX20_ROOT" rebuild
+    assert_success
+    assert_output_contains "modules for $KV: cache"
+    assert_output_contains "the build for $KV is partial"
+    assert_output_contains "snd-soc-acpi-amd-match: stock module stays in use"
+    run "$CLI" --root "$AX20_ROOT" rebuild --help
+    assert_success
+    assert_output_contains "--strict"
+    # --strict reaches the container build as AX20_MODULES_STRICT=1.
+    rm -rf "$AX20_ROOT/etc/ally-x20-steamos/modules/$KV"
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    cat >"$BATS_TEST_TMPDIR/bin/podman" <<'P'
+#!/bin/sh
+printf '%s\n' "$*" >>"$PODMAN_LOG"
+[ "$1" = run ] && exit 1
+exit 0
+P
+    cat >"$BATS_TEST_TMPDIR/bin/curl" <<'P'
+#!/bin/sh
+case "$*" in *"-I https://github.com"*) exit 0 ;; esac
+exit 22
+P
+    chmod +x "$BATS_TEST_TMPDIR/bin/podman" "$BATS_TEST_TMPDIR/bin/curl"
+    run env PODMAN_LOG="$BATS_TEST_TMPDIR/podman.log" PATH="$BATS_TEST_TMPDIR/bin:$PATH" \
+        "$CLI" --root "$AX20_ROOT" rebuild --no-self-update --source container --strict
+    assert_failure
+    grep '^run ' "$BATS_TEST_TMPDIR/podman.log" | grep -q -- '-e PARTIAL=0'
+    : >"$BATS_TEST_TMPDIR/podman.log"
+    run env PODMAN_LOG="$BATS_TEST_TMPDIR/podman.log" PATH="$BATS_TEST_TMPDIR/bin:$PATH" \
+        "$CLI" --root "$AX20_ROOT" rebuild --no-self-update --source container
+    assert_failure
+    grep '^run ' "$BATS_TEST_TMPDIR/podman.log" | grep -q -- '-e PARTIAL=1'
+}

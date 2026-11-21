@@ -63,6 +63,15 @@ v0.1.4 have placeholder keys and code that does not understand them),
 repeat the **Install** steps from a fresh clone: re-running `install` is
 safe and moves the installed copy to that release.
 
+**Supported: SteamOS stable only.** The project is developed and tested
+against the SteamOS **stable** channel, and release module builds exist
+only for its kernels. On the beta, preview or main channel it may work in
+part: a component that cannot be applied is skipped while the others are
+installed, a kernel patch that does not apply leaves that driver stock
+while the others are still built, and `status` shows what was left out and
+why. Using those channels is your own decision and your own risk: **no
+support is provided for anything other than SteamOS stable.**
+
 **Check** that everything is active: `sudo ./ally-x20-steamos.sh status`.
 **Remove** it: `sudo ./ally-x20-steamos.sh uninstall`. Details, including
 SteamOS updates and troubleshooting: [user guide](docs/user-guide.md),
@@ -107,6 +116,10 @@ level-matched A/B on the device; `apply` removes them from older installs
   into the shared `/home` partition (SteamOS has a separate 256 MiB `var`
   per slot). A RAUC hook and a boot service re-derive `/etc` drop-ins, the
   boot entry and the kernel modules for a freshly staged slot.
+- **One failure does not take the rest down.** A component that cannot be
+  applied is skipped and recorded; the others are applied. A kernel patch
+  that does not apply leaves its module stock; the other modules are built.
+  Release builds stay strict: a release never ships a partial module set.
 - **Never a broken boot.** Patched modules load only when the running kernel
   matches the build; otherwise stock behaviour. A custom gamescope that does
   not accept the session's flags execs the stock one.
@@ -131,10 +144,10 @@ ally-x20-steamos.sh [--root <dir>] [--dry-run] [--verbose] [--yes] [--i-know] <c
 | Command | Purpose |
 |---|---|
 | `install` | bootstrap: clone to `/var/lib/ally-x20-steamos/src`, pin keys, `apply`, `status` |
-| `apply [--slot <mount>] [--only <c>] [--missing-only] [--verify-only]` | (re)install components here or into a mounted slot; idempotent |
-| `status [--json] [--verbose]` | per component `active` / `stock` / `superseded` / `n/a`, kernel, policy |
+| `apply [--slot <mount>] [--only <c>] [--missing-only] [--verify-only]` | (re)install components here or into a mounted slot; idempotent. A component that fails is skipped, the others are applied, exit code 4 |
+| `status [--json] [--verbose]` | per component `active` / `partial` / `stock` / `superseded` / `n/a` and what the last apply did to it, kernel, policy |
 | `probe [--notify]` | "has SteamOS caught up?" per component |
-| `rebuild [--kver <v>]` | fetch or build the patched kernel modules (cache → release asset → container build) |
+| `rebuild [--kver <v>] [--strict]` | fetch or build the patched kernel modules (cache → release asset → container build; a container build may be partial on an unsupported kernel) |
 | `self-update [--channel stable\|beta] [--check] [--rollback]` | signed-tag update of the checkout, migrations, re-apply |
 | `buttons status\|layout [deck\|legacy]` | what the two top buttons do: `deck` (default) = action button opens Quick Access, Armoury Crate is the Steam button; `legacy` = Armoury Crate opens Quick Access, action button takes a screenshot |
 | `power status\|tdp-slider [on\|off]` | power profiles; the TDP slider test switch (default off) |
@@ -147,6 +160,12 @@ ally-x20-steamos.sh [--root <dir>] [--dry-run] [--verbose] [--yes] [--i-know] <c
 | `uninstall [--superseded] [--component <c>] [--force] [--keep-state] [--reboot]` | remove what we added, restore saved originals |
 | `components`, `version`, `help` | introspection |
 
+Exit codes of `install`, `apply` and `self-update`: `0` done, `1` error,
+`2` usage, `3` (`self-update`) offline, `4` done except for components that
+failed and were skipped. The outcome per component of the last run is kept
+in `/var/lib/ally-x20-steamos/state/last-apply.json`
+([schema](docs/architecture.md#statelast-applyjson)).
+
 `boot`, `notify` and `rauc-handler` are internal entry points for the systemd
 units and RAUC. Every command accepts `--root <dir>` and runs unchanged
 against a fixture tree, which is how the test suite works.
@@ -154,7 +173,7 @@ against a fixture tree, which is how the test suite works.
 ## Repository layout
 
 ```
-ally-x20-steamos.sh   CLI dispatcher            lib/          common, manifest, probes, component, retired, slots, rauc, modules, selfupdate, status, notify
+ally-x20-steamos.sh   CLI dispatcher            lib/          common, manifest, probes, component, retired, slots, rauc, modules, selfupdate, status, lastapply, notify
 cmd/                  one file per command      components/   audio, hdr, inputplumber, modules, power, sdexpress, surround, update, xboxled
 overlay/              files installed on the device (manifest-tracked)   uninstall/   standalone POSIX uninstaller
 patches/kernel/       0001-0008 ASoC (audio), 0010-0015 hid-asus-ally, 0020 asus-armoury   patches/{gamescope,libdisplay-info}/
@@ -323,6 +342,41 @@ manual GPU clock. [docs/power.md](docs/power.md).
 
 **Is it safe to run `apply` repeatedly?** Yes. It only rewrites what differs
 and the boot service and update handler run it themselves.
+
+**Can I use the SteamOS beta, preview or main channel?** You can, but it is
+not supported. Only SteamOS **stable** is. On the other channels the kernel
+and the system are newer than what this project was written and tested
+for, so parts of it may not fit. What happens then: a component that cannot
+be applied is skipped and the rest is installed (`install` and `apply` end
+with exit code 4 and a list of what failed); a kernel patch that does not
+apply leaves that driver as SteamOS ships it while the other drivers are
+still patched (`status` shows `modules: partial` and lists each driver).
+Whatever stops working there is on you; going back to stable is the fix
+this project offers. Set `update-policy degrade` on those channels, because
+the default `block` holds back a SteamOS update whose kernel only gets a
+partial driver build. Details:
+[docs/kernel-modules.md](docs/kernel-modules.md#supported-kernels).
+
+**`install` or `apply` said a component failed. What now?** The other
+components were installed. `sudo ./ally-x20-steamos.sh status` shows the
+`LAST APPLY` column and, under the table, the reason for each failure; the
+same is kept in `/var/lib/ally-x20-steamos/state/last-apply.json`. Fix the
+cause and run `apply` again, or remove the half-installed component with
+`uninstall --component <name>`.
+
+**`rebuild` fails with `no space left on device`.** The driver build runs
+in a podman container, and root's podman storage is under `/var`, a small
+partition on SteamOS. Point podman at `/home` for that command with
+`CONTAINERS_STORAGE_CONF`:
+[docs/kernel-modules.md](docs/kernel-modules.md#podman-storage). (Reported
+by a user on SteamOS 3.10.1 preview; not reproduced by the owner.)
+
+**`self-update` says the checkout has local modifications.** It refuses to
+update over any edited, added or removed file in
+`/var/lib/ally-x20-steamos/src` and never discards them. If you changed the
+patch set by hand (for example to get a build on a preview kernel), put the
+files back first: `git -C /var/lib/ally-x20-steamos/src status` lists them.
+[docs/self-update.md](docs/self-update.md#local-modifications).
 
 ## Credits
 

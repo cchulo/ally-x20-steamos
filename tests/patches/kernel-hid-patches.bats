@@ -71,15 +71,16 @@ hid_patches() {
     done
 }
 
-@test "modules-hid.list is <patch>\\t<M= dir>\\t<ko> and references existing patches" {
+@test "modules-hid.list is <patch>\\t<M= dir>\\t<ko>[\\t<options>] and references existing patches" {
     [ -f "$LIST" ]
     n=0
     while IFS= read -r line || [ -n "$line" ]; do
         [ -n "$line" ] || continue
         n=$((n + 1))
         fields="$(printf '%s\n' "$line" | awk -F '\t' '{print NF}')"
-        [ "$fields" -eq 3 ] || {
-            echo "not 3 tab-separated fields: $line"
+        # Three fields, plus the optional fourth (required/optional/needs=).
+        [ "$fields" -eq 3 ] || [ "$fields" -eq 4 ] || {
+            echo "not 3 or 4 tab-separated fields: $line"
             false
         }
         patch="$(printf '%s\n' "$line" | cut -f1)"
@@ -188,4 +189,26 @@ hid_patches() {
     grep -q '^+	&dev_attr_xbox_button_light.attr,' "$p"
     grep -q '^+What:		/sys/class/leds/<led>/xbox_button_light' "$p"
     grep -q '^0016-' "$PATCH_DIR/modules-hid.list"
+}
+
+@test "modules-hid.list: the ring fix (0010, 0011) is required, the later patches are optional, needs= resolves" {
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/build/build-modules.sh"
+    BM_ENTRIES_FULL=$(bm_list_entries_full "$PATCH_DIR")
+    BM_ENTRIES=$(printf '%s\n' "$BM_ENTRIES_FULL" | cut -f1-3)
+    for n in 0010 0011; do
+        ! bm_entry_optional "$(basename "$(ls "$PATCH_DIR"/$n-*.patch)")" hid-asus-ally
+    done
+    for n in 0012 0013 0014 0015 0016; do
+        bm_entry_optional "$(basename "$(ls "$PATCH_DIR"/$n-*.patch)")" hid-asus-ally
+    done
+    # 0015 changes how the key reported by 0012 is released.
+    [ "$(bm_patch_needs "$(basename "$(ls "$PATCH_DIR"/0015-*.patch)")")" = 0012 ]
+    # 0016 extends the Aura code added by 0011.
+    [ "$(bm_patch_needs "$(basename "$(ls "$PATCH_DIR"/0016-*.patch)")")" = 0011 ]
+    # Every needs= in every list names one earlier patch.
+    bm_check_needs
+    # The audio and power patches stay required: those modules are built
+    # with all of their patches or not at all.
+    [ -z "$(printf '%s\n' "$BM_ENTRIES_FULL" | awk -F'\t' '$3 != "hid-asus-ally" && $4 != "required"')" ]
 }

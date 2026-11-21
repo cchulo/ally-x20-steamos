@@ -251,6 +251,47 @@ hook_env() {
     assert_failure
 }
 
+# stage_partial_for <kver> : a partial build made from the checkout's real
+# patches: hid-asus-ally patched, every other module left stock.
+stage_partial_for() {
+    (
+        # shellcheck disable=SC1091
+        . "$REPO_ROOT/lib/modules.sh"
+        d="$BATS_TEST_TMPDIR/partial"
+        mkdir -p "$d"
+        {
+            printf 'format=2\nkver=%s\npartial=1\nlists_sha256=%s\n' "$1" "$(modules_lists_digest)"
+            for p in $(modules_list_entries | cut -f1 | sort -u); do
+                printf 'patch.%s=%s\n' "$p" "$(ax20_sha256 "$(modules_patches_dir)/$p")"
+            done
+            for n in $(modules_list_names); do
+                [ "$n" = hid-asus-ally ] && continue
+                printf 'module.%s=stock\nmodule.%s.reason=its patch does not apply\n' "$n" "$n"
+            done
+        } >"$d/BUILD-INFO"
+        printf 'ko' >"$d/hid-asus-ally.ko.zst"
+        modules_stage "$1" "$d" 1
+    ) 2>/dev/null
+}
+
+@test "pre-install hook: a partial build for the incoming kernel is blocked under policy block, let through under degrade" {
+    hook_env
+    stage_partial_for 7.9.0-test
+    AX20_INCOMING_KVER=7.9.0-test run "$REPO_ROOT/overlay/rauc/pre-install.hook"
+    assert_failure
+    assert_output_contains "only a partial build of the kernel modules is possible for incoming kernel 7.9.0-test"
+    assert_output_contains "blocking this SteamOS update (policy: block)"
+    grep -q '^kver=7.9.0-test$' "$AX20_ROOT/var/lib/ally-x20-steamos/state/update-blocked"
+    "$FAKE_CLI" --root "$AX20_ROOT" update-policy degrade
+    AX20_INCOMING_KVER=7.9.0-test run "$REPO_ROOT/overlay/rauc/pre-install.hook"
+    assert_success
+    assert_output_contains "continuing (policy: degrade)"
+    assert_output_contains "without support"
+    [ ! -e "$AX20_ROOT/var/lib/ally-x20-steamos/state/update-blocked" ]
+    # Nothing is left to rebuild: the partial build is what this kernel gets.
+    [ ! -e "$AX20_ROOT/var/lib/ally-x20-steamos/state/pending-rebuild" ]
+}
+
 @test "pre-install hook: passes when modules exist or the kernel is unknown" {
     hook_env
     mkdir -p "$AX20_ROOT/etc/ally-x20-steamos/modules/7.9.0-test"

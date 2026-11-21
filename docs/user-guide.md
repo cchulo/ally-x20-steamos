@@ -95,6 +95,11 @@ removed** again, restoring the saved originals byte for byte (see
 
 ## Before you start
 
+- Stay on the SteamOS **stable** channel (Settings → System → System Update
+  Channel: Stable). It is the only channel this project supports. On Beta,
+  Preview or Main it may work in part: the pieces that do not fit that
+  system are left out and reported by `status`. You are on your own there;
+  no support is provided.
 - SteamOS's **read-only mode stays on** (the default). Do not run
   `steamos-readonly disable`; the installer refuses to run if you did.
 - Set a password for the `deck` user so `sudo` works. In Desktop Mode, open
@@ -159,8 +164,15 @@ drivers are ready for it, then one line per part:
 | `active` | installed and working as installed |
 | `stock` | not in place right now (for example after an update); the boot service puts it back |
 | `superseded` | SteamOS now has its own fix; you can remove ours (see [Updating](#updating)) |
+| `partial` | (patched drivers only) some drivers are patched, others are SteamOS's own because our patch does not fit this kernel. This happens outside the stable channel; the status lists which |
 | `n/a` | cannot be checked on this machine |
 | `error` | something went wrong; see [Troubleshooting](#troubleshooting) |
+
+The `LAST APPLY` column says what happened to each part the last time it
+was installed or re-applied: `applied`, `unchanged`, `failed` or `skipped`.
+A part that failed is skipped and the others are still installed; the
+reason is printed under the table and kept in
+`/var/lib/ally-x20-steamos/state/last-apply.json`.
 
 Then, in Game Mode:
 
@@ -327,6 +339,24 @@ If the buttons are still wrong, re-apply the controller profile too:
 the shutdown hook did not run (for example the reset was started outside
 Steam), run `sudo sh /efi/EFI/steamos/ally-x20-steamos-cleanup.sh`
 (details under [Uninstall](#uninstall)).
+
+**A part shows `failed` in the LAST APPLY column.** That part could not be
+installed and was skipped; everything else was installed. The reason is
+under the status table. If it says something you can fix (no network, no
+space), fix it and run `sudo ./ally-x20-steamos.sh apply` again. If you are
+not on the SteamOS stable channel, the part may simply not fit your system
+version; that is not supported.
+
+**The patched drivers show `partial`.** Some of our kernel patches do not
+fit the kernel you are running, so only some drivers are patched; the
+status lists which ones and why the others are not. This is expected on the
+Beta, Preview and Main channels and is not supported. On the stable
+channel it should not happen: please report it.
+
+**`rebuild` fails with "no space left on device".** The driver build runs
+in a container, and podman stores its images under `/var`, which is small
+on SteamOS. [kernel-modules.md](kernel-modules.md#podman-storage) shows how
+to point podman at `/home` for that command.
 
 **Collecting information for a bug report.**
 

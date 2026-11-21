@@ -101,7 +101,9 @@ more.
 
 ## What the script then does
 
-1. Reads every `patches/kernel/modules*.list` (`<patch>\t<M= dir>\t<ko>`).
+1. Reads every `patches/kernel/modules*.list`
+   (`<patch>\t<M= dir>\t<ko>[\t<options>]`; the options `required`,
+   `optional` and `needs=<patch>` only matter for partial builds).
    Every file a patch touches must be under one of the `M=` dirs it is
    listed with, otherwise a headers-based build would silently ignore it.
    Two exceptions: `Documentation/` (not applied) and `include/` (see 3).
@@ -115,7 +117,10 @@ more.
    tag or newer: a backport that had to be adjusted for an older tree no
    longer reverse-applies on the tree that carries the original. A module whose patches are all
    upstream is not built and is recorded as `module.<name>=superseded`.
-   A patch that applies neither way fails the build.
+   A patch that applies neither way fails the build (strict, the default
+   and what CI uses), or, with `--partial` / `PARTIAL=1` (what `rebuild`
+   uses on a device), is left out and the modules that need it stay stock;
+   the rules are in [docs/kernel-modules.md](../docs/kernel-modules.md#partial-builds).
 3. `make -C <headers> M=<work>/<dir> <name>.ko…` for each distinct dir,
    naming only the listed modules (kbuild single targets), so a dir such as
    `sound/soc/codecs` does not build every configured codec. When an applied
@@ -180,6 +185,10 @@ podman run --rm --userns=keep-id --security-opt label=disable \
   -e KVER="$(uname -r)" -e CHANNEL=jupiter-main -e HOME=/tmp \
   localhost/ally-x20-steamos-build
 ```
+
+Add `-e PARTIAL=1` to let the build leave out patches that do not apply to
+that kernel (a partial build; unsupported kernels only). Without it the
+build is strict and fails on the first such patch.
 
 ### On a PC (Fedora or any Linux with podman)
 

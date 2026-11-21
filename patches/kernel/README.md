@@ -13,7 +13,11 @@ in [`README-hid.md`](README-hid.md) and listed in `modules-hid.list`. The
 `asus-armoury` power-limits patch (`0020`, for Steam's TDP slider, which is not exposed because BIOS `RC74XA.303` ignores PPT writes; see
 [0020](#0020-asus-armoury-rc74xa-power-limits) and
 [`docs/power.md`](../../docs/power.md)) is listed in `modules-power.list`.
-The build script reads every `modules*.list` file. Note the difference in source
+The build script reads every `modules*.list` file; a line is
+`<patch> <M= dir> <module>` (tab separated) with an optional fourth field of
+options (`required`, the default; `optional`; `needs=<patch>`), explained in
+[`docs/kernel-modules.md`](../../docs/kernel-modules.md#partial-builds). The
+audio and power patches are all required. Note the difference in source
 trees: `0001`/`0002` apply to linux-stable `v7.2.7` and Valve's tree
 alike, `0003`–`0008` were checked against Valve's `7.2.7-valve2` only, and
 `hid-asus-ally.c` exists only in Valve's tree.

@@ -66,7 +66,10 @@ install_demo() {
     assert_output_contains "update policy:           block"
     assert_output_contains "last self-update check:  never"
     [[ "$output" != *"audio DSP"* ]]
-    echo "$output" | grep -Eq '^demo +stock +demo component$'
+    echo "$output" | grep -Eq '^COMPONENT +STATUS +LAST APPLY +DESCRIPTION$'
+    # No apply has been recorded on this root: the column shows "-".
+    echo "$output" | grep -Eq '^demo +stock +- +demo component$'
+    [[ "$output" != *"Last apply:"* ]]
 }
 
 @test "status follows the component lifecycle: stock, active, superseded, n/a" {
@@ -169,4 +172,68 @@ L
     run "$src/ally-x20-steamos.sh" status --json
     assert_success
     grep -q '"writer":"lib/status.sh"' "$AX20_ROOT$STATE/state/status.json"
+}
+
+# ------------------------------------------- partial kernel-module build --
+
+# partial_modules_fixture : module lists with two modules and, staged for the
+# running kernel, a partial build: hid-asus-ally patched without one
+# optional patch, snd-acp-config left stock.
+partial_modules_fixture() {
+    export AX20_PATCHES_DIR="$BATS_TEST_TMPDIR/patches"
+    mkdir -p "$AX20_PATCHES_DIR"
+    printf '0002-acp.patch\tsound/soc/amd\tsnd-acp-config.ko\n' >"$AX20_PATCHES_DIR/modules.list"
+    printf '0010-ring.patch\tdrivers/hid\thid-asus-ally.ko\n0012-key.patch\tdrivers/hid\thid-asus-ally.ko\toptional\n' >"$AX20_PATCHES_DIR/modules-hid.list"
+    for p in 0002-acp 0010-ring 0012-key; do printf '%s\n' "$p" >"$AX20_PATCHES_DIR/$p.patch"; done
+    (
+        source_libs
+        # shellcheck disable=SC1091
+        . "$REPO_ROOT/lib/modules.sh"
+        d="$BATS_TEST_TMPDIR/build"
+        mkdir -p "$d"
+        {
+            printf 'format=2\nkver=%s\npartial=1\nlists_sha256=%s\n' "$AX20_KVER" "$(modules_lists_digest)"
+            for p in 0002-acp 0010-ring 0012-key; do
+                printf 'patch.%s.patch=%s\n' "$p" "$(ax20_sha256 "$AX20_PATCHES_DIR/$p.patch")"
+            done
+            printf 'module.hid-asus-ally.without=0012-key.patch\n'
+            printf 'module.snd-acp-config=stock\n'
+            printf 'module.snd-acp-config.reason=0002-acp.patch does not apply to the %s source\n' "$AX20_KVER"
+        } >"$d/BUILD-INFO"
+        printf 'ko' >"$d/hid-asus-ally.ko.zst"
+        modules_stage "$AX20_KVER" "$d" 1
+    ) 2>/dev/null
+}
+
+@test "a partial module build is shown as partial, with every module's state and the reason for stock" {
+    partial_modules_fixture
+    run "$CLI" status
+    assert_success
+    assert_output_contains "modules staged for it:   partial (1 patched, 1 stock, 0 already in this kernel)"
+    assert_output_contains "Kernel modules for $AX20_KVER:"
+    echo "$output" | grep -Eq '^  hid-asus-ally +patched \(without 0012-key\.patch\)$'
+    echo "$output" | grep -Eq "^  snd-acp-config +stock: 0002-acp\.patch does not apply to the $AX20_KVER source\$"
+    assert_output_contains "Only SteamOS stable is supported"
+    run "$CLI" status --json
+    assert_success
+    printf '%s\n' "$output" >"$BATS_TEST_TMPDIR/out.json"
+    json_ok "$BATS_TEST_TMPDIR/out.json"
+    [ "$(json_get "$BATS_TEST_TMPDIR/out.json" .kernel.modules_staged)" = true ]
+    [ "$(json_get "$BATS_TEST_TMPDIR/out.json" .kernel.modules_state)" = partial ]
+    [ "$(json_get "$BATS_TEST_TMPDIR/out.json" .kernel.modules[0].name)" = hid-asus-ally ]
+    [ "$(json_get "$BATS_TEST_TMPDIR/out.json" .kernel.modules[0].state)" = patched ]
+    [ "$(json_get "$BATS_TEST_TMPDIR/out.json" .kernel.modules[0].detail)" = "without 0012-key.patch" ]
+    [ "$(json_get "$BATS_TEST_TMPDIR/out.json" .kernel.modules[1].state)" = stock ]
+    [ "$(json_get "$BATS_TEST_TMPDIR/out.json" .kernel.modules[1].detail)" = "0002-acp.patch does not apply to the $AX20_KVER source" ]
+    [ "$(json_get "$BATS_TEST_TMPDIR/out.json" .last_apply)" = null ] || [ "$(json_get "$BATS_TEST_TMPDIR/out.json" .last_apply)" = None ]
+}
+
+@test "without a staged build the module list is empty, the state is none and no module block is printed" {
+    run "$CLI" status --json
+    assert_success
+    printf '%s\n' "$output" >"$BATS_TEST_TMPDIR/out.json"
+    json_ok "$BATS_TEST_TMPDIR/out.json"
+    [ "$(json_get "$BATS_TEST_TMPDIR/out.json" .kernel.modules_state)" = none ]
+    run "$CLI" status
+    [[ "$output" != *"Kernel modules for"* ]]
 }

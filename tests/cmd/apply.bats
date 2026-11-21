@@ -89,13 +89,176 @@ setup() {
     assert_failure 2
 }
 
-@test "a failing component does not stop the others; exit 1 and recorded" {
+@test "a failing component does not stop the others; exit 4, summary, and recorded" {
     demo_components
     broken_component
     run "$FAKE_CLI" --root "$AX20_ROOT" apply
-    assert_failure 1
+    assert_failure 4
+    [ -f "$AX20_ROOT/etc/demo.d/ally-x20-steamos-a.conf" ]
     [ -f "$AX20_ROOT/etc/demo.d/ally-x20-steamos-b.conf" ]
     [ "$(jq -r .failed "$AX20_ROOT/var/lib/ally-x20-steamos/state/status.json")" = broken ]
+    assert_output_contains "applied: alpha beta"
+    assert_output_contains "error: failed: broken"
+    assert_output_contains "broken: boom"
+    assert_output_contains "1 component(s) failed and were skipped; the others were applied. Details: /var/lib/ally-x20-steamos/state/last-apply.json"
+}
+
+# ------------------------------------------------- state/last-apply.json --
+
+LA=/var/lib/ally-x20-steamos/state/last-apply.json
+
+la_get() { jq -r "$1" "$AX20_ROOT$LA"; }
+
+@test "last-apply.json: schema, run header, and one entry per component with outcome and reason" {
+    demo_components
+    broken_component
+    fixture_file /etc/os-release 'NAME="SteamOS"
+VERSION_ID=3.10.1
+BUILD_ID=20261110.100
+'
+    fixture_file /var/lib/steamos-branch "preview
+"
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply
+    assert_failure 4
+    jq -e . "$AX20_ROOT$LA" >/dev/null
+    [ "$(la_get .schema)" = 1 ]
+    [ "$(la_get .name)" = ally-x20-steamos ]
+    [ "$(la_get .command)" = apply ]
+    [ "$(la_get .result)" = failed ]
+    [ "$(la_get .exit_code)" = 4 ]
+    [ "$(la_get .version)" = "$(cat "$REPO_ROOT/VERSION")" ]
+    [ "$(la_get .kernel)" = 7.2.7-valve2-test ]
+    [ "$(la_get .steamos.version)" = 3.10.1 ]
+    [ "$(la_get .steamos.build)" = 20261110.100 ]
+    [ "$(la_get .steamos.branch)" = preview ]
+    [ "$(la_get .steamos.supported)" = false ]
+    la_get .when | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$'
+    [ "$(la_get '[.components[].name] | join(" ")')" = "alpha beta broken native" ]
+    [ "$(la_get '.components[] | select(.name == "alpha") | .outcome')" = applied ]
+    [ "$(la_get '.components[] | select(.name == "alpha") | .command')" = apply ]
+    [ "$(la_get '.components[] | select(.name == "alpha") | has("reason")')" = false ]
+    [ "$(la_get '.components[] | select(.name == "broken") | .outcome')" = failed ]
+    [ "$(la_get '.components[] | select(.name == "broken") | .reason')" = boom ]
+    [ "$(la_get '.components[] | select(.name == "broken") | .errors | join("|")')" = "applying component: broken|boom" ]
+    [ "$(la_get '.components[] | select(.name == "native") | .outcome')" = skipped ]
+    [ "$(la_get '.components[] | select(.name == "native") | .reason')" = "stock SteamOS provides this" ]
+}
+
+@test "last-apply.json: the stable branch is supported, an unknown one is null; a second apply reports unchanged" {
+    demo_components
+    fixture_file /var/lib/steamos-branch "rel
+"
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply
+    assert_success
+    [ "$(la_get .result)" = ok ]
+    [ "$(la_get .exit_code)" = 0 ]
+    [ "$(la_get .steamos.supported)" = true ]
+    [ "$(la_get '.components[] | select(.name == "alpha") | .outcome')" = applied ]
+    rm "$AX20_ROOT/var/lib/steamos-branch"
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply
+    assert_success
+    assert_output_contains "unchanged: alpha beta"
+    [ "$(la_get .steamos.branch)" = "" ]
+    [ "$(la_get .steamos.supported)" = null ]
+    [ "$(la_get '.components[] | select(.name == "alpha") | .outcome')" = unchanged ]
+    [ "$(la_get '.components[] | select(.name == "beta") | .outcome')" = unchanged ]
+    # A file that drifted and is put back counts as applied again.
+    printf 'tampered\n' >"$AX20_ROOT/etc/demo.d/ally-x20-steamos-a.conf"
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply
+    assert_success
+    [ "$(la_get '.components[] | select(.name == "alpha") | .outcome')" = applied ]
+    [ "$(la_get '.components[] | select(.name == "beta") | .outcome')" = unchanged ]
+}
+
+@test "last-apply.json: a run that leaves a component alone keeps its previous entry" {
+    demo_components
+    broken_component
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply
+    assert_failure 4
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply --only beta
+    assert_success
+    [ "$(la_get .command)" = "apply --only beta" ]
+    [ "$(la_get .result)" = ok ]
+    [ "$(la_get '.components[] | select(.name == "beta") | .command')" = "apply --only beta" ]
+    [ "$(la_get '.components[] | select(.name == "beta") | .outcome')" = unchanged ]
+    # The failure from the earlier run is still on record.
+    [ "$(la_get '.components[] | select(.name == "broken") | .outcome')" = failed ]
+    [ "$(la_get '.components[] | select(.name == "broken") | .command')" = apply ]
+    [ "$(la_get '.components[] | select(.name == "broken") | .reason')" = boom ]
+    # Once it applies, the entry is replaced; a removed component is dropped.
+    printf 'COMPONENT_DESCRIPTION="fixed"\nbroken_files() { :; }\nbroken_probe() { return 1; }\n' >"$AX20_COMPONENTS_DIR/broken.sh"
+    rm "$AX20_COMPONENTS_DIR/native.sh"
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply --only broken
+    assert_success
+    [ "$(la_get '.components[] | select(.name == "broken") | .outcome')" = applied ]
+    [ "$(la_get '[.components[].name] | join(" ")')" = "alpha beta broken" ]
+}
+
+@test "a component whose files cannot all be installed installs none of them and is recorded as failed" {
+    demo_components
+    cat >"$AX20_COMPONENTS_DIR/twofiles.sh" <<'C'
+COMPONENT_DESCRIPTION="two files, the second destination is taken"
+twofiles_files() {
+    printf 'demo/a.conf\t/etc/demo.d/ally-x20-steamos-two-1.conf\t0644\n'
+    printf 'demo/b.conf\t/etc/demo.d/ally-x20-steamos-two-2.conf\t0644\n'
+}
+twofiles_probe() { return 1; }
+C
+    fixture_file /etc/demo.d/ally-x20-steamos-two-2.conf "someone else's file"
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply
+    assert_failure 4
+    [ ! -e "$AX20_ROOT/etc/demo.d/ally-x20-steamos-two-1.conf" ]
+    [ "$(cat "$AX20_ROOT/etc/demo.d/ally-x20-steamos-two-2.conf")" = "someone else's file" ]
+    ! grep -q 'ally-x20-steamos-two-' "$AX20_ROOT/var/lib/ally-x20-steamos/manifest"
+    [ -f "$AX20_ROOT/etc/demo.d/ally-x20-steamos-b.conf" ]
+    [ "$(la_get '.components[] | select(.name == "twofiles") | .outcome')" = failed ]
+    la_get '.components[] | select(.name == "twofiles") | .reason' | grep -q 'refusing to overwrite /etc/demo.d/ally-x20-steamos-two-2.conf'
+    # status shows the outcome per component and the reason.
+    run "$FAKE_CLI" --root "$AX20_ROOT" status
+    assert_success
+    echo "$output" | grep -Eq '^twofiles +stock +failed +two files'
+    echo "$output" | grep -Eq '^alpha +active +applied +alpha$'
+    echo "$output" | grep -Eq '^native +superseded +skipped +'
+    assert_output_contains 'Last apply: '
+    assert_output_contains 'some components failed (record: /var/lib/ally-x20-steamos/state/last-apply.json)'
+    assert_output_contains 'twofiles failed ('
+    assert_output_contains 'refusing to overwrite /etc/demo.d/ally-x20-steamos-two-2.conf'
+    run "$FAKE_CLI" --root "$AX20_ROOT" status --json
+    assert_success
+    printf '%s\n' "$output" >"$BATS_TEST_TMPDIR/s.json"
+    [ "$(jq -r .last_apply.file "$BATS_TEST_TMPDIR/s.json")" = "$LA" ]
+    [ "$(jq -r .last_apply.result "$BATS_TEST_TMPDIR/s.json")" = failed ]
+    [ "$(jq -r '.components[] | select(.name == "twofiles") | .last_apply' "$BATS_TEST_TMPDIR/s.json")" = failed ]
+    jq -r '.components[] | select(.name == "twofiles") | .last_apply_reason' "$BATS_TEST_TMPDIR/s.json" | grep -q 'refusing to overwrite'
+    [ "$(jq -r '.components[] | select(.name == "alpha") | .last_apply' "$BATS_TEST_TMPDIR/s.json")" = applied ]
+}
+
+@test "boot: a component that fails to re-apply never fails the boot service; it is recorded and notified" {
+    demo_components
+    "$FAKE_CLI" --root "$AX20_ROOT" apply 2>/dev/null
+    before=$(cat "$AX20_ROOT$LA")
+    # Nothing drifted: the boot run leaves the record alone.
+    run "$FAKE_CLI" --root "$AX20_ROOT" boot
+    assert_success
+    [ "$(cat "$AX20_ROOT$LA")" = "$before" ]
+    # After an "update" alpha's file is gone and its apply step now fails;
+    # beta's file is gone too and comes back.
+    rm "$AX20_ROOT/etc/demo.d/ally-x20-steamos-a.conf" "$AX20_ROOT/etc/demo.d/ally-x20-steamos-b.conf"
+    printf 'alpha_apply() { log_error "alpha does not fit this SteamOS"; return 1; }\n' >>"$AX20_COMPONENTS_DIR/alpha.sh"
+    run "$FAKE_CLI" --root "$AX20_ROOT" boot
+    assert_success
+    [ -f "$AX20_ROOT/etc/demo.d/ally-x20-steamos-b.conf" ]
+    [ "$(la_get .command)" = boot ]
+    [ "$(la_get .result)" = failed ]
+    [ "$(la_get .exit_code)" = 0 ]
+    [ "$(la_get '.components[] | select(.name == "alpha") | .outcome')" = failed ]
+    [ "$(la_get '.components[] | select(.name == "alpha") | .reason')" = "alpha does not fit this SteamOS" ]
+    [ "$(la_get '.components[] | select(.name == "beta") | .outcome')" = applied ]
+    [ "$(la_get '.components[] | select(.name == "beta") | .command')" = boot ]
+    # native was not touched by the boot run: its entry is from the apply.
+    [ "$(la_get '.components[] | select(.name == "native") | .command')" = apply ]
+    grep -qx 'failed=alpha' "$AX20_ROOT/var/lib/ally-x20-steamos/state/notify"
+    grep -qx 'reapplied=beta' "$AX20_ROOT/var/lib/ally-x20-steamos/state/notify"
 }
 
 @test "--verify-only reports drift, exits 1, and writes nothing" {
@@ -135,6 +298,10 @@ setup() {
     [ ! -e "$AX20_ROOT/etc/demo.d/ally-x20-steamos-a.conf" ]
     [ "$(jq -r .kver "$slot/var/lib/ally-x20-steamos/state/status.json")" = 7.3.0-valve1-neptune ]
     [ "$(jq -r .slot "$slot/var/lib/ally-x20-steamos/state/status.json")" = B ]
+    # The record of a slot run has its own file: it is about another slot.
+    [ "$(jq -r .command "$slot/var/lib/ally-x20-steamos/state/last-apply-slot.json")" = "apply --slot" ]
+    [ "$(jq -r .kernel "$slot/var/lib/ally-x20-steamos/state/last-apply-slot.json")" = 7.3.0-valve1-neptune ]
+    [ ! -e "$slot/var/lib/ally-x20-steamos/state/last-apply.json" ]
 }
 
 @test "--slot rejects a missing mount point" {

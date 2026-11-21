@@ -251,3 +251,163 @@ M
     MODPROBE_LOG="$BATS_TEST_TMPDIR/modprobe.log" PATH="$BATS_TEST_TMPDIR/bin:$PATH" sh -c "$cmd"
     [ "$(cat "$BATS_TEST_TMPDIR/modprobe.log")" = "--ignore-install hid-asus-ally opt=1" ]
 }
+
+# ------------------------------------------------------- partial builds --
+
+# make_partial_build <dir> <kver> : what `build-modules.sh --partial` leaves
+# when the ASoC patch does not apply: hid-asus-ally built without one
+# optional patch, snd-soc-acpi-amd-match left stock.
+make_partial_build() {
+    make_build "$1" "$2" hid-asus-ally
+    {
+        printf 'partial=1\n'
+        printf 'lists_sha256=%s\n' "$(modules_lists_digest)"
+        printf 'patch.0001-a.patch.status=failed\n'
+        printf 'patch.0001-a.patch.reason=does not apply to the %s source\n' "$2"
+        printf 'module.hid-asus-ally.without=0011-h.patch\n'
+        printf 'module.snd-soc-acpi-amd-match=stock\n'
+        printf 'module.snd-soc-acpi-amd-match.reason=0001-a.patch does not apply to the %s source\n' "$2"
+    } >>"$1/BUILD-INFO"
+}
+
+@test "a list line may carry options; names and three-column entries are unchanged" {
+    printf '0010-h.patch\tdrivers/hid\thid-asus-ally.ko\n0011-h.patch\tdrivers/hid\thid-asus-ally.ko\toptional,needs=0010\n' >"$AX20_PATCHES_DIR/modules-hid.list"
+    [ "$(modules_list_names | tr '\n' ' ')" = "hid-asus-ally snd-soc-acpi-amd-match " ]
+    [ "$(modules_list_entries | sed -n 2p)" = "$(printf '0011-h.patch\tdrivers/hid\thid-asus-ally')" ]
+    [ "$(modules_list_entries_full | sed -n 2p)" = "$(printf '0011-h.patch\tdrivers/hid\thid-asus-ally\toptional\t0010')" ]
+    d1=$(modules_lists_digest)
+    printf '0010-h.patch\tdrivers/hid\thid-asus-ally.ko\n0011-h.patch\tdrivers/hid\thid-asus-ally.ko\n' >"$AX20_PATCHES_DIR/modules-hid.list"
+    [ "$(modules_lists_digest)" != "$d1" ]
+    printf '0010-h.patch\tdrivers/hid\thid-asus-ally.ko\tbogus\n' >"$AX20_PATCHES_DIR/modules-hid.list"
+    run modules_list_names
+    assert_failure
+}
+
+@test "a partial build is staged only when the caller allows it (local build), never from a tarball" {
+    make_partial_build "$BATS_TEST_TMPDIR/b" "$KV"
+    run modules_stage "$KV" "$BATS_TEST_TMPDIR/b"
+    assert_failure
+    assert_output_contains "is a partial build"
+    [ ! -d "$AX20_ROOT/etc/ally-x20-steamos/modules/$KV" ]
+    run modules_stage "$KV" "$BATS_TEST_TMPDIR/b" 1
+    assert_success
+    d="$AX20_ROOT/etc/ally-x20-steamos/modules/$KV"
+    [ -f "$d/hid-asus-ally.ko.zst" ]
+    [ ! -e "$d/snd-soc-acpi-amd-match.ko.zst" ]
+    # A release-style tarball with the same content is refused.
+    a="$AX20_ROOT/var/lib/ally-x20-steamos/cache/artifacts"
+    K2=7.3.1-valve3-1-neptune-73-g6fbfd992c8fe
+    mkdir -p "$a" "$BATS_TEST_TMPDIR/art"
+    make_partial_build "$BATS_TEST_TMPDIR/art/$K2" "$K2"
+    tar -C "$BATS_TEST_TMPDIR/art" -cf - "$K2" | zstd -q -o "$a/modules-$K2.tar.zst"
+    printf '%s  x\n' "$(ax20_sha256 "$a/modules-$K2.tar.zst")" >"$a/modules-$K2.tar.zst.sha256"
+    run modules_resolve "$K2" --source cache
+    assert_failure
+    assert_output_contains "only a local build may be partial"
+    ! modules_available "$K2"
+}
+
+@test "a staged partial build is current: states, kind, and no second build" {
+    make_partial_build "$BATS_TEST_TMPDIR/b" "$KV"
+    modules_stage "$KV" "$BATS_TEST_TMPDIR/b" 1
+    modules_available "$KV"
+    [ "$(modules_staged_kind "$KV")" = partial ]
+    run modules_staged_states "$KV"
+    assert_success
+    [ "${lines[0]}" = "$(printf 'hid-asus-ally\tpatched\twithout 0011-h.patch')" ]
+    [ "${lines[1]}" = "$(printf 'snd-soc-acpi-amd-match\tstock\t0001-a.patch does not apply to the %s source' "$KV")" ]
+    ! modules_all_superseded "$KV"
+    # rebuild/boot ask for modules again: the staged partial build answers,
+    # nothing is downloaded or built (no endless rebuild loop).
+    modules_online() { return 0; }
+    _modules_fetch() { echo "fetch called" >&2; return 1; }
+    modules_container_build() { echo "build called" >&2; return 1; }
+    run modules_resolve "$KV"
+    assert_success
+    [ "${lines[${#lines[@]} - 1]}" = cache ]
+    [[ "$output" != *called* ]]
+}
+
+@test "a complete build is kind full; nothing staged is none; nothing patchable is kind stock" {
+    [ "$(modules_staged_kind "$KV")" = none ]
+    make_build "$BATS_TEST_TMPDIR/b" "$KV"
+    modules_stage "$KV" "$BATS_TEST_TMPDIR/b"
+    [ "$(modules_staged_kind "$KV")" = full ]
+    K2=7.3.1-valve3-1-neptune-73-g6fbfd992c8fe
+    make_build "$BATS_TEST_TMPDIR/c" "$K2" hid-asus-ally
+    rm "$BATS_TEST_TMPDIR/c/hid-asus-ally.ko.zst"
+    printf 'partial=1\nlists_sha256=%s\nmodule.hid-asus-ally=stock\nmodule.hid-asus-ally.reason=x\nmodule.snd-soc-acpi-amd-match=stock\nmodule.snd-soc-acpi-amd-match.reason=y\n' "$(modules_lists_digest)" >>"$BATS_TEST_TMPDIR/c/BUILD-INFO"
+    modules_stage "$K2" "$BATS_TEST_TMPDIR/c" 1
+    modules_available "$K2"
+    [ "$(modules_staged_kind "$K2")" = stock ]
+}
+
+@test "a partial build goes stale when a patch or the list options change" {
+    make_partial_build "$BATS_TEST_TMPDIR/b" "$KV"
+    modules_stage "$KV" "$BATS_TEST_TMPDIR/b" 1
+    modules_available "$KV"
+    # The checkout now says the missing patch is optional: build again.
+    printf '0001-a.patch\tsound/soc/amd/acp\tsnd-soc-acpi-amd-match.ko\toptional\n' >"$AX20_PATCHES_DIR/modules.list"
+    run modules_available "$KV"
+    assert_failure
+    run modules_staged_stale "$KV"
+    assert_success
+    assert_output_contains "partial build made with other module lists"
+    [ "$(modules_staged_kind "$KV")" = none ]
+    # A complete build does not depend on the options.
+    K2=7.2.10-valve1-1-neptune-72-g1b214a39f3cb
+    make_build "$BATS_TEST_TMPDIR/c" "$K2"
+    modules_stage "$K2" "$BATS_TEST_TMPDIR/c"
+    modules_available "$K2"
+    # A rebased patch makes the partial build stale as well.
+    printf '0001-a.patch\tsound/soc/amd/acp\tsnd-soc-acpi-amd-match.ko\n' >"$AX20_PATCHES_DIR/modules.list"
+    modules_available "$KV"
+    printf '0001-a rebased\n' >"$AX20_PATCHES_DIR/0001-a.patch"
+    run modules_available "$KV"
+    assert_failure
+}
+
+@test "inconsistent builds are refused: stock without partial=1, stock with a .ko.zst" {
+    make_build "$BATS_TEST_TMPDIR/b" "$KV" hid-asus-ally
+    printf 'module.snd-soc-acpi-amd-match=stock\n' >>"$BATS_TEST_TMPDIR/b/BUILD-INFO"
+    run modules_stage "$KV" "$BATS_TEST_TMPDIR/b" 1
+    assert_failure
+    assert_output_contains "not marked partial"
+    make_partial_build "$BATS_TEST_TMPDIR/c" "$KV"
+    printf 'x' >"$BATS_TEST_TMPDIR/c/snd-soc-acpi-amd-match.ko.zst"
+    run modules_stage "$KV" "$BATS_TEST_TMPDIR/c" 1
+    assert_failure
+    assert_output_contains "marks snd-soc-acpi-amd-match as stock but ships"
+}
+
+@test "resolve: a partial container build is staged and reported; the container is asked for a partial build unless strict" {
+    modules_online() { return 0; }
+    _modules_fetch() { return 1; }
+    ax20_have() { [ "$1" = podman ] && return 0; command -v "$1" >/dev/null 2>&1; }
+    modules_container_build() { make_partial_build "$3/$1" "$1"; }
+    run modules_resolve "$KV"
+    assert_success
+    [ "${lines[${#lines[@]} - 1]}" = container ]
+    assert_output_contains "the build for $KV is partial"
+    assert_output_contains "snd-soc-acpi-amd-match: stock module stays in use (0001-a.patch does not apply"
+    assert_output_contains "hid-asus-ally: patched (without 0011-h.patch)"
+    assert_output_contains "no support is provided"
+    # The real modules_container_build passes PARTIAL to the build script.
+    unset -f modules_container_build
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/lib/modules.sh"
+    podman() { printf '%s\n' "$*" >>"$BATS_TEST_TMPDIR/podman.log"; }
+    ax20_is_root() { return 1; }
+    modules_container_build "$KV" jupiter-main "$BATS_TEST_TMPDIR/o"
+    grep -q -- '-e PARTIAL=1' "$BATS_TEST_TMPDIR/podman.log"
+    : >"$BATS_TEST_TMPDIR/podman.log"
+    AX20_MODULES_STRICT=1 modules_container_build "$KV" jupiter-main "$BATS_TEST_TMPDIR/o"
+    grep -q -- '-e PARTIAL=0' "$BATS_TEST_TMPDIR/podman.log"
+}
+
+@test "CI builds release artifacts strictly and refuses to package a partial build" {
+    w="$REPO_ROOT/.github/workflows/build-modules.yml"
+    grep -q -- '-e PARTIAL=0 ' "$w"
+    ! grep -q -- 'PARTIAL=1' "$w"
+    grep -q 'refusing to package a partial build' "$w"
+}

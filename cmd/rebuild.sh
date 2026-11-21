@@ -5,11 +5,16 @@
 
 _rebuild_usage() {
     cat <<USAGE
-usage: $AX20_NAME rebuild [--kver <uname -r>] [--channel <repo>] [--source cache|release|container] [--no-self-update] [--force]
+usage: $AX20_NAME rebuild [--kver <uname -r>] [--channel <repo>] [--source cache|release|container] [--no-self-update] [--force] [--strict]
 
 Makes patched modules available for a kernel, trying the local cache, then
 the release artifact for that kernel, then a container build (podman).
 Runs self-update first when available and online (best-effort).
+
+A container build for a kernel that some patches do not apply to (SteamOS
+beta/preview/main; not supported) is partial: the modules whose patches
+apply are built, the others stay stock. --strict makes such a build fail
+instead. Release artifacts are always complete.
 USAGE
 }
 
@@ -45,6 +50,11 @@ cmd_rebuild() {
                 ;;
             --no-self-update)
                 self_update=0
+                shift
+                ;;
+            --strict)
+                AX20_MODULES_STRICT=1
+                export AX20_MODULES_STRICT
                 shift
                 ;;
             --force)
@@ -86,6 +96,8 @@ cmd_rebuild() {
     if [ -f "$dir/BUILD-INFO" ]; then
         cat "$dir/BUILD-INFO"
     fi
+    # Staged from the cache (an earlier partial build): say so again.
+    [ "$how" = container ] || modules_log_partial "$kver"
     if [ "$kver" = "$(probe_running_kver)" ]; then
         log_info "reboot to use them (do not reload hid-asus-ally live: it has crashed the X20)"
     fi

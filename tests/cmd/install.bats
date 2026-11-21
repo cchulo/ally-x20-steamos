@@ -169,3 +169,37 @@ STUB
     assert_output_contains "v0.10.0"
     grep -q " install --repo $ORIGIN --ref v0.10.0 --force-board\$" "$AX20_ROOT/calls"
 }
+
+# upstream_apply_exit <tag> <code> : a release whose `apply` ends with <code>.
+upstream_apply_exit() {
+    cat >"$W/ally-x20-steamos.sh" <<STUB
+#!/usr/bin/env bash
+printf '%s %s\n' "\$(cd "\$(dirname "\$0")" && pwd -P)" "\$*" >>"\$AX20_ROOT/calls"
+[ "\$1" = apply ] && exit $2
+exit 0
+STUB
+    commit_all "$W" "apply exits $2"
+    git -C "$W" tag -a "$1" -m "$1"
+    git -C "$W" push --quiet origin main --tags
+}
+
+@test "install: components that failed to apply (exit 4) do not stop the install; status still runs; install exits 4" {
+    upstream_apply_exit v0.3.0 4
+    run "$CLI" install --repo "$ORIGIN" --ref v0.3.0
+    assert_failure 4
+    assert_output_contains "some components could not be applied and were skipped"
+    assert_output_contains "installed, but not completely"
+    assert_output_contains "/var/lib/ally-x20-steamos/state/last-apply.json"
+    src_real=$(cd "$SRC" && pwd -P)
+    [ "$(sed -n 1p "$AX20_ROOT/calls")" = "$src_real apply" ]
+    [ "$(sed -n 2p "$AX20_ROOT/calls")" = "$src_real status" ]
+    grep -qx "ref=v0.3.0" "$AX20_ROOT$STATE/state/installed-from"
+}
+
+@test "install: any other apply error still stops the install" {
+    upstream_apply_exit v0.3.0 1
+    run "$CLI" install --repo "$ORIGIN" --ref v0.3.0
+    assert_failure 1
+    assert_output_contains "apply failed"
+    [ "$(wc -l <"$AX20_ROOT/calls" | tr -d ' ')" = 1 ]
+}

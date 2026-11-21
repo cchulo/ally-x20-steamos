@@ -29,6 +29,7 @@ risk.
 | The Xbox button light is dark. | `sudo ./ally-x20-steamos.sh xbox-led on` lights it (green, as on Windows); `brightness 0-3` and `breathe on\|off` adjust it. All of it is kept across reboots. There is no Steam menu for it. |
 | Game Mode does not detect HDR on the OLED screen and only offers 60 and 120 Hz. | **HDR** is available in Game Mode, and the refresh rate can be set anywhere from 30 to 120 Hz. |
 | Steam's **Performance** tab has no power profile switch. | **Low power**, **Balanced** and **Performance** profiles are there (about 12, 16-21 and 25-30 W for the processor on battery). Balanced is the default. |
+| Games only send stereo to the built-in headphone jack and speakers. | With headphones in the jack, games can send 7.1 and you hear it as virtual surround. `./ally-x20-steamos.sh surround list` shows the profiles and `surround set <profile>` switches while you play; your choice is kept. The speakers stay stereo unless you choose otherwise. |
 | An SD Express card in the slot never shows up, and Steam's **Format** button fails on it. | The card mounts at `/run/media/deck/<label>` when inserted, like a microSD card, and can be added in Settings → Storage. Format it with `sudo ./ally-x20-steamos.sh sdexpress format` (Steam's button still fails for this slot: it runs a stock script that rejects NVMe devices). |
 | Steam's controller screens show a generic handheld outline. | They show the Xbox Ally X, which has the same shell, screen and controls. |
 

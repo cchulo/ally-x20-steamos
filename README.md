@@ -85,6 +85,7 @@ SteamOS updates and troubleshooting: [user guide](docs/user-guide.md),
 | **Xbox button light** dark on Linux. | `xbox-led on\|off\|brightness\|breathe` sends the controller the reports Armoury Crate uses (captured on Windows, verified on the X20); the driver keeps on/off; a udev rule re-sends brightness/breathe at boot and a systemd unit after resume; no Steam menu for it | `xboxled`, `modules` · [docs/rgb.md](docs/rgb.md#xbox-button-light) |
 | **HDR not detected** (panel metadata lives in a DisplayID 2 block). | libdisplay-info 0.3.0 + DisplayID 2 backport via `ld.so.conf.d` (Desktop Mode); gamescope Lua display profile for the panel, loaded by stock gamescope (Game Mode); optional custom gamescope behind a stock-fallback wrapper | `hdr` · [docs/hdr.md](docs/hdr.md) |
 | **No power profiles in Steam's Performance menu.** steamos-manager 26.4.1 has no X20 device file. | The upstream steamos-manager RC74XA entry, merged into `/usr/share/steamos-manager/devices` by a boot-time bind mount of a copy in `/run` (nothing written to `/usr`, steps aside once SteamOS ships it): Low power / Balanced / Performance hold the APU at about 12 / 16-21 / 25-30 W on battery. No TDP slider on purpose: BIOS `RC74XA.303` ignores PPT writes (`power tdp-slider on` to re-test; the mainline `asus-armoury` RC74XA table is still built) | `power`, `modules` · [docs/power.md](docs/power.md) |
+| **Built-in headphones and speakers are stereo only**, so games send a stereo mix. | A user service puts an 8-channel PipeWire sink in front of the built-in output in use and convolves it with a head-related impulse response set; it becomes the default by priority, no default is forced. Headphones default to `sadie-d2-dry`, speakers to stereo; `surround set <profile>` switches on the fly, and `user` takes your own HeSuVi file | `surround` · [docs/surround.md](docs/surround.md) |
 | **SD Express card never mounts; Steam's Format button fails on it.** The card is a PCIe/NVMe device and stock's automount rule only matches `mmcblk*\|sd*`; `format-device.sh` rejects nvme nodes. | One udev rule that hands the card's partitions to the stock `block-device-event.sh` / `holo-automount.sh` (udisks mount at `/run/media/deck/<label>`), matched by the slot's PCIe root port because the card and the SSD swap `nvmeN` names between boots; `sdexpress format` runs the stock format sequence (GPT, ext4 casefold, owned by deck) | `sdexpress` · [docs/sdexpress.md](docs/sdexpress.md) |
 | **SteamOS updates wipe out-of-tree changes.** | RAUC pre/post-install handlers, boot service, user notifier; `block`/`degrade` policy when modules cannot be built for an incoming kernel | `update` · [docs/update-survival.md](docs/update-survival.md) |
 
@@ -136,6 +137,7 @@ ally-x20-steamos.sh [--root <dir>] [--dry-run] [--verbose] [--yes] [--i-know] <c
 | `rebuild [--kver <v>]` | fetch or build the patched kernel modules (cache → release asset → container build) |
 | `self-update [--channel stable\|beta] [--check] [--rollback]` | signed-tag update of the checkout, migrations, re-apply |
 | `power status\|tdp-slider [on\|off]` | power profiles; the TDP slider test switch (default off) |
+| `surround status\|list\|set <profile> [--device headphones\|speakers]` | virtual 7.1 surround for the built-in outputs: pick a profile per output (as the user, no sudo; kept across updates) |
 | `sdexpress status\|format [--label <l>] [--full] [--validate]\|mount\|root-port [<bdf>]` | the SD Express slot: automount state, format a card like Steam does (root; the card is found by PCIe root port, never by `nvmeN`) |
 | `xbox-led on\|off\|brightness <0-3>\|breathe on\|off\|restore\|node` | the Xbox button light (root; kept across reboots: on/off by the patched driver, brightness/breathe by component `xboxled`) |
 | `update-policy show\|block\|degrade [--once]` | what an update does if modules cannot be built |
@@ -152,7 +154,7 @@ against a fixture tree, which is how the test suite works.
 
 ```
 ally-x20-steamos.sh   CLI dispatcher            lib/          common, manifest, probes, component, retired, slots, rauc, modules, selfupdate, status, notify
-cmd/                  one file per command      components/   audio, hdr, inputplumber, modules, power, sdexpress, update, xboxled
+cmd/                  one file per command      components/   audio, hdr, inputplumber, modules, power, sdexpress, surround, update, xboxled
 overlay/              files installed on the device (manifest-tracked)   uninstall/   standalone POSIX uninstaller
 patches/kernel/       0001-0008 ASoC (audio), 0010-0015 hid-asus-ally, 0020 asus-armoury   patches/{gamescope,libdisplay-info}/
 build/                Containerfile, build-modules.sh, build-hdr.sh, build-inputplumber.sh, kernel-sources.md
@@ -324,6 +326,15 @@ section and the docs linked below name the exact commits.
 - [steamos-manager](https://gitlab.steamos.cloud/holo/steamos-manager)
   (Valve, MIT): the RC74XA device entry (`bfbb261ed6b2`) and the device file
   format.
+- **Head-related impulse responses** behind the `surround` profiles: the
+  **SADIE II** database (University of York AudioLab; Armstrong, Thresh,
+  Murphy, Kearney, 2018; Apache-2.0), the **HUTUBS** database (TU Berlin
+  Audio Communication Group, Huawei, Sennheiser; Brinkmann et al., 2019;
+  CC BY 4.0) and the **MIT Media Lab KEMAR** measurements (Gardner and
+  Martin, 1995), as SOFA files from [sofacoustics.org](https://sofacoustics.org).
+  The filter graph is **PipeWire**'s `sink-virtual-surround-7.1-hesuvi.conf`
+  and the channel layout is **HeSuVi**'s. Details:
+  [overlay/surround/NOTICE.md](overlay/surround/NOTICE.md).
 - [ValveSoftware/gamescope](https://github.com/ValveSoftware/gamescope)
   (BSD-2-Clause): PR #2493 by **Matthew Schwartz**, the X20 display profile
   and the DisplayID 2 HDR patches ([docs/hdr.md](docs/hdr.md)).

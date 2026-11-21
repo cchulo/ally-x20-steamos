@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Component surround (docs/surround.md), user unit: keep the virtual 7.1
+# surround filter of the built-in output in use running. The helper looks at
+# PipeWire every two seconds and runs one `pipewire -c` filter process for
+# the headphones (jack plugged in) or the speakers, with the profile chosen
+# by `ally-x20-steamos surround set`; with the profile "stereo" it runs
+# nothing. It writes nothing under ~/.config/pipewire and forces no default
+# output. Stopping the unit stops the filter, and the plain hardware output
+# is the default again.
+[Unit]
+Description=ally-x20-steamos: virtual 7.1 surround for the built-in headphones and speakers
+Documentation=file:///var/lib/ally-x20-steamos/src/docs/surround.md
+After=pipewire.service wireplumber.service
+ConditionPathExists=/etc/ally-x20-steamos/surround/x20-surround
+
+[Service]
+Type=simple
+ExecStart=/etc/ally-x20-steamos/surround/x20-surround run
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target

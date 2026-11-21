@@ -1,0 +1,4 @@
+# Rendered filters, downloaded SOFA sets and results are never committed.
+out/
+*.sofa
+*.wav

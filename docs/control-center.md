@@ -191,7 +191,7 @@ backdrop, not the game.
 
 | | (a) sudo + root-owned helper + NOPASSWD drop-in | (b) polkit (`pkexec` + rule) | (c) root daemon on a socket |
 |---|---|---|---|
-| new privileged code | one POSIX sh file, about 100 lines | the same helper, plus a JavaScript rule | a long-running service, a protocol, peer-credential checks |
+| new privileged code | one POSIX sh file, about 130 lines with comments | the same helper, plus a JavaScript rule | a long-running service, a protocol, peer-credential checks |
 | files under `/usr` | none | a named action needs a policy file under `/usr/share/polkit-1/actions` (read-only here; from memory, not checked on SteamOS). Without it the rule has to match the generic `org.freedesktop.policykit.exec` action by program path | none |
 | who may call | the user named in the drop-in | can be limited to the *active local session* (better than (a): an ssh login as `deck` would not qualify) | whoever can open the socket (mode/group) |
 | arguments | sudo itself matches the full command line | passed through; the helper must check | parsed by our own code |
@@ -257,10 +257,10 @@ deck ALL=(root) NOPASSWD: AX20_CONTROL_CENTER
 
 | requirement | how | checked by |
 |---|---|---|
-| Only a fixed list of operations | The helper compares its single argument against five words and replaces it with constants (`set -- self-update --check`) before anything is executed. | bats: each word maps to its command line; 20 other inputs are refused |
+| Only a fixed list of operations | The helper compares its single argument against five words and replaces it with constants (`set -- self-update --check`) before anything is executed. | bats: each word maps to its command line; more than 20 other inputs are refused |
 | sudo allows no extra arguments | Each sudoers entry is the helper path **plus one word**. In sudoers, a command given with arguments matches only that exact argument list; a bare path would allow any. No wildcards. | bats: file content compared; no `*`, `?`, `[`; every mention of the helper is followed by exactly one word; list equals the helper's list |
 | No user-controlled string reaches a shell | The argument is never expanded into a command, never passed to the CLI, never logged. The helper has no `eval` and sources nothing. The Rust side starts `sudo` with an argument vector (no shell) and also picks the word from its own constants. | bats: `status; id`, `$(id)`, backticks, `--root /`, newline, extra arguments → exit 64 and the CLI is not started; `cargo test` for the Rust list |
-| Clean environment and PATH | sudo: `env_reset`, `!setenv`, `secure_path`. Helper: sets `PATH` and `IFS` first, uses absolute paths for every tool, and starts the CLI with `env -i PATH=… HOME=/root LANG=C LC_ALL=C`. `AX20_ROOT`, `AX20_SRC`, `AX20_DRY_RUN`, `BASH_ENV`, `LD_PRELOAD`, `GIT_DIR` … never arrive. | bats: the CLI stand-in dumps its environment; none of 12 planted variables is in it |
+| Clean environment and PATH | sudo: `env_reset`, `!setenv`, `secure_path`. Helper: sets `PATH` and `IFS` first, uses absolute paths for every tool, and starts the CLI with `env -i PATH=… HOME=/root LANG=C LC_ALL=C`. `AX20_ROOT`, `AX20_SRC`, `AX20_DRY_RUN`, `BASH_ENV`, `LD_PRELOAD`, `GIT_DIR` … never arrive. | bats: the CLI stand-in dumps its environment; none of 13 planted variables is in it |
 | The helper cannot be reconfigured | Its paths are constants in the file. There is no option, no config file, no environment switch (the tests run a copy with the constant lines rewritten; the shipped file is also tested, with the same variables planted in the environment). | bats |
 | Everything it executes is root-owned and not writable by `deck` | At every call, before running anything: each directory from the checkout up to `/` (on the **real** path, because `/var/lib/ally-x20-steamos` is a symlink into `/home/.ally-x20-steamos`), every file and directory inside the checkout including `.git`, and the pinned keys must be owned by root and not group- or world-writable. Otherwise exit 77. | bats: group-writable file, world-writable file, writable directory inside and above, writable key, symlinked state directory |
 | `self-update` keeps signed-tag verification | `update` is plain `self-update`: the same code path as on the command line, against the keys pinned in `/var/lib/ally-x20-steamos/keys`. `--insecure-skip-verify`, `--channel` and `--no-apply` cannot be passed (exit 64). | bats: `update --insecure-skip-verify` → 64 |
@@ -338,8 +338,8 @@ A sudoers file with a syntax error makes `sudo` refuse to run at all, and
 on a device without a root password that is hard to recover from. So:
 
 1. The drop-in is a **static file** in the repository
-   (`overlay/sudoers.d/…`), not generated. CI runs the real `visudo -cf`
-   on it wherever `visudo` exists.
+   (`overlay/sudoers.d/…`), not generated. The test suite runs the real
+   `visudo -cf` on it wherever `visudo` exists.
 2. `controlcenter_apply` runs `visudo -cf <source file>` **before** copying.
    No `visudo`, or a non-zero result: nothing is written to
    `/etc/sudoers.d` and the component fails. (This is why the drop-in is

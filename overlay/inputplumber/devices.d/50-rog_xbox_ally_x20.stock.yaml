@@ -13,17 +13,20 @@
 #     old = L^T * new.  TODO(hw): verify gyro/accel axes on a real X20.
 #  2. capability_map_id: points at the X20 button map shipped by
 #     ally-x20-steamos under its own id
-#     (capability_maps.d/ally-x20-steamos-aly2.yaml), not at `aly2`: the
+#     (capability_maps.d/ally-x20-steamos-aly2.yaml, or its .legacy.yaml
+#     sibling when `buttons layout legacy` is set), not at `aly2`: the
 #     Xbox Ally map sends Armoury Crate to "Keyboard" (Steam+X) and knows
-#     nothing about the X20's top-right capture key.
+#     nothing about the X20's top-right action button.
 #  3. evdev include list: adds Keyboard:KeyProg2, the key our hid-asus-ally
-#     patch 0012 reports for the top-right capture button (vendor code 0xa0).
+#     patch 0012 reports for the top-right action button (vendor code 0xa0).
+# 2026-11-20: comments only ("capture" button renamed to action button, the
+# two button-map files); no setting changed.
 # Everything else is unchanged from upstream. The two hidraw sources produce
 # no input events (the 0.78 rog_ally hidraw source only writes driver
 # attributes: qam_mode=0 on interface 5, gamepad_mode and the M1/M2 remap on
 # interface 2), so every button reaches the daemon once, from evdev. They
-# must stay: without qam_mode=0 the kernel turns Armoury Crate into a bare
-# BTN_MODE (Steam button).
+# must stay: with qam_mode=1 the kernel reports Armoury Crate as BTN_MODE
+# itself and the button map no longer sees it as a key of its own.
 
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
 # Schema version number

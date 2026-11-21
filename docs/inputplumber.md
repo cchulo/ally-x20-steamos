@@ -124,7 +124,8 @@ holds keyboard scancode fixes and `ID_INPUT_UNIFIED`, nothing for the X20.)
 | File | When | Why |
 |---|---|---|
 | `/etc/inputplumber/devices.d/50-rog_xbox_ally_x20.yaml` | always, if stock InputPlumber exists | Uses one of two sources. With a stock daemon ≥ 0.82.0, or when the fallback build is active, it is the verbatim upstream profile ([overlay](../overlay/inputplumber/devices.d/50-rog_xbox_ally_x20.yaml); a test checks the git blob hash). Otherwise it is [`50-rog_xbox_ally_x20.stock.yaml`](../overlay/inputplumber/devices.d/50-rog_xbox_ally_x20.stock.yaml). |
-| `/etc/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml` | with the stock-adapted profile | X20 button map (§6), derived from upstream v0.83.0 `ally_type2.yaml`, under id `ally_x20_steamos_aly2` |
+| `/etc/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml` | with the stock-adapted profile | X20 button map (§6), derived from upstream v0.83.0 `ally_type2.yaml`, under id `ally_x20_steamos_aly2`. Installed from one of two overlay files, chosen by the button layout: [`ally-x20-steamos-aly2.yaml`](../overlay/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml) (`deck`, the default) or [`ally-x20-steamos-aly2.legacy.yaml`](../overlay/inputplumber/capability_maps.d/ally-x20-steamos-aly2.legacy.yaml) (`legacy`) |
+| `/etc/ally-x20-steamos/buttons.conf` | only after `buttons layout deck\|legacy` | the layout setting, `layout=deck` or `layout=legacy` (§6). Without the file the layout is `deck` |
 | `/etc/udev/hwdb.d/60-ally-x20-steamos-inputplumber.hwdb` | always, if stock InputPlumber exists | autostart entry from PR #756 |
 | `/etc/systemd/system/inputplumber.service.d/50-ally-x20-steamos.conf` | fallback only | `ExecStart=` reset to our build, `XDG_DATA_DIRS` set to its data |
 
@@ -139,7 +140,7 @@ The stock-adapted profile differs from upstream in three places only:
 2. `capability_map_id: ally_x20_steamos_aly2`, so it gets the X20 button
    map (§6) instead of the Xbox Ally's `aly2`.
 3. The evdev source's `include` list also has `Keyboard:KeyProg2`, the key
-   patch 0012 reports for the top-right capture button.
+   patch 0012 reports for the top-right action button.
 
 `apply` also installs `/etc/systemd/system/ally-x20-steamos-inputplumber-resume.service`
 and enables it with symlinks in the `.wants/` directories of `suspend.target`,
@@ -260,8 +261,54 @@ stay stock. Removing the drop-in and running `systemctl daemon-reload` and
 
 Checked against the source on 2026-10-31: InputPlumber v0.78.0 and
 v0.83.1, Valve's `drivers/hid/hid-asus-ally.c` at `7.2.7-valve2`, the
-ovenham button table, and hhd's Ally driver. Not tested on hardware yet
-(`TODO(hw)` below).
+ovenham button table, and hhd's Ally driver. The layout changed on
+2026-11-20 ([issue #68](https://github.com/cchulo/ally-x20-steamos/issues/68));
+the new layout was checked against the InputPlumber v0.78.0 source and is
+**not tested on the device yet** (`TODO(hw)` below).
+
+The X20 has three buttons besides the normal gamepad:
+
+| Button | Layout `deck` (default) | Layout `legacy` (up to v0.1.11) |
+|---|---|---|
+| **Action button** (top right; this project called it "capture" before) | Steam's **Quick Access** menu | screenshot |
+| **Armoury Crate** (top left) | **Steam button**, same as the Xbox button | Quick Access menu |
+| **Xbox button** | Steam button | Steam button |
+| Screenshot | **Xbox button + R1** (Steam's own chord) | action button |
+
+`deck` puts Quick Access on the right, as on the Steam Deck, and is what
+SteamOS's own X20 support does with the action button according to issue
+#68.
+
+**Switching the layout.**
+
+```sh
+sudo ally-x20-steamos buttons layout legacy   # or: deck
+ally-x20-steamos buttons layout               # prints layout=deck|legacy
+ally-x20-steamos buttons status
+```
+
+The command writes `layout=` to `/etc/ally-x20-steamos/buttons.conf` (a
+manifest entry of this component, so `uninstall` removes it), installs the
+matching button map and restarts `inputplumber.service`, like
+`apply --only inputplumber`. The controller drops out for a moment while the
+daemon restarts. Later `apply` runs and self-updates keep the choice. The
+layout only applies with the stock-adapted profile (stock daemon older than
+0.82.0); see "Upstream variant" below.
+
+**Screenshots in the `deck` layout.** No button is a screenshot button.
+Hold the Xbox button and press R1. This is the Steam Deck's chord (Steam +
+R1): in Game Mode the virtual controller is InputPlumber's Steam Deck target,
+where the Xbox button is the Steam button and R1 is R1. Armoury Crate is the
+Steam button too, but it cannot be held for a chord: the controller reports a
+short press only when the button is released (see "Timing"). `TODO(hw)`:
+confirm Xbox + R1 on the device.
+
+**Armoury Crate: planned change.** Armoury Crate is the Steam button only
+for now. It is meant to open a control-centre GUI once that exists. The one
+place to change for that is the three `Armoury Crate` mappings in
+[`ally-x20-steamos-aly2.yaml`](../overlay/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml)
+(short press and the two possible long-press codes); nothing else depends on
+what they send.
 
 ### How a press gets to Steam
 
@@ -281,37 +328,48 @@ ovenham button table, and hhd's Ally driver. Not tested on hardware yet
    event. Every button arrives once, from the evdev source, filtered by its
    `include` list. 0.83.1 adds only haptics output to that driver. No
    `patches/inputplumber/` patch is needed: the YAML decides everything.
-4. The capability map turns keys into capabilities. A capability named in
-   any mapping is emitted only through mappings.
+4. The capability map turns keys into capabilities. A capability named as
+   the *source* of any mapping is emitted only through mappings
+   (`translatable_capabilities` in `src/input/composite_device/mod.rs`).
+   Targets are not restricted: mapping `KEY_F16` to `Guide` leaves the Xbox
+   button's own `Guide` (from `BTN_MODE`) untouched, so both buttons send
+   the same thing.
 5. The daemon's default profile (`profiles/default.yaml`) turns `Keyboard`
    into `Guide` + `North` (Steam+X) and `QuickAccess2` into `Screenshot`.
 6. The target device sends the result to Steam. The Steam Deck target
-   (`deck-uhid`, Game Mode) has a native `QuickAccess` button and sends
-   `Screenshot` as Steam, then R1 160 ms later. The Xbox targets send
-   `QuickAccess` as Guide, then A 160 ms later, and `Screenshot` as
-   `KEY_RECORD`.
+   (`deck-uhid`, Game Mode) has native `Guide` (Steam) and `QuickAccess`
+   buttons and sends `Screenshot` as Steam, then R1 160 ms later. The Xbox
+   targets send `Guide` as `BTN_MODE`, `QuickAccess` as Guide, then A
+   160 ms later, and `Screenshot` as `KEY_RECORD`.
 
 ### What the owner saw, explained (2026-10-31, 0.78.0, first 0012)
+
+These are from before the `legacy` layout existed and explain why it, and
+patch 0015, look the way they do.
 
 | Symptom | Cause |
 |---|---|
 | Armoury Crate short press: Steam+X, sometimes only the Steam menu | `0xa6` → `KEY_F16` → upstream map `Keyboard` → default profile `Guide`+`North` sent together. Steam sometimes reads the pair as a Steam press. |
 | Armoury Crate long press: Quick Access ("Steam+A") | the hold code reaches `QuickAccess` (most likely `0x38`/`0x93` → `KEY_PROG1`, the Ally firmware's hold code). The Xbox targets send it as Guide+A. |
-| Capture: Steam+X | the first 0012 reported `0xa0` as `KEY_F16` too, so it got the Armoury mapping. |
-| Xbox button takes a screenshot after one capture press (fixed by patch 0015) | the MCU reports `0xa0` and its release 1 ms apart. The Deck target fakes `Screenshot` as Guide now, R1 at 160 ms, R1 up 160 ms after the release, Guide up at 240 ms. A 1 ms tap queues the R1 release (t = 168 ms) before the R1 press (t = 160 ms) fires; the press then clears the queued release (`write_event()` in `steam_deck.rs`) and the virtual pad holds R1 until the real bumper is pressed, so Xbox (Guide) becomes Steam+R1. Measured on the X20: Xbox fine from boot, broken after capture, fixed by one R1 press. 0015 holds `KEY_PROG2` for 250 ms so the release is queued after the chord has started. |
+| Action button: Steam+X | the first 0012 reported `0xa0` as `KEY_F16` too, so it got the Armoury mapping. |
+| Xbox button takes a screenshot after one action-button press (layout `legacy`, where that button is `Screenshot`; fixed by patch 0015) | the MCU reports `0xa0` and its release 1 ms apart. The Deck target fakes `Screenshot` as Guide now, R1 at 160 ms, R1 up 160 ms after the release, Guide up at 240 ms. A 1 ms tap queues the R1 release (t = 168 ms) before the R1 press (t = 160 ms) fires; the press then clears the queued release (`write_event()` in `steam_deck.rs`) and the virtual pad holds R1 until the real bumper is pressed, so Xbox (Guide) becomes Steam+R1. Measured on the X20: Xbox fine from boot, broken after capture, fixed by one R1 press. 0015 holds `KEY_PROG2` for 250 ms so the release is queued after the chord has started. |
 
-### Button table (after this change)
+### Button table (layout `deck`, the default)
 
 | Button | N-KEY code | Kernel key (`qam_mode=0`) | InputPlumber capability | Steam (Deck target) |
 |---|---|---|---|---|
-| Armoury Crate (purple, top left), short | `0xa6` (confirmed 2026-10-31) | `KEY_F16` | `QuickAccess` | Quick Access menu |
-| Armoury Crate, long (`TODO(hw)`: which code) | `0x38`/`0x93`, or `KEY_F21` from the keyboard interface | `KEY_PROG1` / `KEY_F21` | `QuickAccess` | Quick Access menu (same as short, no chord) |
-| Capture (red, top right), short | `0xa0` (confirmed 2026-10-31) | `KEY_PROG2`, held 250 ms (patches 0012, 0015) | `Screenshot` | Steam+R1: screenshot |
-| Capture, long (`TODO(hw)`) | `KEY_F22` if the X20 does what the Xbox Ally does | `KEY_F22` | `Screenshot` | screenshot |
+| Action button (top right), short | `0xa0` (confirmed 2026-10-31) | `KEY_PROG2`, held 250 ms (patches 0012, 0015) | `QuickAccess` | Quick Access menu |
+| Action button, long (`TODO(hw)`) | `KEY_F22` if the X20 does what the Xbox Ally does | `KEY_F22` | `QuickAccess` | Quick Access menu |
+| Armoury Crate (top left), short | `0xa6` (confirmed 2026-10-31) | `KEY_F16` | `Guide` | Steam menu |
+| Armoury Crate, long (`TODO(hw)`: which code) | `0x38`/`0x93`, or `KEY_F21` from the keyboard interface | `KEY_PROG1` / `KEY_F21` | `Guide` | Steam button (same as short, no chord) |
 | Xbox button | report `0x0b` byte 1 bit 2 | `BTN_MODE` | `Guide` | Steam menu |
 | View / Menu | report `0x0b` | `BTN_SELECT` / `BTN_START` | `Select` / `Start` | View / Menu |
 | Left / right back paddle | M1/M2 remapped to `KB_F15`/`KB_F14` | `KEY_F14` / `KEY_F15` | `LeftPaddle1` / `RightPaddle1` | L4 / R4 |
 | `0xa7` / `0xa8` (Ally hold / hold release) | `0xa7`/`0xa8` | `KEY_F17` / `KEY_F18` | not in the `include` list, dropped | nothing |
+
+Layout `legacy` differs in two rows: Armoury Crate (all three codes) is
+`QuickAccess`, and the action button (`KEY_PROG2`, `KEY_F22`) is
+`Screenshot`, which the Deck target sends as Steam+R1.
 
 Notes:
 
@@ -319,9 +377,11 @@ Notes:
   Crate at the top left = `0xa6` (with `qam_mode=1`, the driver default
   without InputPlumber, it also showed `BTN_MODE`, which is the driver
   converting `0xa6`) and the right-side button = `0xa0`. hhd groups `0xa0`
-  with the right button codes `0x38`/`0x93`. The owner calls the top-right
-  button Capture. If a capture shows the codes the other way round, swap
-  `KeyF16` and `KeyProg2` in the capability map. No kernel change is needed.
+  with the right button codes `0x38`/`0x93`. ASUS calls the top-right
+  button the action button; this project called it "capture" until
+  2026-11-20 because that is what it did on Windows. If a capture shows the
+  codes the other way round, swap `KeyF16` and `KeyProg2` in the capability
+  map. No kernel change is needed.
 - **Command Center.** No public capture shows a separate Command Center code
   on the X20. The buttons that reach Linux are Xbox, Armoury Crate, View,
   the top-right button and Menu. If the bottom-left button the owner calls
@@ -335,12 +395,33 @@ Notes:
   must print `0` while the daemon runs.
 - **Timing.** The MCU decides short against long and sends the code when it
   knows which one it is. A short press therefore registers on release, not
-  on press. Our side adds nothing: `KEY_F16` → `QuickAccess` is a plain 1:1
-  mapping, and the Deck target holds a press for at least one 8 ms frame.
+  on press, and Armoury Crate cannot be held as the Steam half of a chord
+  (`TODO(hw)`: seen for the short press; what a long press sends, and for
+  how long, is not measured). Our side adds nothing: `KEY_F16` → `Guide` is
+  a plain 1:1 mapping, and the Deck target holds a press for at least one
+  8 ms frame (`MIN_FRAME_TIME` in `steam_deck_uhid.rs`). `TODO(hw)`: confirm
+  that Steam opens its menu on such a short Steam press; a bare `BTN_MODE`
+  tap of the same length is what the kernel sends for this button with
+  `qam_mode=1`.
+- **The 250 ms hold of the action button (patch 0015) stays.** It was added
+  for the `legacy` layout's screenshot chord. For Quick Access on the Deck
+  target it is not needed (`QuickAccess` is a plain button there, and a 1 ms
+  tap is stretched to one 8 ms frame), and it does no harm: Steam sees Quick
+  Access held for a quarter of a second, a normal press. It is still
+  required for `legacy`, and it helps the Xbox targets (Desktop Mode), which
+  send `QuickAccess` as a timed Guide+A chord (A down 160 ms after the press,
+  A up 160 ms after the release); a 1 ms tap would put A down and up 1 ms
+  apart. So no kernel patch changes and the module does not need a rebuild.
+  `TODO(hw)`: confirm that one press opens Quick Access once, and that a
+  second press closes it.
+- **Two buttons, one Steam button.** Armoury Crate and Xbox both send
+  `Guide`. Pressing Armoury Crate while Xbox is held releases the Steam
+  button early, because the daemon tracks one `Guide` state.
 - **Upstream variant.** With a stock daemon ≥ 0.82.0, or the fallback build,
   apply installs the verbatim upstream profile and `aly2`. There, Armoury
-  Crate is `Keyboard` (Steam+X) and Capture (`KEY_PROG2`) is not in the
-  `include` list. Porting this map to that variant is a follow-up.
+  Crate is `Keyboard` (Steam+X) and the action button (`KEY_PROG2`) is not
+  in the `include` list, so neither layout applies; `buttons status` prints
+  `applies=no`. Porting this map to that variant is a follow-up.
 
 ### How to verify the buttons
 
@@ -350,7 +431,7 @@ cat /sys/bus/hid/devices/0003:0B05:1B4C.*/qam_mode    # one line "0" (interface 
 sudo systemctl stop inputplumber      # release the evdev grab; qam_mode stays 0
 sudo python3 vm/guest/watch-buttons.py --filter ally
 #   Armoury Crate -> RAW 5a a6 ..., KEY KEY_F16 PRESS/release
-#   Capture       -> RAW 5a a0 ..., KEY KEY_PROG2 (X20 capture) PRESS/release
+#   Action button -> RAW 5a a0 ..., KEY KEY_PROG2 (X20 action button) PRESS/release
 #   hold each one >1 s and note what arrives: that is the long-press code
 sudo systemctl start inputplumber
 
@@ -358,11 +439,14 @@ sudo systemctl start inputplumber
 sudo python3 vm/guest/watch-buttons.py
 #   the ASUS event nodes are listed as GRABBED and print nothing;
 #   RAW lines still show the 5a codes. In Desktop Mode the virtual Xbox pad
-#   shows Armoury Crate as BTN_MODE + BTN_SOUTH (QuickAccess) and Capture as
-#   KEY_RECORD (Screenshot). In Game Mode the Deck target is a uhid device
-#   that Steam owns, so check there by behaviour: Armoury Crate opens Quick
-#   Access, Capture takes a screenshot, and nothing opens the Steam menu or
-#   the on-screen keyboard.
+#   shows the action button as BTN_MODE + BTN_SOUTH (QuickAccess) and
+#   Armoury Crate as BTN_MODE alone (Guide). In Game Mode the Deck target is
+#   a uhid device that Steam owns, so check there by behaviour (layout deck):
+#   the action button opens Quick Access, Armoury Crate and Xbox open the
+#   Steam menu, Xbox + R1 takes a screenshot, and nothing opens the
+#   on-screen keyboard. With layout legacy: Armoury Crate opens Quick Access
+#   and the action button takes a screenshot.
+ally-x20-steamos buttons status
 journalctl -u inputplumber -b | grep -iE 'qam_mode|capability|Found a matching'
 ```
 

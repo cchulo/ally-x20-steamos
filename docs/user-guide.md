@@ -23,12 +23,13 @@ risk.
 | On stock SteamOS | With ally-x20-steamos |
 |---|---|
 | The speakers are silent ("Dummy Output" or HDMI only). | Both speakers play. Steam's audio output list shows just **Speakers** (plus headphones, HDMI or Bluetooth when connected). |
-| The Armoury Crate button (top left) and the capture button (top right) do nothing. | **Armoury Crate** opens Steam's **Quick Access** menu. **Capture** takes a **screenshot**. |
+| The Armoury Crate button (top left) and the action button (top right) do nothing. | The **action button** opens Steam's **Quick Access** menu, like the right-hand button of a Steam Deck. **Armoury Crate** is a second **Steam button**, like the Xbox button. A **screenshot** is Xbox button + R1. (Up to v0.1.11 Armoury Crate opened Quick Access and the action button took a screenshot; [you can switch back](#changing-what-the-top-buttons-do).) |
 | Rumble at 100 % feels weak, and strong rumble makes the speakers hiss. | Rumble uses its full range, and the static from the speakers during strong rumble is gone. |
 | The joystick-ring lights cannot be changed from Steam. | **Settings → Customization** in Game Mode shows the joystick-ring lighting (colour and brightness). |
 | The Xbox button light is dark. | `sudo ./ally-x20-steamos.sh xbox-led on` lights it (green, as on Windows); `brightness 0-3` and `breathe on\|off` adjust it. All of it is kept across reboots. There is no Steam menu for it. |
 | Game Mode does not detect HDR on the OLED screen and only offers 60 and 120 Hz. | **HDR** is available in Game Mode, and the refresh rate can be set anywhere from 30 to 120 Hz. |
 | Steam's **Performance** tab has no power profile switch. | **Low power**, **Balanced** and **Performance** profiles are there (about 12, 16-21 and 25-30 W for the processor on battery). Balanced is the default. |
+| Games only send stereo to the built-in headphone jack and speakers. | Games can send 7.1 and you hear it as virtual surround, on headphones in the jack and on the speakers. `./ally-x20-steamos.sh surround list` shows the profiles, and `surround set headphones <profile>` or `surround set speakers <profile>` switches while you play; each output keeps its own choice. The `-dry` profiles are recommended. On the speakers a correction for sound from each speaker reaching the other ear is added (`surround xtc`, `surround xtc off`). `surround set speakers stereo` gives the speakers back as they were. |
 | An SD Express card in the slot never shows up, and Steam's **Format** button fails on it. | The card mounts at `/run/media/deck/<label>` when inserted, like a microSD card, and can be added in Settings → Storage. Format it with `sudo ./ally-x20-steamos.sh sdexpress format` (Steam's button still fails for this slot: it runs a stock script that rejects NVMe devices). |
 | Steam's controller screens show a generic handheld outline. | They show the Xbox Ally X, which has the same shell, screen and controls. |
 
@@ -51,6 +52,9 @@ risk.
   stops working after an update, see [Troubleshooting](#troubleshooting).
 - Some details are still unconfirmed on the hardware, for example the
   long-press actions of the two extra buttons and the motion sensor axes.
+  The button layout that came after v0.1.11 (action button = Quick Access,
+  Armoury Crate = Steam button) was worked out from InputPlumber's source
+  and has not been tried on a device yet.
   Developers keep the list in [hardware-data.md](hardware-data.md).
 
 ## What it changes on your system
@@ -174,12 +178,35 @@ Then, in Game Mode:
 
 - **Speakers:** play a video or a game. Steam's audio output (Settings →
   Audio) should show **Speakers**.
-- **Buttons:** press Armoury Crate (top left): Quick Access opens. Press
-  capture (top right): a screenshot is taken.
+- **Buttons:** press the action button (top right): Quick Access opens.
+  Press Armoury Crate (top left) or the Xbox button: the Steam menu opens.
+  Hold the Xbox button and press R1: a screenshot is taken.
 - **Lights:** Settings → Customization has the joystick-ring lighting.
 - **Power:** Quick Access → Performance (the battery icon) has the power
   profile switch (Low power, Balanced, Performance) and no TDP slider.
 - **HDR:** Settings → Display offers HDR.
+
+### Changing what the top buttons do
+
+There are two layouts for the two buttons at the top of the screen:
+
+| Layout | Action button (top right) | Armoury Crate (top left) | Screenshot |
+|---|---|---|---|
+| `deck` (default) | Quick Access menu | Steam button | Xbox button + R1 |
+| `legacy` (versions up to v0.1.11) | screenshot | Quick Access menu | action button |
+
+The Xbox button is the Steam button in both. To switch:
+
+```sh
+sudo ./ally-x20-steamos.sh buttons layout legacy   # or: deck
+./ally-x20-steamos.sh buttons status               # shows the layout in use
+```
+
+The controller stops for a moment while the change is applied. The choice
+is kept across reboots and updates. Armoury Crate is planned to open a
+settings screen of this project in a later version; until then it is a
+second Steam button, and because the controller only reports it when it is
+released, use the Xbox button for Steam chords such as the screenshot.
 
 ## Updating
 

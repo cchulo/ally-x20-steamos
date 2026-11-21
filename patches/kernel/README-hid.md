@@ -2,7 +2,7 @@
 
 Four patches to Valve's `hid-asus-ally` driver. Together they make the ROG
 Xbox Ally X20 joystick-ring RGB show up in Steam's Customization menu, expose
-the MCU's Aura effects through sysfs, make the X20 top-right (capture) button
+the MCU's Aura effects through sysfs, make the X20 top-right (action) button
 report a key, and fix use-after-free bugs when the driver's two interfaces
 unbind. They all produce one rebuilt module, `hid-asus-ally.ko`
 (see [`modules-hid.list`](modules-hid.list)).
@@ -173,8 +173,9 @@ previous state. Report the mode(s) with "y" on every step.
 
 ## 0012 — `hid-asus-ally-report-X20-top-right-key-0xa0.patch`
 
-**Fixes:** the X20's top-right button (red, labelled for capture; ovenham's
-table calls it "Quick Access") sends `5a a0` / `5a 00` on the N-KEY
+**Fixes:** the X20's top-right button (ASUS: the action button; ovenham's
+table calls it "Quick Access"; this project called it "capture" until
+2026-11-20, and the patch's commit message still does) sends `5a a0` / `5a 00` on the N-KEY
 interface, and the driver only knew `0xa6`.
 - `0xa0` reports **`KEY_PROG2`**, one plain key, in both `qam_mode` settings
   and on both the "ASUS ROG Ally X Gamepad" and the "ASUS ROG Ally Config"
@@ -183,8 +184,9 @@ interface, and the driver only knew `0xa6`.
   `BTN_MODE` with `qam_mode=1`) and `0x38`/`0x93` (`KEY_PROG1`, or the
   Xbox+A chord with `qam_mode=1`).
 - No synthetic chord. InputPlumber sets `qam_mode=0` and owns the mapping:
-  our capability map turns `KEY_PROG2` into Steam's screenshot
-  (`docs/inputplumber.md` §6).
+  our capability map turns `KEY_PROG2` into Steam's Quick Access menu
+  (layout `deck`, the default since 2026-11-20) or a screenshot (layout
+  `legacy`); see `docs/inputplumber.md` §6. The patch itself is unchanged.
 - The first version of 0012 (PR #4) reported `KEY_F16` for `0xa0`, the same
   key as `0xa6`, and the Xbox+A chord with `qam_mode=1`. Under InputPlumber
   both top buttons then did the same thing (Steam+X), which is what the owner
@@ -356,12 +358,26 @@ light" above. Not yet run on hardware: compiled by CI only (`TODO(hw)`).
 ## 0015: hold the X20 top-right key for 250 ms (in the build since 2026-10-31)
 
 [`0015-hid-asus-ally-hold-X20-top-right-key-for-250-ms.patch`](0015-hid-asus-ally-hold-X20-top-right-key-for-250-ms.patch)
-keeps `KEY_PROG2` (the capture button, patch 0012) pressed for 250 ms via a
+keeps `KEY_PROG2` (the action button, patch 0012; "capture" in the patch
+text) pressed for 250 ms via a
 delayed work item and ignores the MCU's own release, which arrives 1 ms after
 the press however long the button is held. InputPlumber's Steam Deck target
 fakes `Screenshot` as a Guide+R1 chord spread over 160 ms and drops the R1
 release when the key goes up before the chord has started; the virtual pad
 then holds R1 until the real bumper is pressed, so the Xbox button became
-Steam+R1 (a screenshot) after every capture press. Confirmed on the X20 and
+Steam+R1 (a screenshot) after every press of the button. Confirmed on the X20 and
 in InputPlumber 0.78.0 `steam_deck.rs` (`write_event()` clears queued events
 for a button when a press for it fires). See [docs/inputplumber.md](../../docs/inputplumber.md) §6.
+
+**Still needed after the 2026-11-20 button layout change, and unchanged.**
+The default layout now maps the button to `QuickAccess`, not `Screenshot`.
+On the Steam Deck target that is a plain button, so the hold is not needed
+there, and a 250 ms press of Quick Access is harmless. The hold is still
+what makes these two cases work: the `legacy` layout (`buttons layout
+legacy`), which keeps the screenshot chord described above, and
+InputPlumber's Xbox targets (Desktop Mode), which send `QuickAccess` as a
+Guide+A chord with A pressed 160 ms after the press and released 160 ms
+after the release (`xpad.rs`), so a 1 ms tap would give a 1 ms A press.
+Because the patch file is unchanged, the module build hash is unchanged and
+no new module artifact is needed. `TODO(hw)`: one press of the button opens
+Quick Access exactly once.

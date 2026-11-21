@@ -10,8 +10,14 @@
 #       sorts device configs by file name and, for equal names, prefers
 #       /etc/inputplumber/devices.d over /usr/share/inputplumber/devices.
 #   /etc/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml
-#       only with the stock-adapted profile (corrected Xbox Ally button map
-#       under our own id).
+#       only with the stock-adapted profile: the X20 button map under our
+#       own id. Its source is one of two overlay files, chosen by the button
+#       layout: "deck" (default; action button = Quick Access, Armoury Crate
+#       = Steam) or "legacy" (Armoury Crate = Quick Access, action button =
+#       screenshot).
+#   /etc/ally-x20-steamos/buttons.conf
+#       settings: layout=deck|legacy. Written only by `buttons layout`;
+#       without the file the layout is deck.
 #   /etc/udev/hwdb.d/60-ally-x20-steamos-inputplumber.hwdb
 #       DMI match -> USE_INPUTPLUMBER=1 (autostart, like upstream).
 #   /etc/systemd/system/inputplumber.service.d/50-ally-x20-steamos.conf
@@ -50,6 +56,9 @@ _IP_STOCK_DEVICES=/usr/share/inputplumber/devices
 _IP_STOCK_BIN=/usr/bin/inputplumber
 _IP_PROFILE_DEST=/etc/inputplumber/devices.d/50-rog_xbox_ally_x20.yaml
 _IP_CAPMAP_DEST=/etc/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml
+_IP_CAPMAP_SRC=inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml
+_IP_CAPMAP_LEGACY_SRC=inputplumber/capability_maps.d/ally-x20-steamos-aly2.legacy.yaml
+_IP_BUTTONS_CONF_REL="${AX20_EARLY_REL}/buttons.conf"
 _IP_HWDB_DEST=/etc/udev/hwdb.d/60-ally-x20-steamos-inputplumber.hwdb
 _IP_DROPIN_DEST=/etc/systemd/system/inputplumber.service.d/50-ally-x20-steamos.conf
 _IP_DROPIN_SRC=systemd/inputplumber.service.d/50-ally-x20-steamos.conf
@@ -158,8 +167,49 @@ inputplumber_variant() {
     printf 'stock\n'
 }
 
+# inputplumber_button_layout : deck|legacy, from layout= in buttons.conf
+# (default deck; anything but legacy counts as deck).
+inputplumber_button_layout() {
+    local f v=""
+    f=$(ax20_path "$_IP_BUTTONS_CONF_REL")
+    if [ -f "$f" ]; then
+        v=$(sed -n 's/^[[:space:]]*layout[[:space:]]*=[[:space:]]*//p' "$f" | tail -n 1 | tr -d '[:space:]')
+    fi
+    case "$v" in
+        legacy) printf 'legacy\n' ;;
+        *) printf 'deck\n' ;;
+    esac
+}
+
+# inputplumber_button_layout_describe : one line for status and logs.
+inputplumber_button_layout_describe() {
+    if [ "$(inputplumber_button_layout)" = legacy ]; then
+        printf 'legacy (Armoury Crate = Quick Access, action button = screenshot, Xbox = Steam)\n'
+    else
+        printf 'deck (action button = Quick Access, Armoury Crate = Steam, Xbox = Steam)\n'
+    fi
+}
+
+# inputplumber_write_button_settings [deck|legacy] : rewrite buttons.conf
+# with the given layout, or the current one. cmd/buttons.sh passes the
+# argument; shellcheck sees only this file.
+# shellcheck disable=SC2120
+inputplumber_write_button_settings() {
+    local v=${1:-$(inputplumber_button_layout)} tmp rc=0
+    tmp=$(mktemp "${TMPDIR:-/tmp}/ax20-inputplumber-buttons.XXXXXX") || die "cannot create temp file"
+    printf '%s\n' \
+        "# $AX20_NAME button settings. Managed by '$AX20_NAME buttons layout';" \
+        "# edit with that command (hand edits are kept but flagged as drift)." \
+        "# layout=deck: action button (top right) = Quick Access, Armoury Crate = Steam." \
+        "# layout=legacy: Armoury Crate = Quick Access, action button = screenshot." \
+        "layout=$v" >"$tmp"
+    manifest_install_file "$tmp" "$_IP_BUTTONS_CONF_REL" inputplumber 0644 || rc=1
+    rm -f "$tmp"
+    return "$rc"
+}
+
 inputplumber_files() {
-    local rc=0
+    local rc=0 capmap=$_IP_CAPMAP_SRC
     inputplumber_probe >/dev/null 2>&1 || rc=$?
     # No stock InputPlumber at all: nothing would read our files.
     [ "$rc" = "$PROBE_UNKNOWN" ] && return 0
@@ -167,7 +217,8 @@ inputplumber_files() {
         printf 'inputplumber/devices.d/50-rog_xbox_ally_x20.yaml\t%s\t0644\n' "$_IP_PROFILE_DEST"
     else
         printf 'inputplumber/devices.d/50-rog_xbox_ally_x20.stock.yaml\t%s\t0644\n' "$_IP_PROFILE_DEST"
-        printf 'inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml\t%s\t0644\n' "$_IP_CAPMAP_DEST"
+        [ "$(inputplumber_button_layout)" = legacy ] && capmap=$_IP_CAPMAP_LEGACY_SRC
+        printf '%s\t%s\t0644\n' "$capmap" "$_IP_CAPMAP_DEST"
     fi
     printf 'udev/hwdb.d/60-ally-x20-steamos-inputplumber.hwdb\t%s\t0644\n' "$_IP_HWDB_DEST"
     printf 'bin/inputplumber-resume-check\t%s\t0755\n' "$_IP_RESUME_HELPER_DEST"
@@ -283,6 +334,11 @@ inputplumber_apply() {
     esac
     v=$(inputplumber_stock_version) || v=unknown
     log_info "inputplumber: stock daemon $v, profile variant: $(inputplumber_variant)"
+    if [ "$(inputplumber_variant)" = stock ]; then
+        log_info "inputplumber: button layout: $(inputplumber_button_layout_describe)"
+    else
+        log_info "inputplumber: the upstream profile uses the stock 'aly2' button map; the button layout setting ($(inputplumber_button_layout)) does not apply to it"
+    fi
     _ip_apply_fallback || return 1
     _ip_install_resume_links
     _ip_reload

@@ -23,6 +23,13 @@ AX20_NAME="ally-x20-steamos"
 AX20_BOARD="RC74XA"
 export AX20_NAME AX20_BOARD
 
+# Exit codes shared by the commands: 0 ok, 1 error, 2 usage, 3 network
+# (self-update), and AX20_EXIT_PARTIAL: the command ran to the end, but one
+# or more components failed and were skipped while the others were applied
+# (apply, install, self-update; see state/last-apply.json).
+AX20_EXIT_PARTIAL=4
+export AX20_EXIT_PARTIAL
+
 # Resolve the source checkout root (the directory holding ally-x20-steamos.sh).
 if [ -z "${AX20_SRC:-}" ]; then
     _ax20_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

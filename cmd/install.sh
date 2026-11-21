@@ -9,8 +9,14 @@
 #   4. pin keys/ into /var/lib/ally-x20-steamos/keys (kept on re-install
 #      unless --repin-keys), record state/installed-from
 #   5. copy the standalone uninstaller, run migrations, apply, status
+# A component that fails to apply does not stop the install: the others are
+# applied, the modules are staged, status is shown, and install ends with
+# exit code 4 (see cmd/apply.sh and state/last-apply.json). Any other apply
+# error stops the install as before.
 # shellcheck source=lib/selfupdate.sh
 . "$AX20_SRC/lib/selfupdate.sh"
+# shellcheck source=lib/lastapply.sh
+. "$AX20_SRC/lib/lastapply.sh"
 
 # _install_stage_modules <src> : stage the patched modules for the running
 # kernel right away (release artifact, cache or container build) so one
@@ -133,7 +139,7 @@ _install_copy_uninstaller() {
 
 cmd_install() {
     local repo="" ref="" ref_given=0 force_board=0 repin=0 no_apply=0
-    local base target url d
+    local base target url d rc=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --repo)
@@ -208,7 +214,18 @@ cmd_install() {
         log_info "installed checkout at $SU_SRC_REL (--no-apply: nothing applied)"
         return 0
     fi
-    su_run_cli "$target" apply || die "apply failed; see ${AX20_LOG_REL}. Re-running install is safe"
+    su_run_cli "$target" apply || rc=$?
+    case "$rc" in
+        0) ;;
+        "$AX20_EXIT_PARTIAL")
+            log_warn "some components could not be applied and were skipped (listed above); continuing with the rest of the install"
+            ;;
+        *) die "apply failed; see ${AX20_LOG_REL}. Re-running install is safe" ;;
+    esac
     _install_stage_modules "$target"
     su_run_cli "$target" status || true
+    if [ "$rc" != 0 ]; then
+        log_error "installed, but not completely: the components listed as failed above were skipped. See 'status' and ${AX20_LAST_APPLY_REL}; re-running install is safe"
+    fi
+    return "$rc"
 }

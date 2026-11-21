@@ -39,7 +39,18 @@ cmd_boot() {
     state="$(ax20_state_dir)/state"
     [ "$AX20_DRY_RUN" = 1 ] || mkdir -p "$state" "$(ax20_state_dir)/log"
 
+    # A failing component never stops the others, and nothing here fails the
+    # unit: the outcome goes to state/last-apply.json, status.json and the
+    # notifier. The branch query command is not run at boot (time limit).
+    APPLY_COMMAND=boot
+    AX20_NO_BRANCH_CMD=1
     apply_components 1 "" || true
+    [ -z "$APPLY_FAILED" ] || apply_summary
+    # Only when something was re-applied or failed: an uneventful boot
+    # leaves the record of the last real apply as it is.
+    if [ -n "$APPLY_DONE$APPLY_FAILED" ]; then
+        la_write 0 || log_warn "could not write $(la_file)"
+    fi
 
     kver=$(probe_running_kver)
     # Staged modules live under the early boot dir (/etc), not the state dir.

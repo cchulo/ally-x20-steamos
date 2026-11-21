@@ -188,6 +188,20 @@ manifest_verify() {
     return 3
 }
 
+# manifest_can_install <src> <dest> : the checks manifest_install_file makes
+# before it writes: 0 if the file could be installed, 1 if the source is
+# missing, 2 if <dest> holds a foreign file (exists, not in the manifest,
+# different content). Lets a caller check a whole set before writing any.
+manifest_can_install() {
+    local real
+    [ -f "$1" ] || return 1
+    real=$(ax20_path "$2")
+    if [ -f "$real" ] && ! manifest_has "$2" && [ "$(ax20_sha256 "$real")" != "$(ax20_sha256 "$1")" ]; then
+        return 2
+    fi
+    return 0
+}
+
 # manifest_install_file <src> <dest> <component> [mode] [slot]
 # Copy src to AX20_ROOT/dest atomically and record it. Creates the parent
 # directory when needed and records that fact. Idempotent.

@@ -5,7 +5,8 @@
 # (normally /var/lib/ally-x20-steamos/src). Every git call is
 # `git -C "$AX20_SRC"`. Exit codes: 0 ok / nothing to do, 1 error,
 # 2 usage, 3 cannot reach origin (callers such as rebuild and the RAUC
-# pre-install handler treat 3 as "offline, carry on").
+# pre-install handler treat 3 as "offline, carry on"), 4 updated, but apply
+# skipped components that failed.
 # shellcheck source=lib/selfupdate.sh
 . "$AX20_SRC/lib/selfupdate.sh"
 # shellcheck source=lib/notify.sh
@@ -109,7 +110,7 @@ cmd_self_update() {
     su_require_clean "$AX20_SRC"
     if [ "$rollback" = 1 ]; then
         _self_update_rollback "$no_apply"
-        return $?
+        return "$SELF_UPDATE_RC"
     fi
     _self_update_fetch || return $?
     if [ "$channel" = beta ]; then
@@ -117,6 +118,8 @@ cmd_self_update() {
     else
         _self_update_stable "$skip_verify" "$no_apply"
     fi
+    # 4 when apply skipped components that failed (see _self_update_apply).
+    return "$SELF_UPDATE_RC"
 }
 
 # _self_update_fetch : git fetch --tags origin; exit code 3 when unreachable.
@@ -180,7 +183,11 @@ _self_update_switch() {
     [ "$no_apply" = 1 ] || [ "$AX20_DRY_RUN" = 1 ] || su_stage_modules "$AX20_SRC"
 }
 
+# Set to AX20_EXIT_PARTIAL when apply skipped failed components.
+SELF_UPDATE_RC=0
+
 _self_update_apply() {
+    local rc=0
     if [ "$1" = 1 ]; then
         log_info "not running apply (--no-apply)"
         return 0
@@ -189,7 +196,18 @@ _self_update_apply() {
         printf '[dry-run] %s apply\n' "$AX20_NAME" >&2
         return 0
     fi
-    su_run_cli "$AX20_SRC" apply || die "apply failed after the update; 'self-update --rollback' returns to the previous commit"
+    # Exit code 4: apply ran to the end but skipped components that failed
+    # (cmd/apply.sh). The update itself went through, so carry on (stage the
+    # modules) and report it through our own exit code.
+    su_run_cli "$AX20_SRC" apply || rc=$?
+    case "$rc" in
+        0) ;;
+        "$AX20_EXIT_PARTIAL")
+            log_warn "updated, but some components could not be applied and were skipped (listed above; see '$AX20_NAME status')"
+            SELF_UPDATE_RC=$AX20_EXIT_PARTIAL
+            ;;
+        *) die "apply failed after the update; 'self-update --rollback' returns to the previous commit" ;;
+    esac
 }
 
 # _self_update_tag_keys <tag> <dir> : the keys/ of the tag's tree, copied to

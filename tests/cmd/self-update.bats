@@ -330,3 +330,27 @@ M
     [ ! -e "$AX20_ROOT$STATE/state/self-update.prev" ]
     [ ! -e "$AX20_ROOT$STATE/applied" ]
 }
+
+@test "an update whose apply skipped failed components (exit 4) still completes and self-update exits 4" {
+    cat >"$W/cmd/apply.sh" <<'A'
+# SPDX-License-Identifier: GPL-2.0-only
+# summary: test stub
+cmd_apply() {
+    cat "$AX20_SRC/VERSION" >>"$(ax20_path /var/lib/ally-x20-steamos/applied)"
+    return 4
+}
+A
+    new_release v0.3.0
+    run "$SU" self-update --insecure-skip-verify
+    assert_failure 4
+    assert_output_contains "updated, but some components could not be applied and were skipped"
+    assert_output_contains "updated to v0.3.0"
+    [ "$(head_of "$SRC")" = "$(head_of "$W" v0.3.0)" ]
+    [ "$(tail -n 1 "$AX20_ROOT$STATE/applied")" = 0.3.0 ]
+    # Any other apply failure is still fatal, with the rollback hint.
+    sed -i.bak 's/return 4/return 1/' "$W/cmd/apply.sh" && rm "$W/cmd/apply.sh.bak"
+    new_release v0.4.0
+    run "$SU" self-update --insecure-skip-verify
+    assert_failure 1
+    assert_output_contains "self-update --rollback"
+}

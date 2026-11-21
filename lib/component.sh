@@ -11,7 +11,12 @@
 #                          AX20_ROOT prefix. May print nothing.
 #   <name>_apply           optional. Extra work after the files are in place
 #                          (depmod, ldconfig, systemctl enable, downloads).
-#                          Must be idempotent and AX20_ROOT-aware.
+#                          Must be idempotent and AX20_ROOT-aware. A non-zero
+#                          return (or die) marks the component as failed:
+#                          apply skips it, goes on with the others and
+#                          records the last error lines it wrote to stderr.
+#                          It must not leave a background process holding
+#                          stderr open (apply reads it through a pipe).
 #   <name>_probe           required. 0 = stock SteamOS now provides this
 #                          (superseded), 1 = still needed, 2 = unknown.
 #   <name>_status          optional override of component_default_status.
@@ -79,10 +84,26 @@ component_files() {
 }
 
 # component_apply <name> : install files via manifest, then run <name>_apply.
+# The whole file list is checked first (every overlay source exists, no
+# destination holds a file we did not write), so a component that cannot be
+# installed fails before any of its files is written. A failure later on
+# (in <name>_apply) leaves the files in place; they are in the manifest, so
+# `uninstall` removes them and the next apply or boot run tries again.
+# Callers run this in a subshell and carry on with the other components
+# when it fails (cmd/apply.sh).
 component_apply() {
-    local name=$1 src dest mode slot line
+    local name=$1 src dest mode slot line rc
     component_load "$name"
     log_info "applying component: $name"
+    component_files "$name" | while IFS=$'\t' read -r src dest mode slot; do
+        [ -n "$src" ] || continue
+        rc=0
+        manifest_can_install "$AX20_SRC/overlay/$src" "$dest" || rc=$?
+        case "$rc" in
+            1) die "component $name: overlay file missing: overlay/$src" ;;
+            2) die "refusing to overwrite $dest: it exists and is not in the manifest (not created by $AX20_NAME); nothing of $name was installed" ;;
+        esac
+    done || return 1
     component_files "$name" | while IFS=$'\t' read -r src dest mode slot; do
         [ -n "$src" ] || continue
         [ -n "$mode" ] || mode=0644

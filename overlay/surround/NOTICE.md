@@ -22,7 +22,7 @@ of the rest of ally-x20-steamos.
   `https://sofacoustics.org/data/database/sadie/D2_48K_24bit_256tap_FIR_SOFA.sofa`
   (SHA-256 `bb5980288fc5c990c821e02c5ddfa274759079b723973cd6ca47ac577243aa0c`).
 - **HUTUBS** head-related transfer function database, subject pp1
-  (measured). Audio Communication Group, TU Berlin; HUAWEI Munich Research
+  (measured), which is the FABIAN head and torso simulator. Audio Communication Group, TU Berlin; HUAWEI Munich Research
   Center; Sennheiser. F. Brinkmann et al., "A cross-evaluated database of
   measured and simulated HRTFs including 3D head meshes, anthropometric
   features, and headphone impulse responses", J. Audio Eng. Soc. 67(9),

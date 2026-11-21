@@ -51,7 +51,7 @@ USER = "user"
 # tools/surround-test plus the correction measured on an X20 on 2026-11-20.
 BUILTIN = {
     "sadie-d2-dry": ("sadie-d2-dry.wav", -1.10, "KEMAR mannequin, SADIE II (University of York)"),
-    "hutubs-pp1-dry": ("hutubs-pp1-dry.wav", -1.69, "a person, HUTUBS subject pp1 (TU Berlin)"),
+    "hutubs-pp1-dry": ("hutubs-pp1-dry.wav", -1.69, "FABIAN mannequin, HUTUBS subject pp1 (TU Berlin)"),
     "mit-kemar-dry": ("mit-kemar-dry.wav", -5.03, "KEMAR mannequin, normal ears (MIT)"),
     "mit-kemar-large-dry": ("mit-kemar-large-dry.wav", -6.70, "KEMAR mannequin, large ears (MIT)"),
 }

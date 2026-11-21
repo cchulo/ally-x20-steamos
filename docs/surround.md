@@ -21,14 +21,15 @@ X20 yet; the open points are in [Needs the device](#needs-the-device-todohw).
 |---|---|
 | `stereo` | no filter: the output as stock SteamOS has it |
 | `sadie-d2-dry` | KEMAR mannequin, SADIE II database (default for headphones) |
-| `hutubs-pp1-dry` | a person, HUTUBS database, subject pp1 |
+| `hutubs-pp1-dry` | FABIAN head and torso simulator, HUTUBS database, subject pp1 |
 | `mit-kemar-dry` | KEMAR mannequin with normal ears, MIT |
 | `mit-kemar-large-dry` | the same mannequin with large ears |
 | `user` | your own file (below) |
 
 Each shipped profile is a set of head-related impulse responses: how sound
-from seven directions reaches the two ears of one head. Ears differ, so try
-them; the one that fits your ears places sounds best.
+from seven directions reaches the two ears of one head. All four heads are
+acoustic mannequins, not people. Ears differ, so try them; the one that
+comes closest to your ears places sounds best.
 
 "Dry" means the front left, front right and centre channels pass through
 unfiltered and only the side and rear channels are processed. Stereo

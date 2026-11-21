@@ -62,3 +62,14 @@ The files are not the original data. For each set:
 They were produced with `tools/surround-test` of this project (pull request
 #70: `fetch-sofa.sh`, `render_sofa.py`, `hrir_tool.py dry`), which pins the
 source files by the SHA-256 values above.
+
+## Speaker variants made on the device
+
+For the built-in speakers, the component derives further files from the ones
+above (and from a user's own file) on the device: the same responses with a
+crosstalk canceller folded into the side and rear channels, and every channel
+delayed by 16 samples. `x20dsp/xtc.py`, installed next to this notice, does
+that; `docs/surround.md` describes it. These variants are written to the
+user's cache directory (`~/.cache/ally-x20-steamos/surround/`), are not
+shipped or redistributed by this project, and are derived works of the
+measurements named above, under the same licences.

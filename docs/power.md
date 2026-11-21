@@ -507,15 +507,31 @@ Limits of the approach:
 - With the component installed a charger that is too weak shows at every
   level, not only below 80 % (section 10.4).
 - Charging with the device shut down is not measured. TODO(hw).
+- The device has a protection of its own that this component does not
+  touch. The user manual ("Battery safety information", "Battery
+  protection") says that once the battery is fully charged the system may
+  stop charging between 90 % and 100 % and resume later, and that it may
+  reduce or stop charging when the battery is too hot. A stop in that range
+  after a full charge is expected.
 
 ### 10.3 Settings
 
 ```sh
 sudo ally-x20-steamos charge-limit status  # setting, record, limit in force
 sudo ally-x20-steamos charge-limit follow  # default: 100 % unless a limit is set in Steam or by hand
-sudo ally-x20-steamos charge-limit 80      # 80 instead of 100 (20..100); a limit set in Steam lasts until the next boot
+sudo ally-x20-steamos charge-limit 80      # last resort: 80 instead of 100 (20..100)
 sudo ally-x20-steamos charge-limit off     # write nothing
 ```
+
+The rules, in order:
+
+1. A limit set in Steam (Settings → Power) is respected and kept in force:
+   it is left alone, recorded, and written again at boot and after resume.
+2. With no limit set in Steam, and none set with this command, the battery
+   charges to 100 %.
+3. A number given to this command is a last resort, for when the limit
+   cannot be set in Steam. It takes the place of the 100 in rule 2; a limit
+   set in Steam still applies until the next boot.
 
 The setting is `limit=` in `/etc/ally-x20-steamos/charge-limit.conf` (a
 manifest entry of the component). The running watch reads it again on every

@@ -18,7 +18,8 @@ usage: $AX20_NAME charge-limit <command>
   follow      (default) charge to 100 % unless a limit is set in Steam
               (Settings → Power) or by hand. Steam's limit wins; its "no
               limit" (a 0) is replaced by 100
-  <20-100>    use this limit instead of 100: written at boot, after resume
+  <20-100>    a last resort, for when a limit cannot be set in Steam: use
+              this limit instead of 100. It is written at boot, after resume
               and whenever Steam writes 0; a limit set in Steam lasts until
               the next boot
   off         write nothing: with Steam's limit off the battery stops at

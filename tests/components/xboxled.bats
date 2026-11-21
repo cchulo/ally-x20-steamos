@@ -116,7 +116,10 @@ tree_listing() { (cd "$AX20_ROOT" && find . -path ./var/lib/ally-x20-steamos -pr
     grep -qx "ExecStart=$HELPER resume" "$u"
     grep -qx "ConditionPathExists=$HELPER" "$u"
     grep -qx "After=$SLEEP_TARGETS" "$u"
-    grep -qx "After=ally-x20-steamos-inputplumber-resume.service" "$u"
+    # not ordered after the InputPlumber unit: nothing restarts there any
+    # more, and waiting for it only delayed the light
+    run grep -c 'inputplumber-resume' <(grep -v '^#' "$u")
+    [ "$output" = 0 ]
     grep -qx "WantedBy=$SLEEP_TARGETS" "$u"
     # nothing is ordered after it, so it must never block the sleep
     run grep -E '^(Before|RemainAfterExit)=' "$u"

@@ -9,15 +9,14 @@
 # suspend.target and ordered after it start once systemd-suspend.service
 # has returned, that is after the resume; the helper then waits for the
 # controller and sends the recorded brightness and breathe setting (issue
-# #63). The same applies to the other sleep targets. Ordered after
-# ally-x20-steamos-inputplumber-resume.service (component inputplumber, when
-# installed) so the settings are sent once the daemon has re-opened the
-# controller.
+# #63). The same applies to the other sleep targets. Not ordered after
+# ally-x20-steamos-inputplumber-resume.service (component inputplumber):
+# that unit no longer restarts the daemon, so the two run side by side and
+# the light is back about 3 s after the resume.
 [Unit]
 Description=ally-x20-steamos: re-send the Xbox-button light settings after resume
 Documentation=file:///var/lib/ally-x20-steamos/src/docs/rgb.md
 After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
-After=ally-x20-steamos-inputplumber-resume.service
 ConditionPathExists=/etc/ally-x20-steamos/xbox-led-restore
 
 [Service]

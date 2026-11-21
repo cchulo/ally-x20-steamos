@@ -17,9 +17,12 @@
 #   /etc/systemd/system/inputplumber.service.d/50-ally-x20-steamos.conf
 #       FALLBACK ONLY: ExecStart= override to our build of upstream.
 #   /etc/systemd/system/ally-x20-steamos-inputplumber-resume.service
-#       restarts the daemon after every suspend/resume cycle: the gamepad can
-#       come back dead otherwise (issue #63). Enabled through manifest
-#       symlinks in the sleep targets' .wants/ directories.
+#       runs the helper below after every suspend/resume cycle. Enabled
+#       through manifest symlinks in the sleep targets' .wants/ directories.
+#   /etc/ally-x20-steamos/inputplumber-resume-check
+#       re-sends the controller's gamepad_mode and qam_mode after a resume:
+#       the MCU can lose them while the host sleeps, which leaves the sticks
+#       dead (issue #63).
 
 # shellcheck disable=SC2034  # read by lib/component.sh
 COMPONENT_DESCRIPTION="InputPlumber X20 profile + hwdb autostart for the stock daemon (optional upstream build fallback)"
@@ -52,6 +55,7 @@ _IP_DROPIN_DEST=/etc/systemd/system/inputplumber.service.d/50-ally-x20-steamos.c
 _IP_DROPIN_SRC=systemd/inputplumber.service.d/50-ally-x20-steamos.conf
 _IP_RESUME_UNIT="${AX20_NAME}-inputplumber-resume.service"
 _IP_RESUME_UNIT_DEST="/etc/systemd/system/${_IP_RESUME_UNIT}"
+_IP_RESUME_HELPER_DEST="${AX20_EARLY_REL}/inputplumber-resume-check"
 # The sleep targets whose completion means "resumed" (systemd.special(7)).
 _IP_SLEEP_TARGETS="suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target"
 
@@ -166,6 +170,7 @@ inputplumber_files() {
         printf 'inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml\t%s\t0644\n' "$_IP_CAPMAP_DEST"
     fi
     printf 'udev/hwdb.d/60-ally-x20-steamos-inputplumber.hwdb\t%s\t0644\n' "$_IP_HWDB_DEST"
+    printf 'bin/inputplumber-resume-check\t%s\t0755\n' "$_IP_RESUME_HELPER_DEST"
     printf 'systemd/%s\t%s\t0644\n' "$_IP_RESUME_UNIT" "$_IP_RESUME_UNIT_DEST"
 }
 

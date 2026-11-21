@@ -8,6 +8,8 @@ CAPMAP=/etc/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml
 HWDB=/etc/udev/hwdb.d/60-ally-x20-steamos-inputplumber.hwdb
 DROPIN=/etc/systemd/system/inputplumber.service.d/50-ally-x20-steamos.conf
 RESUME_UNIT=/etc/systemd/system/ally-x20-steamos-inputplumber-resume.service
+RESUME_HELPER=/etc/ally-x20-steamos/inputplumber-resume-check
+RESUME_CONF=/etc/ally-x20-steamos/inputplumber-resume.conf
 SLEEP_TARGETS="suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target"
 OVL="$REPO_ROOT/overlay"
 
@@ -95,6 +97,8 @@ inputplumber
     same_file "$AX20_ROOT$CAPMAP" "$OVL/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml"
     same_file "$AX20_ROOT$HWDB" "$OVL/udev/hwdb.d/60-ally-x20-steamos-inputplumber.hwdb"
     same_file "$AX20_ROOT$RESUME_UNIT" "$OVL/systemd/ally-x20-steamos-inputplumber-resume.service"
+    same_file "$AX20_ROOT$RESUME_HELPER" "$OVL/bin/inputplumber-resume-check"
+    [ -x "$AX20_ROOT$RESUME_HELPER" ]
     for t in $SLEEP_TARGETS; do
         link="/etc/systemd/system/$t.wants/ally-x20-steamos-inputplumber-resume.service"
         [ "$(readlink "$AX20_ROOT$link")" = ../ally-x20-steamos-inputplumber-resume.service ]
@@ -104,17 +108,114 @@ inputplumber
     [ "$(component_status inputplumber)" = active ]
 }
 
-@test "resume unit: a oneshot after every sleep target that try-restarts the daemon after 3 s" {
+@test "resume unit: a oneshot after every sleep target that runs the check helper" {
     u="$OVL/systemd/ally-x20-steamos-inputplumber-resume.service"
     grep -qx 'Type=oneshot' "$u"
-    grep -qx 'ExecStartPre=/bin/sleep 3' "$u"
-    grep -qx 'ExecStart=/usr/bin/systemctl try-restart inputplumber.service' "$u"
+    grep -qx "ExecStart=$RESUME_HELPER" "$u"
     grep -qx "ConditionPathExists=$PROFILE" "$u"
+    grep -qx "ConditionPathExists=$RESUME_HELPER" "$u"
     grep -qx "After=$SLEEP_TARGETS" "$u"
     grep -qx "WantedBy=$SLEEP_TARGETS" "$u"
+    # a restart is the helper's fallback, never unconditional
+    run grep -E 'try-restart|^ExecStartPre=' <(grep -v '^#' "$u")
+    assert_failure
     # nothing is ordered after it, so it must never block the sleep
     run grep -E '^(Before|RemainAfterExit)=' "$u"
     assert_failure
+}
+
+# ------------------------------------------------------ resume check helper --
+GP=/sys/bus/hid/devices/0003:0B05:1B4C.0003/gamepad_mode
+QAM=/sys/bus/hid/devices/0003:0B05:1B4C.0006/qam_mode
+
+# mode_attrs <gamepad_mode> <qam_mode> : the controller's driver attributes,
+# plus the same names on another device, which must be left alone.
+mode_attrs() {
+    fixture_file "$GP" "$1
+"
+    fixture_file "$QAM" "$2
+"
+    fixture_file /sys/bus/hid/devices/0003:046D:C52B.0009/gamepad_mode "7
+"
+}
+
+resume_check() {
+    AX20_ROOT="$AX20_ROOT" IP_RESUME_DRY_RUN=1 run "$OVL/bin/inputplumber-resume-check"
+}
+
+@test "resume check: writes both mode attributes back with their current values, twice, no restart" {
+    mode_attrs 1 0
+    resume_check
+    assert_success
+    [ "${lines[0]}" = "$AX20_ROOT$GP <- 1" ]
+    [ "${lines[1]}" = "$AX20_ROOT$QAM <- 0" ]
+    [ "${lines[2]}" = "$AX20_ROOT$GP <- 1" ]
+    [ "${lines[3]}" = "$AX20_ROOT$QAM <- 0" ]
+    assert_output_contains 're-sent the controller settings after resume: gamepad_mode=1 qam_mode=0; inputplumber.service left running'
+    [[ "$output" != *try-restart* ]]
+    [[ "$output" != *046D* ]]
+}
+
+@test "resume check: whatever value the attribute holds is the one written" {
+    mode_attrs 2 1
+    resume_check
+    assert_success
+    assert_output_contains "$AX20_ROOT$GP <- 2"
+    assert_output_contains "$AX20_ROOT$QAM <- 1"
+}
+
+@test "resume check: a real write puts the value into the attribute file" {
+    mode_attrs 1 0
+    AX20_ROOT="$AX20_ROOT" IP_RESUME_SETTLE=0 IP_RESUME_AGAIN=0 PATH="/usr/bin:/bin" \
+        run "$OVL/bin/inputplumber-resume-check"
+    assert_success
+    [ "$(cat "$AX20_ROOT$GP")" = 1 ]
+    [ "$(cat "$AX20_ROOT$QAM")" = 0 ]
+    [ "$(cat "$AX20_ROOT/sys/bus/hid/devices/0003:046D:C52B.0009/gamepad_mode")" = 7 ]
+    assert_output_contains 'inputplumber.service left running'
+}
+
+@test "resume check: only one attribute present, it is still re-sent" {
+    fixture_file "$GP" "1
+"
+    resume_check
+    assert_success
+    assert_output_contains 'after resume: gamepad_mode=1;'
+    [[ "$output" != *try-restart* ]]
+}
+
+@test "resume check: no attribute (controller gone or other driver), the daemon is restarted as before" {
+    resume_check
+    assert_success
+    assert_output_contains 'no gamepad_mode/qam_mode attribute of the controller found; restarting'
+    assert_output_contains 'systemctl try-restart inputplumber.service'
+    # an unreadable value counts as none
+    fixture_file "$GP" "garbage
+"
+    resume_check
+    assert_output_contains 'systemctl try-restart inputplumber.service'
+}
+
+@test "resume check: restart=always restarts, restart=never does nothing, junk falls back to re-sending" {
+    mode_attrs 1 0
+    fixture_file "$RESUME_CONF" 'restart=always
+'
+    resume_check
+    assert_success
+    assert_output_contains 'systemctl try-restart inputplumber.service'
+    [[ "$output" != *"<- 1"* ]]
+    fixture_file "$RESUME_CONF" 'restart=never
+'
+    resume_check
+    assert_success
+    [ -z "$output" ]
+    fixture_file "$RESUME_CONF" 'restart=sometimes
+'
+    resume_check
+    assert_success
+    assert_output_contains 'ignoring unknown restart=sometimes'
+    assert_output_contains "$AX20_ROOT$GP <- 1"
+    [[ "$output" != *try-restart* ]]
 }
 
 @test "stock >= 0.82.0: installs the verbatim upstream profile and no capability map" {
@@ -228,7 +329,7 @@ inputplumber
     export AX20_INPUTPLUMBER_FALLBACK=1
     before=$(tree_listing)
     component_apply inputplumber
-    for p in "$PROFILE" "$HWDB" "$DROPIN" "$RESUME_UNIT"; do
+    for p in "$PROFILE" "$HWDB" "$DROPIN" "$RESUME_UNIT" "$RESUME_HELPER"; do
         manifest_has "$p"
         manifest_verify "$p"
     done

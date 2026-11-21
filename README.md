@@ -80,7 +80,7 @@ SteamOS updates and troubleshooting: [user guide](docs/user-guide.md),
 | Gap on stock SteamOS | Fix | Component / docs |
 |---|---|---|
 | **Speakers silent.** Two TI TAS2783 amps on AMD SoundWire; the BIOS flags the machine as DMIC-only, the kernel has no link layout, the driver asks for a firmware name linux-firmware does not ship, and there is no UCM profile. | ACPI table override as an early initrd (pure-Python tool, no `iasl`), a rebuilt `snd-soc-acpi-amd-match` (plus the amp driver and SoundWire helpers with four fixes backported from Valve 7.2.10), firmware download keyed on the `SPEAKER_ID` UEFI variable, UCM overlay | `audio`, `modules` · [docs/audio.md](docs/audio.md) |
-| **Controller not matched** by the bundled InputPlumber 0.78; top-right (capture) button dead; rumble weak at 100 % and strong rumble makes the speakers hiss. | Upstream X20 profile as a `devices.d` drop-in (adapted to the stock daemon's schema) with an X20 button map (Armoury Crate → Quick Access, capture → screenshot) + hwdb autostart + a daemon restart after every resume; `0xa0` → `KEY_PROG2` in the rebuilt `hid-asus-ally`, which also scales rumble to the MCU's 0-100 range | `inputplumber`, `modules` · [docs/inputplumber.md](docs/inputplumber.md) |
+| **Controller not matched** by the bundled InputPlumber 0.78; top-right (capture) button dead; rumble weak at 100 % and strong rumble makes the speakers hiss. | Upstream X20 profile as a `devices.d` drop-in (adapted to the stock daemon's schema) with an X20 button map (Armoury Crate → Quick Access, capture → screenshot) + hwdb autostart + the controller's mode settings re-sent after every resume; `0xa0` → `KEY_PROG2` in the rebuilt `hid-asus-ally`, which also scales rumble to the MCU's 0-100 range | `inputplumber`, `modules` · [docs/inputplumber.md](docs/inputplumber.md) |
 | **Joystick ring RGB** missing from Steam's Customization menu. | `hid-asus-ally` registers the LED under a name Steam knows, with a fixed R/G/B channel layout and effect/speed attributes | `modules` · [docs/rgb.md](docs/rgb.md) |
 | **Xbox button light** dark on Linux. | `xbox-led on\|off\|brightness\|breathe` sends the controller the reports Armoury Crate uses (captured on Windows, verified on the X20); the driver keeps on/off; a udev rule re-sends brightness/breathe at boot and a systemd unit after resume; no Steam menu for it | `xboxled`, `modules` · [docs/rgb.md](docs/rgb.md#xbox-button-light) |
 | **HDR not detected** (panel metadata lives in a DisplayID 2 block). | libdisplay-info 0.3.0 + DisplayID 2 backport via `ld.so.conf.d` (Desktop Mode); gamescope Lua display profile for the panel, loaded by stock gamescope (Game Mode); optional custom gamescope behind a stock-fallback wrapper | `hdr` · [docs/hdr.md](docs/hdr.md) |
@@ -154,7 +154,7 @@ against a fixture tree, which is how the test suite works.
 ally-x20-steamos.sh   CLI dispatcher            lib/          common, manifest, probes, component, retired, slots, rauc, modules, selfupdate, status, notify
 cmd/                  one file per command      components/   audio, hdr, inputplumber, modules, power, sdexpress, update, xboxled
 overlay/              files installed on the device (manifest-tracked)   uninstall/   standalone POSIX uninstaller
-patches/kernel/       0001-0006 ASoC (audio), 0010-0015 hid-asus-ally, 0020 asus-armoury   patches/{gamescope,libdisplay-info}/
+patches/kernel/       0001-0008 ASoC (audio), 0010-0015 hid-asus-ally, 0020 asus-armoury   patches/{gamescope,libdisplay-info}/
 build/                Containerfile, build-modules.sh, build-hdr.sh, build-inputplumber.sh, kernel-sources.md
 acpi/                 patch-acp-flag.py (DSDT flag patch + early initrd), dump-dsdt.md, fixtures/, tests/
 firmware/             tas2783.lock, fetch-tas2783.sh, speaker-id.map       keys/        release signing key (OpenPGP)   
@@ -242,10 +242,15 @@ relights it.
 
 **The gamepad (or the sticks) stop working after suspend/resume.**
 Seen now and then on the X20 ([issue #63](https://github.com/cchulo/ally-x20-steamos/issues/63)).
-`sudo systemctl restart inputplumber.service` brings it back. Versions after
-v0.1.9 install `ally-x20-steamos-inputplumber-resume.service`, which does
-that restart 3 s after every resume; `sudo ./ally-x20-steamos.sh apply`
-installs it.
+`sudo systemctl restart inputplumber.service` brings it back. The cause: the
+controller sometimes loses its mode settings while the device sleeps.
+Versions after v0.1.9 restarted InputPlumber 3 s after every resume, which
+re-sends them. Versions after v0.1.10 re-send the two settings directly, so
+Steam no longer sees the controller drop on every wake;
+`sudo ./ally-x20-steamos.sh apply` installs it. If the sticks still stay
+dead, put `restart=always` into
+`/etc/ally-x20-steamos/inputplumber-resume.conf`
+([docs/inputplumber.md](docs/inputplumber.md)).
 
 **The joystick rings are dark from power-on until the Steam login screen.**
 Expected. Steam stores the ring colour and brightness and re-applies them
@@ -284,7 +289,10 @@ section and the docs linked below name the exact commits.
   mirror of `gitlab.steamos.cloud/jupiter/linux-integration`): every module
   is rebuilt from its `7.2.7-valve2` tree. Patches 0003-0006 are backported
   from `7.2.10-valve1` and keep their author, **Matthew Schwartz**
-  (`9a0dabd2637d`, `021e9da34c58`, `5ce75814c28a`, `2ce1d48892f3`). Patches
+  (`9a0dabd2637d`, `021e9da34c58`, `5ce75814c28a`, `2ce1d48892f3`).
+  Patches 0007 and 0008, the fixes for silent speakers after a resume, come
+  from the same tag and keep their author, **Andrey Golovko**
+  (`2700598cc20c`, `5c9979eb1917`). Patches
   0001 and 0002 match his RC74XA commits `5f7b3941a10f` and `045b13e03d29`
   in the same release, and the firmware naming in
   [firmware/README.md](firmware/README.md) follows `8ba654cb1c44`.

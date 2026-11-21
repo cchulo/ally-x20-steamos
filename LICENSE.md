@@ -50,3 +50,11 @@ repository builds on is in the [README's Credits section](README.md#credits).
   SHA-256 sums live in `firmware/tas2783.lock`.
 - **Prebuilt kernel modules** (`*.ko`): never in git. CI may attach prebuilt
   artifacts to releases together with SHA-256 sums and the exact source commit.
+
+## The Control Center UI
+
+The sources under `ui/control-center/` are GPL-2.0-only like the rest, with
+the same SPDX header. No third-party code is committed there. An AppImage
+built from it bundles Electron (MIT) with Chromium (BSD-3-Clause and the
+licenses in the `LICENSES.chromium.html` that Electron ships) and React
+(MIT); see [`ui/control-center/README.md`](ui/control-center/README.md).

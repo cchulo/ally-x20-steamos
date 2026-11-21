@@ -1,0 +1,66 @@
+{
+  "name": "ally-x20-control-center",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Control Center for ally-x20-steamos (status, update, apply, rollback)",
+  "license": "GPL-2.0-only",
+  "author": "ally-x20-steamos contributors",
+  "homepage": "https://github.com/cchulo/ally-x20-steamos",
+  "main": "dist-electron/main.js",
+  "desktopName": "ally-x20-control-center.desktop",
+  "scripts": {
+    "dev": "vite",
+    "build:renderer": "tsc --noEmit && vite build",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "build": "npm run build:renderer && npm run build:electron",
+    "test": "npm run build:electron && node --test \"dist-electron/**/*.test.js\"",
+    "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --linux AppImage --x64"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^5.9.0",
+    "vite": "^8.3.8"
+  },
+  "build": {
+    "appId": "io.github.ally-x20-steamos.control-center",
+    "productName": "ally-x20-control-center",
+    "artifactName": "ally-x20-control-center-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "!dist-electron/**/*.test.js",
+      "package.json"
+    ],
+    "asar": true,
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Utility",
+      "icon": "assets/icon.png",
+      "synopsis": "Control Center for ally-x20-steamos",
+      "syncDesktopName": true
+    },
+    "publish": null,
+    "electronLanguages": [
+      "en-US"
+    ]
+  }
+}

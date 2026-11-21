@@ -1,0 +1,136 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# control-center-helper — the only thing the Control Center UI may run as
+# root. Installed by components/controlcenter.sh at
+# /etc/ally-x20-steamos/control-center-helper (root:root 0755) and allowed
+# without a password by /etc/sudoers.d/zz-ally-x20-steamos-control-center.
+# Design and threat model: docs/control-center.md.
+#
+#   sudo -n /etc/ally-x20-steamos/control-center-helper <operation>
+#
+#   status     ally-x20-steamos status --json
+#   check      ally-x20-steamos self-update --check
+#   update     ally-x20-steamos self-update      (signed-tag verification as on the CLI)
+#   apply      ally-x20-steamos apply
+#   rollback   ally-x20-steamos self-update --rollback
+#
+# Rules this file must keep (tests/components/controlcenter.bats):
+#   - exactly one argument, compared against the closed list above; nothing
+#     the caller sends is ever passed on, to the CLI or to a shell
+#   - no setting is read from the environment: the paths below are
+#     constants, and the CLI starts with `env -i` and a fixed PATH
+#   - the CLI checkout, every directory above it and every file in it must
+#     belong to root and be writable by root only, or nothing is run
+#   - exit status is the CLI's; our own refusals are 64 (usage), 77 (not
+#     permitted / unsafe files), 69 (CLI missing), 75 (another run is busy)
+# POSIX sh, absolute paths for every tool, no sourcing of other files.
+set -eu
+
+# Constants. The tests run a copy of this file with these lines rewritten to
+# point into a fixture root; the installed file is never configurable.
+CLI=/var/lib/ally-x20-steamos/src/ally-x20-steamos.sh
+TRUSTED_UID=0
+TRUST_ANCHOR=/
+LOCK=/run/ally-x20-steamos-control-center.lock
+SAFE_PATH=/usr/bin:/usr/sbin:/bin:/sbin
+LOGGER=/usr/bin/logger
+TAG=ally-x20-steamos-control-center
+
+PATH=$SAFE_PATH
+export PATH
+IFS=' 	
+'
+umask 022
+
+caller="${SUDO_USER:-?}(${SUDO_UID:-?})"
+case "$caller" in
+    *[!A-Za-z0-9_.?\(\)-]*) caller="?" ;;
+esac
+
+note() {
+    "$LOGGER" -t "$TAG" -- "$*" 2>/dev/null || true
+}
+
+refuse() {
+    code=$1
+    shift
+    printf '%s: %s\n' "$TAG" "$*" >&2
+    note "refused (caller $caller): $*"
+    exit "$code"
+}
+
+if [ $# -ne 1 ]; then
+    refuse 64 "expected exactly one operation (status|check|update|apply|rollback), got $# arguments"
+fi
+
+# The closed list. $1 is only ever compared; "set --" replaces it with
+# constants before anything is executed.
+lock=0
+case "$1" in
+    status) set -- status --json ;;
+    check) set -- self-update --check ;;
+    update)
+        set -- self-update
+        lock=1
+        ;;
+    apply)
+        set -- apply
+        lock=1
+        ;;
+    rollback)
+        set -- self-update --rollback
+        lock=1
+        ;;
+    *) refuse 64 "unknown operation (allowed: status check update apply rollback)" ;;
+esac
+
+if [ "$(/usr/bin/id -u)" != "$TRUSTED_UID" ]; then
+    refuse 77 "must run as root through sudo"
+fi
+
+# unsafe <path...> : print every given path (not following symlinks) that is
+# not owned by root or TRUSTED_UID, or that group or others may write to. A
+# sticky directory (/tmp) is accepted: nobody but the owner can replace the
+# root-owned entry inside it.
+unsafe() {
+    /usr/bin/find "$@" -prune \
+        \( \( ! -user 0 ! -user "$TRUSTED_UID" \) \
+        -o \( ! -type l ! -perm -1000 \( -perm -020 -o -perm -002 \) \) \) -print 2>/dev/null
+}
+
+[ -f "$CLI" ] || refuse 69 "$CLI is missing (is ally-x20-steamos installed?)"
+src=$(cd -P "$(/usr/bin/dirname "$CLI")" && pwd -P) || refuse 69 "cannot resolve the directory of $CLI"
+anchor=$(cd -P "$TRUST_ANCHOR" && pwd -P) || refuse 69 "cannot resolve $TRUST_ANCHOR"
+
+# 1. every directory from the checkout up to the anchor (the real path: the
+#    state directory is a symlink into /home)
+d=$src
+while :; do
+    [ -z "$(unsafe "$d")" ] || refuse 77 "unsafe ownership or mode on $d; refusing to run anything from below it"
+    [ "$d" = "$anchor" ] && break
+    case "$d" in
+        / | '') refuse 77 "$src is not below $anchor" ;;
+    esac
+    d=$(/usr/bin/dirname "$d")
+done
+
+# 2. everything inside the checkout (code, git metadata) and the pinned
+#    release keys next to it. Symlinks are checked for their owner only.
+keys=$(/usr/bin/dirname "$src")/keys
+[ -d "$keys" ] || keys=$src
+bad=$(/usr/bin/find "$src" "$keys" \
+    \( \( ! -user 0 ! -user "$TRUSTED_UID" \) \
+    -o \( ! -type l \( -perm -020 -o -perm -002 \) \) \) -print 2>/dev/null | /usr/bin/head -n 1)
+[ -z "$bad" ] || refuse 77 "unsafe ownership or mode on $bad; refusing to run it as root"
+
+# One changing operation at a time. flock ships with util-linux on SteamOS;
+# where it is missing (macOS test hosts) the CLI's own checks have to do.
+if [ "$lock" = 1 ] && command -v flock >/dev/null 2>&1; then
+    exec 9>"$LOCK"
+    flock -n 9 || refuse 75 "another update, apply or rollback is still running"
+fi
+
+note "run (caller $caller): $*"
+cd /
+exec /usr/bin/env -i PATH="$SAFE_PATH" HOME=/root LANG=C LC_ALL=C \
+    /usr/bin/env bash "$src/ally-x20-steamos.sh" "$@"

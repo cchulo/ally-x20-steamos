@@ -9,8 +9,9 @@ and [`docs/architecture.md`](../docs/architecture.md). Summary:
 | `<name>_files` | yes | tab-separated `src dest mode [slot]` lines; `src` relative to `overlay/` |
 | `<name>_probe` | yes | 0 superseded by stock SteamOS, 1 still needed, 2 unknown |
 | `<name>_apply` | no | extra idempotent steps after files are installed |
-| `<name>_status` | no | override `active|stock|superseded|n/a` computation |
+| `<name>_status` | no | override `active|stock|superseded|n/a|off` computation |
 | `<name>_remove` | no | extra cleanup before manifest-driven removal |
+| `COMPONENT_OPT_IN=1` | no | not installed by a plain `apply`; `apply --only <name>` turns it on, after which it is re-applied like the others. Status `off` until then |
 
 Rules: never write outside `manifest_install_file` / `manifest_install_symlink`;
 build every path with `ax20_path`; stay bash-3.2 compatible; add a bats file

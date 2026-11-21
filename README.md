@@ -132,7 +132,7 @@ ally-x20-steamos.sh [--root <dir>] [--dry-run] [--verbose] [--yes] [--i-know] <c
 |---|---|
 | `install` | bootstrap: clone to `/var/lib/ally-x20-steamos/src`, pin keys, `apply`, `status` |
 | `apply [--slot <mount>] [--only <c>] [--missing-only] [--verify-only]` | (re)install components here or into a mounted slot; idempotent |
-| `status [--json] [--verbose]` | per component `active` / `stock` / `superseded` / `n/a`, kernel, policy |
+| `status [--json] [--verbose]` | per component `active` / `stock` / `superseded` / `n/a` / `off` (opt-in, not enabled), kernel, policy |
 | `probe [--notify]` | "has SteamOS caught up?" per component |
 | `rebuild [--kver <v>]` | fetch or build the patched kernel modules (cache → release asset → container build) |
 | `self-update [--channel stable\|beta] [--check] [--rollback]` | signed-tag update of the checkout, migrations, re-apply |

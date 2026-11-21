@@ -42,8 +42,9 @@ defining:
 | `<name>_files` | yes | prints `src<TAB>dest<TAB>mode[<TAB>slot]` lines; `src` is relative to `overlay/`, `dest` is absolute without root prefix |
 | `<name>_probe` | yes | exit 0 if stock SteamOS now provides this (superseded), 1 if still needed, 2 unknown |
 | `<name>_apply` | no | extra idempotent steps after files are copied (depmod, ldconfig, `systemctl enable`, downloads into the state dir) |
-| `<name>_status` | no | override the default `active / stock / superseded / n/a` computation |
+| `<name>_status` | no | override the default `active / stock / superseded / n/a / off` computation |
 | `<name>_remove` | no | extra cleanup before the manifest-driven file removal |
+| `COMPONENT_OPT_IN=1` | no | plain `apply`/`install`, the boot service and the update handlers skip the component until it was installed once with `apply --only <name>`; status is `off` until then |
 
 `lib/component.sh` drives them: `component_apply` copies every listed file
 through `manifest_install_file`, then calls `<name>_apply`.
@@ -61,6 +62,7 @@ Planned components and the plan sections they implement:
 | `hdr` | §1.4 | libdisplay-info 0.3.0 + DisplayID 2 backport via ld.so.conf.d (Desktop Mode), gamescope Lua display profile for the X20 panel (Game Mode on stock gamescope), opt-in custom gamescope behind a stock-fallback wrapper ([docs/hdr.md](hdr.md)) |
 | `power` | §1.6 | steamos-manager RC74XA device entry under `/etc/ally-x20-steamos/steamos-manager/` (rendered: power profiles, no TDP slider unless `power tdp-slider on`, setting in `/etc/ally-x20-steamos/power.conf`), the bind-mount shim (`steamos-manager-devices-shim` + `ally-x20-steamos-power-devices.service`, copy in `/run`), status of the asus-armoury limits; the `asus-armoury` module itself is built and loaded by `modules` ([docs/power.md](power.md)) |
 | `sdexpress` | — | udev rule `/etc/udev/rules.d/99-ally-x20-steamos-sdexpress.rules` (rendered from `overlay/udev/rules.d/*.rules.in` with the slot's PCIe root port, default `0000:00:02.2`, override in `/etc/ally-x20-steamos/sdexpress.conf`) that feeds the SD Express card's partitions to stock `block-device-event.sh`/`holo-automount.sh`; `cmd/sdexpress.sh` formats the card with the stock `format-device.sh` sequence, since that script rejects nvme nodes ([docs/sdexpress.md](sdexpress.md)) |
+| `controlcenter` | — | **opt-in.** `/etc/ally-x20-steamos/control-center-helper` (root helper with five fixed operations) and `/etc/sudoers.d/zz-ally-x20-steamos-control-center` (NOPASSWD rule for it, checked with `visudo -cf` before it is installed) for the Control Center UI ([docs/control-center.md](control-center.md)) |
 | `update` | §4 | RAUC pre/post-install handlers, `system.conf` delimited block, boot service, user notifier, boot-entry reconcile ([docs/update-survival.md](update-survival.md)) |
 
 Shared libraries behind them: `lib/slots.sh` (A/B slots, boot-entry

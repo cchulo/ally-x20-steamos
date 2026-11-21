@@ -52,9 +52,13 @@ cp "$out/manifest.json" "$stage/out/"
 cp "$out"/hrir/*.wav "$stage/out/hrir/"
 
 # shellcheck disable=SC2016  # expanded by the remote shell
-tar -C "$stage" -czf - . | ssh "$host" '
+# --no-xattrs / COPYFILE_DISABLE: macOS tar would add Apple attributes that
+# GNU tar on the device reports as unknown header keywords, one per file.
+# -m on the device: do not restore modification times, so a small clock
+# difference between the two machines does not print "in the future".
+COPYFILE_DISABLE=1 tar -C "$stage" --no-xattrs -czf - . | ssh "$host" '
     set -e
     d=$(mktemp -d "${TMPDIR:-/tmp}/x20-surround-install.XXXXXX")
     trap "rm -rf \"$d\"" EXIT
-    tar -C "$d" -xzf -
+    tar -C "$d" -xzmf -
     bash "$d/install.sh" --from "$d"'

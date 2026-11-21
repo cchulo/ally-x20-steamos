@@ -85,6 +85,7 @@ SteamOS updates and troubleshooting: [user guide](docs/user-guide.md),
 | **Xbox button light** dark on Linux. | `xbox-led on\|off\|brightness\|breathe` sends the controller the reports Armoury Crate uses (captured on Windows, verified on the X20); the driver keeps on/off; a udev rule re-sends brightness/breathe at boot and a systemd unit after resume; no Steam menu for it | `xboxled`, `modules` · [docs/rgb.md](docs/rgb.md#xbox-button-light) |
 | **HDR not detected** (panel metadata lives in a DisplayID 2 block). | libdisplay-info 0.3.0 + DisplayID 2 backport via `ld.so.conf.d` (Desktop Mode); gamescope Lua display profile for the panel, loaded by stock gamescope (Game Mode); optional custom gamescope behind a stock-fallback wrapper | `hdr` · [docs/hdr.md](docs/hdr.md) |
 | **No power profiles in Steam's Performance menu.** steamos-manager 26.4.1 has no X20 device file. | The upstream steamos-manager RC74XA entry, merged into `/usr/share/steamos-manager/devices` by a boot-time bind mount of a copy in `/run` (nothing written to `/usr`, steps aside once SteamOS ships it): Low power / Balanced / Performance hold the APU at about 12 / 16-21 / 25-30 W on battery. No TDP slider on purpose: BIOS `RC74XA.303` ignores PPT writes (`power tdp-slider on` to re-test; the mainline `asus-armoury` RC74XA table is still built) | `power`, `modules` · [docs/power.md](docs/power.md) |
+| **Built-in headphones and speakers are stereo only**, so games send a stereo mix. | A user service puts an 8-channel PipeWire sink in front of the built-in output in use and convolves it with a head-related impulse response set; it becomes the default by priority, no default is forced. Four heads, each as `-dry` (fronts unfiltered) and `-full`; `-dry` is recommended on both outputs (by the owner's ear, `-full` makes the fronts sound quieter on the speakers and may suit headphones for sharper positioning). Each output has its own profile: headphones default to `sadie-d2-dry`, speakers to `sadie-d2-dry` with crosstalk cancellation (60 µs, 50 %), which is generated on the device and applies to the speakers only. `surround set <headphones\|speakers> <profile>` switches on the fly, the new filter starting before the old one stops, and `user` takes your own HeSuVi file | `surround` · [docs/surround.md](docs/surround.md) |
 | **SD Express card never mounts; Steam's Format button fails on it.** The card is a PCIe/NVMe device and stock's automount rule only matches `mmcblk*\|sd*`; `format-device.sh` rejects nvme nodes. | One udev rule that hands the card's partitions to the stock `block-device-event.sh` / `holo-automount.sh` (udisks mount at `/run/media/deck/<label>`), matched by the slot's PCIe root port because the card and the SSD swap `nvmeN` names between boots; `sdexpress format` runs the stock format sequence (GPT, ext4 casefold, owned by deck) | `sdexpress` · [docs/sdexpress.md](docs/sdexpress.md) |
 | **SteamOS updates wipe out-of-tree changes.** | RAUC pre/post-install handlers, boot service, user notifier; `block`/`degrade` policy when modules cannot be built for an incoming kernel | `update` · [docs/update-survival.md](docs/update-survival.md) |
 
@@ -137,6 +138,7 @@ ally-x20-steamos.sh [--root <dir>] [--dry-run] [--verbose] [--yes] [--i-know] <c
 | `self-update [--channel stable\|beta] [--check] [--rollback]` | signed-tag update of the checkout, migrations, re-apply |
 | `buttons status\|layout [deck\|legacy]` | what the two top buttons do: `deck` (default) = action button opens Quick Access, Armoury Crate is the Steam button; `legacy` = Armoury Crate opens Quick Access, action button takes a screenshot |
 | `power status\|tdp-slider [on\|off]` | power profiles; the TDP slider test switch (default off) |
+| `surround status\|list\|set <headphones\|speakers> <profile>\|xtc off\|xtc <delay_us> <strength_pct>\|prepare` | virtual 7.1 surround for the built-in outputs: pick a profile per output, set the speakers' crosstalk cancellation, generate and check its tested settings for the speakers' profile (as the user, no sudo; kept across updates) |
 | `sdexpress status\|format [--label <l>] [--full] [--validate]\|mount\|root-port [<bdf>]` | the SD Express slot: automount state, format a card like Steam does (root; the card is found by PCIe root port, never by `nvmeN`) |
 | `xbox-led on\|off\|brightness <0-3>\|breathe on\|off\|restore\|node` | the Xbox button light (root; kept across reboots: on/off by the patched driver, brightness/breathe by component `xboxled`) |
 | `update-policy show\|block\|degrade [--once]` | what an update does if modules cannot be built |
@@ -153,7 +155,7 @@ against a fixture tree, which is how the test suite works.
 
 ```
 ally-x20-steamos.sh   CLI dispatcher            lib/          common, manifest, probes, component, retired, slots, rauc, modules, selfupdate, status, notify
-cmd/                  one file per command      components/   audio, hdr, inputplumber, modules, power, sdexpress, update, xboxled
+cmd/                  one file per command      components/   audio, hdr, inputplumber, modules, power, sdexpress, surround, update, xboxled
 overlay/              files installed on the device (manifest-tracked)   uninstall/   standalone POSIX uninstaller
 patches/kernel/       0001-0008 ASoC (audio), 0010-0015 hid-asus-ally, 0020 asus-armoury   patches/{gamescope,libdisplay-info}/
 build/                Containerfile, build-modules.sh, build-hdr.sh, build-inputplumber.sh, kernel-sources.md
@@ -220,6 +222,32 @@ itself. If you added an fstab line for the card earlier, remove it before
 you run `sdexpress format`: the format does not check for it and would run
 on a card that is still in use. Steps:
 [docs/sdexpress.md](docs/sdexpress.md#do-not-mount-the-card-through-etcfstab).
+
+**Can I use a Dolby Atmos for Headphones profile for the virtual surround?**
+Yes, as the `user` profile. The file is not shipped, because it is not ours
+to redistribute; you supply it:
+
+1. Get an Atmos impulse response file for HeSuVi: a `.wav` with 14 channels
+   at 48 kHz. The owner's came from the HRIR collection at
+   <https://airtable.com/appayGNkn3nSuXkaz/shruimhjdSakUPg2m/tbloLjoZKWJDnLtTc>
+   (look for the Atmos entry and download its 14-channel 48 kHz `.wav`).
+2. Copy it to the device, into `~/.config/ally-x20-steamos/surround-user/`.
+   From another computer:
+   `ssh deck@<device> mkdir -p .config/ally-x20-steamos/surround-user` and
+   `scp atmos.wav deck@<device>:.config/ally-x20-steamos/surround-user/`.
+3. On the device: `./ally-x20-steamos.sh surround set headphones user`,
+   and `./ally-x20-steamos.sh surround set speakers user` if you want it on
+   the speakers too. Each output has its own profile.
+4. `./ally-x20-steamos.sh surround status` shows `user` with the file name.
+   If it shows `user -> sadie-d2-dry` instead, the note under it says what is
+   wrong with the file.
+5. For the speakers: `./ally-x20-steamos.sh surround prepare` generates the
+   twelve tested crosstalk-cancellation settings for your file (about 2 s
+   each on the X20 for a file of about 5000 samples) and shows which are
+   usable; `surround xtc <delay_us> <strength_pct>` picks one.
+
+Any other HeSuVi file works the same way; the first `.wav` in that folder,
+in lexical order, is used. Details: [docs/surround.md](docs/surround.md#your-own-file).
 
 **`self-update` says no release tag is signed by a pinned key.**
 Installs made from releases before v0.1.4 pinned placeholder keys, and their
@@ -337,6 +365,16 @@ section and the docs linked below name the exact commits.
 - [steamos-manager](https://gitlab.steamos.cloud/holo/steamos-manager)
   (Valve, MIT): the RC74XA device entry (`bfbb261ed6b2`) and the device file
   format.
+- **Head-related impulse responses** behind the `surround` profiles: the
+  **SADIE II** database (University of York AudioLab; Armstrong, Thresh,
+  Murphy, Kearney, 2018; Apache-2.0), the **HUTUBS** database (TU Berlin
+  Audio Communication Group, Huawei, Sennheiser; Brinkmann et al., 2019;
+  CC BY 4.0) and the **MIT Media Lab KEMAR** measurements (Gardner and
+  Martin, 1995), as SOFA files from [sofacoustics.org](https://sofacoustics.org).
+  The filter graph is **PipeWire**'s `sink-virtual-surround-7.1-hesuvi.conf`
+  and the channel layout is **HeSuVi**'s. The speaker variants (crosstalk
+  cancellation) are derived from these files on the device. Details:
+  [overlay/surround/NOTICE.md](overlay/surround/NOTICE.md).
 - [ValveSoftware/gamescope](https://github.com/ValveSoftware/gamescope)
   (BSD-2-Clause): PR #2493 by **Matthew Schwartz**, the X20 display profile
   and the DisplayID 2 HDR patches ([docs/hdr.md](docs/hdr.md)).

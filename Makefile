@@ -16,7 +16,7 @@ test-shell:
 PYTEST := $(shell command -v pytest 2>/dev/null || echo python3 -m pytest)
 
 test-python:
-	@if ls acpi/tests/test_*.py >/dev/null 2>&1; then $(PYTEST) -q acpi/tests; else echo "no python tests yet"; fi
+	$(PYTEST) -q acpi/tests tests/surround
 	$(PYTEST) -q tools/surround-test/tests
 
 fmt:

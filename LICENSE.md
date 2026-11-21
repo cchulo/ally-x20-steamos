@@ -28,6 +28,9 @@ SPDX header check skips them.
 | `overlay/inputplumber/capability_maps.d/ally-x20-steamos-aly2.yaml` | GPL-3.0-or-later | InputPlumber upstream `ally_type2.yaml` capability map (v0.83.0), renamed id (button layout `deck`) |
 | `overlay/inputplumber/capability_maps.d/ally-x20-steamos-aly2.legacy.yaml` | GPL-3.0-or-later | the same map with the button layout `legacy` |
 | `overlay/steamos-manager/devices/90-ally-x20-steamos-rc74xa.toml` | MIT | [holo/steamos-manager](https://gitlab.steamos.cloud/holo/steamos-manager) `data/devices/rog-ally-series.toml` RC74XA entry (commit `bfbb261ed6b2`), rewritten in the 26.4.1 schema (header in the file) |
+| `overlay/surround/hrir/sadie-d2-dry.wav`, `sadie-d2-full.wav` | Apache-2.0 | derived from the SADIE II database, subject D2 (University of York); license text in `overlay/surround/LICENSE.Apache-2.0`, changes and attribution in `overlay/surround/NOTICE.md` |
+| `overlay/surround/hrir/hutubs-pp1-dry.wav`, `hutubs-pp1-full.wav` | CC-BY-4.0 | derived from the HUTUBS database, subject pp1 (TU Berlin, Huawei, Sennheiser); changes and attribution in `overlay/surround/NOTICE.md` |
+| `overlay/surround/hrir/mit-kemar-{,large-}{dry,full}.wav` | no usage restrictions, citation requested | derived from the MIT Media Lab KEMAR measurements (Gardner and Martin, 1995); attribution in `overlay/surround/NOTICE.md` |
 
 ## Patches taken from upstream
 

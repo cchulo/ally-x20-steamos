@@ -23,7 +23,7 @@ risk.
 | On stock SteamOS | With ally-x20-steamos |
 |---|---|
 | The speakers are silent ("Dummy Output" or HDMI only). | Both speakers play. Steam's audio output list shows just **Speakers** (plus headphones, HDMI or Bluetooth when connected). |
-| The Armoury Crate button (top left) and the capture button (top right) do nothing. | **Armoury Crate** opens Steam's **Quick Access** menu. **Capture** takes a **screenshot**. |
+| The Armoury Crate button (top left) and the action button (top right) do nothing. | The **action button** opens Steam's **Quick Access** menu, like the right-hand button of a Steam Deck. **Armoury Crate** is a second **Steam button**, like the Xbox button. A **screenshot** is Xbox button + R1. (Up to v0.1.11 Armoury Crate opened Quick Access and the action button took a screenshot; [you can switch back](#changing-what-the-top-buttons-do).) |
 | Rumble at 100 % feels weak, and strong rumble makes the speakers hiss. | Rumble uses its full range, and the static from the speakers during strong rumble is gone. |
 | The joystick-ring lights cannot be changed from Steam. | **Settings → Customization** in Game Mode shows the joystick-ring lighting (colour and brightness). |
 | The Xbox button light is dark. | `sudo ./ally-x20-steamos.sh xbox-led on` lights it (green, as on Windows); `brightness 0-3` and `breathe on\|off` adjust it. All of it is kept across reboots. There is no Steam menu for it. |
@@ -51,6 +51,9 @@ risk.
   stops working after an update, see [Troubleshooting](#troubleshooting).
 - Some details are still unconfirmed on the hardware, for example the
   long-press actions of the two extra buttons and the motion sensor axes.
+  The button layout that came after v0.1.11 (action button = Quick Access,
+  Armoury Crate = Steam button) was worked out from InputPlumber's source
+  and has not been tried on a device yet.
   Developers keep the list in [hardware-data.md](hardware-data.md).
 
 ## What it changes on your system
@@ -162,12 +165,35 @@ Then, in Game Mode:
 
 - **Speakers:** play a video or a game. Steam's audio output (Settings →
   Audio) should show **Speakers**.
-- **Buttons:** press Armoury Crate (top left): Quick Access opens. Press
-  capture (top right): a screenshot is taken.
+- **Buttons:** press the action button (top right): Quick Access opens.
+  Press Armoury Crate (top left) or the Xbox button: the Steam menu opens.
+  Hold the Xbox button and press R1: a screenshot is taken.
 - **Lights:** Settings → Customization has the joystick-ring lighting.
 - **Power:** Quick Access → Performance (the battery icon) has the power
   profile switch (Low power, Balanced, Performance) and no TDP slider.
 - **HDR:** Settings → Display offers HDR.
+
+### Changing what the top buttons do
+
+There are two layouts for the two buttons at the top of the screen:
+
+| Layout | Action button (top right) | Armoury Crate (top left) | Screenshot |
+|---|---|---|---|
+| `deck` (default) | Quick Access menu | Steam button | Xbox button + R1 |
+| `legacy` (versions up to v0.1.11) | screenshot | Quick Access menu | action button |
+
+The Xbox button is the Steam button in both. To switch:
+
+```sh
+sudo ./ally-x20-steamos.sh buttons layout legacy   # or: deck
+./ally-x20-steamos.sh buttons status               # shows the layout in use
+```
+
+The controller stops for a moment while the change is applied. The choice
+is kept across reboots and updates. Armoury Crate is planned to open a
+settings screen of this project in a later version; until then it is a
+second Steam button, and because the controller only reports it when it is
+released, use the Xbox button for Steam chords such as the screenshot.
 
 ## Updating
 

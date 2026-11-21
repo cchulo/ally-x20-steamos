@@ -578,3 +578,416 @@ make_patch() {
     BM_INCLUDE_OVERLAY="" BM_SUPERSEDED="" BM_HEADERS_DIR=/hdr JOBS=1
     [ "$(bm_make_args /t drivers/hid | tr '\n' '|')" = "-C|/hdr|M=/t/drivers/hid|-j1|hid-asus-ally.ko|" ]
 }
+
+# ------------------------------------------------------- partial builds --
+
+@test "list options: required is the default; optional and needs= are parsed; the three-column view is unchanged" {
+    printf '0010-a.patch\tdrivers/hid\thid-asus-ally.ko\n0012-b.patch\tdrivers/hid\thid-asus-ally.ko\toptional\n0015-c.patch\tdrivers/hid\thid-asus-ally.ko\toptional,needs=0012\n0016-d.patch\tdrivers/hid\thid-asus-ally.ko\tneeds=0010,needs=0012-b.patch,required\n' \
+        >"$PATCHES_DIR/modules-hid.list"
+    run bm_list_entries_full "$PATCHES_DIR"
+    assert_success
+    [ "${lines[0]}" = "0010-a.patch${TAB}drivers/hid${TAB}hid-asus-ally${TAB}required${TAB}-" ]
+    [ "${lines[1]}" = "0012-b.patch${TAB}drivers/hid${TAB}hid-asus-ally${TAB}optional${TAB}-" ]
+    [ "${lines[2]}" = "0015-c.patch${TAB}drivers/hid${TAB}hid-asus-ally${TAB}optional${TAB}0012" ]
+    [ "${lines[3]}" = "0016-d.patch${TAB}drivers/hid${TAB}hid-asus-ally${TAB}required${TAB}0010,0012-b.patch" ]
+    [ "$(bm_list_entries "$PATCHES_DIR" | sed -n 2p)" = "0012-b.patch${TAB}drivers/hid${TAB}hid-asus-ally" ]
+    BM_ENTRIES_FULL=$(bm_list_entries_full "$PATCHES_DIR")
+    BM_ENTRIES=$(bm_list_entries "$PATCHES_DIR")
+    bm_entry_optional 0012-b.patch hid-asus-ally
+    ! bm_entry_optional 0010-a.patch hid-asus-ally
+    [ "$(bm_patch_needs 0016-d.patch | tr '\n' ' ')" = "0010 0012-b.patch " ]
+    [ "$(bm_resolve_need 0012)" = 0012-b.patch ]
+    bm_check_needs
+}
+
+@test "list options: unknown options and five fields are rejected; lib/modules.sh parses them identically" {
+    printf '0010-a.patch\tdrivers/hid\thid-asus-ally.ko\tsometimes\n' >"$PATCHES_DIR/modules-hid.list"
+    run bm_list_entries_full "$PATCHES_DIR"
+    assert_failure
+    assert_output_contains 'unknown option "sometimes"'
+    run bm_list_entries "$PATCHES_DIR"
+    assert_failure
+    printf '0010-a.patch\tdrivers/hid\thid-asus-ally.ko\toptional\textra\n' >"$PATCHES_DIR/modules-hid.list"
+    run bm_list_entries_full "$PATCHES_DIR"
+    assert_failure
+    printf '0010-a.patch\tdrivers/hid\thid-asus-ally.ko\n0012-b.patch\tdrivers/hid\thid-asus-ally.ko\toptional,needs=0010\n' >"$PATCHES_DIR/modules-hid.list"
+    expected=$(bm_list_entries_full "$PATCHES_DIR")
+    actual=$(AX20_PATCHES_DIR="$PATCHES_DIR" bash -c '. "$1/lib/modules.sh"; modules_list_entries_full' _ "$REPO_ROOT")
+    [ "$expected" = "$actual" ]
+    [ "$(printf '%s\n' "$expected" | bm_lists_digest)" = "$(AX20_PATCHES_DIR="$PATCHES_DIR" bash -c '. "$1/lib/modules.sh"; modules_lists_digest' _ "$REPO_ROOT")" ]
+}
+
+@test "needs= must name exactly one listed patch that is applied earlier" {
+    printf '0010-a.patch\tdrivers/hid\thid-asus-ally.ko\tneeds=0012\n0012-b.patch\tdrivers/hid\thid-asus-ally.ko\n' >"$PATCHES_DIR/modules-hid.list"
+    BM_ENTRIES_FULL=$(bm_list_entries_full "$PATCHES_DIR")
+    BM_ENTRIES=$(bm_list_entries "$PATCHES_DIR")
+    run bm_check_needs
+    assert_failure
+    assert_output_contains "not applied before it"
+    printf '0010-a.patch\tdrivers/hid\thid-asus-ally.ko\n0012-b.patch\tdrivers/hid\thid-asus-ally.ko\tneeds=0099\n' >"$PATCHES_DIR/modules-hid.list"
+    BM_ENTRIES_FULL=$(bm_list_entries_full "$PATCHES_DIR")
+    BM_ENTRIES=$(bm_list_entries "$PATCHES_DIR")
+    run bm_check_needs
+    assert_failure
+    assert_output_contains "must name exactly one listed patch"
+    printf '0010-a.patch\tdrivers/hid\thid-asus-ally.ko\n0011-b.patch\tdrivers/hid\thid-asus-ally.ko\n0012-c.patch\tdrivers/hid\thid-asus-ally.ko\tneeds=001\n' >"$PATCHES_DIR/modules-hid.list"
+    BM_ENTRIES_FULL=$(bm_list_entries_full "$PATCHES_DIR")
+    BM_ENTRIES=$(bm_list_entries "$PATCHES_DIR")
+    run bm_check_needs
+    assert_failure
+}
+
+# issue68_fixture : two independent modules like issue #68. The audio patch
+# (0002) does not apply to the tree; the HID patches are 0010 (required),
+# 0012 (optional, does not apply), 0013 (optional, applies), 0015 (optional,
+# needs 0012) and 0016 (optional, applies). Sets $tree.
+issue68_fixture() {
+    printf '0002-acp.patch\tsound/soc/amd\tsnd-acp-config.ko\n' >"$PATCHES_DIR/modules.list"
+    printf '%s\n' \
+        "0010-ring.patch${TAB}drivers/hid${TAB}hid-asus-ally.ko" \
+        "0012-key.patch${TAB}drivers/hid${TAB}hid-asus-ally.ko${TAB}optional" \
+        "0013-uaf.patch${TAB}drivers/hid${TAB}hid-asus-ally.ko${TAB}optional" \
+        "0015-hold.patch${TAB}drivers/hid${TAB}hid-asus-ally.ko${TAB}optional,needs=0012" \
+        "0016-light.patch${TAB}drivers/hid${TAB}hid-asus-ally.ko${TAB}optional" >"$PATCHES_DIR/modules-hid.list"
+    make_patch t sound/soc/amd/acp-config.c 'flag table v1' 'flag table with RC74XA' "$PATCHES_DIR/0002-acp.patch"
+    make_patch t drivers/hid/ring.c 'ring old' 'ring new' "$PATCHES_DIR/0010-ring.patch"
+    make_patch t drivers/hid/key.c 'key old' 'key new' "$PATCHES_DIR/0012-key.patch"
+    make_patch t drivers/hid/uaf.c 'uaf old' 'uaf new' "$PATCHES_DIR/0013-uaf.patch"
+    make_patch t drivers/hid/hold.c 'hold old' 'hold new' "$PATCHES_DIR/0015-hold.patch"
+    make_patch t drivers/hid/light.c 'light old' 'light new' "$PATCHES_DIR/0016-light.patch"
+    BM_ENTRIES_FULL=$(bm_list_entries_full "$PATCHES_DIR")
+    BM_ENTRIES=$(bm_list_entries "$PATCHES_DIR")
+    tree="$BATS_TEST_TMPDIR/tree"
+    mkdir -p "$tree/drivers/hid" "$tree/sound/soc/amd"
+    printf 'flag table rewritten by a newer kernel\n' >"$tree/sound/soc/amd/acp-config.c"
+    printf 'ring old\n' >"$tree/drivers/hid/ring.c"
+    printf 'key code moved in a newer kernel\n' >"$tree/drivers/hid/key.c"
+    printf 'uaf old\n' >"$tree/drivers/hid/uaf.c"
+    printf 'hold old\n' >"$tree/drivers/hid/hold.c"
+    printf 'light old\n' >"$tree/drivers/hid/light.c"
+}
+
+@test "partial build (issue #68): a stale audio patch leaves its module stock, the HID module is still built" {
+    command -v git >/dev/null 2>&1 || skip "git not installed"
+    issue68_fixture
+    BM_PARTIAL=1
+    bm_apply_patches "$tree"
+    [ "$(bm_patch_status_of 0002-acp.patch)" = failed ]
+    [ "$(bm_patch_status_of 0010-ring.patch)" = applied ]
+    [ "$(bm_patch_status_of 0012-key.patch)" = failed ]
+    [ "$(bm_patch_status_of 0013-uaf.patch)" = applied ]
+    [ "$(bm_patch_status_of 0015-hold.patch)" = skipped ]
+    [ "$(bm_patch_status_of 0016-light.patch)" = applied ]
+    [ "$(bm_patch_reason_of 0015-hold.patch)" = "needs 0012-key.patch, which is not in this build" ]
+    # 0015 would have applied textually; needs= keeps it out.
+    [ "$(cat "$tree/drivers/hid/hold.c")" = "hold old" ]
+    [ "$(cat "$tree/drivers/hid/ring.c")" = "ring new" ]
+    [ "$(cat "$tree/drivers/hid/light.c")" = "light new" ]
+    bm_is_stock snd-acp-config
+    [[ "$(bm_stock_reason_of snd-acp-config)" == "0002-acp.patch does not apply to the $KVER source"* ]]
+    bm_module_wanted hid-asus-ally
+    [ "$(bm_module_without hid-asus-ally | tr '\n' ' ')" = "0012-key.patch 0015-hold.patch " ]
+    bm_mdir_needed drivers/hid
+    ! bm_mdir_needed sound/soc/amd
+    bm_build_is_partial
+    BM_HEADERS_DIR=/hdr JOBS=1
+    [ "$(bm_make_args "$tree" drivers/hid | tr '\n' '|')" = "-C|/hdr|M=$tree/drivers/hid|-j1|hid-asus-ally.ko|" ]
+}
+
+@test "strict build: the same stale patch fails the whole build, and so does an unmet needs=" {
+    command -v git >/dev/null 2>&1 || skip "git not installed"
+    issue68_fixture
+    BM_PARTIAL=0
+    run bm_apply_patches "$tree"
+    assert_failure
+    assert_output_contains "0002-acp.patch does not apply to the $KVER source (neither forward nor reverse)"
+    # Nothing later was applied.
+    [ "$(cat "$tree/drivers/hid/ring.c")" = "ring old" ]
+}
+
+@test "partial build: a required patch that does not apply leaves the module stock even when later patches apply" {
+    command -v git >/dev/null 2>&1 || skip "git not installed"
+    issue68_fixture
+    printf 'ring code changed too\n' >"$tree/drivers/hid/ring.c"
+    BM_PARTIAL=1
+    bm_apply_patches "$tree"
+    [ "$(bm_patch_status_of 0010-ring.patch)" = failed ]
+    [ "$(bm_patch_status_of 0016-light.patch)" = applied ]
+    bm_is_stock hid-asus-ally
+    [[ "$(bm_stock_reason_of hid-asus-ally)" == 0010-ring.patch* ]]
+    ! bm_mdir_needed drivers/hid
+    [ -z "$(bm_make_args "$tree" drivers/hid | grep '\.ko$')" ]
+}
+
+@test "partial build: a later patch that needs the text of a missing one does not apply either" {
+    command -v git >/dev/null 2>&1 || skip "git not installed"
+    printf '%s\n' \
+        "0010-a.patch${TAB}drivers/hid${TAB}hid-asus-ally.ko" \
+        "0012-b.patch${TAB}drivers/hid${TAB}hid-asus-ally.ko${TAB}optional" \
+        "0013-c.patch${TAB}drivers/hid${TAB}hid-asus-ally.ko${TAB}optional" >"$PATCHES_DIR/modules-hid.list"
+    make_patch t drivers/hid/a.c 'a old' 'a new' "$PATCHES_DIR/0010-a.patch"
+    make_patch t drivers/hid/f.c 'v1' 'v2' "$PATCHES_DIR/0012-b.patch"
+    make_patch t drivers/hid/f.c 'v2' 'v3' "$PATCHES_DIR/0013-c.patch"
+    BM_ENTRIES_FULL=$(bm_list_entries_full "$PATCHES_DIR")
+    BM_ENTRIES=$(bm_list_entries "$PATCHES_DIR")
+    tree="$BATS_TEST_TMPDIR/tree"
+    mkdir -p "$tree/drivers/hid"
+    printf 'a old\n' >"$tree/drivers/hid/a.c"
+    printf 'v0\n' >"$tree/drivers/hid/f.c"
+    BM_PARTIAL=1
+    bm_apply_patches "$tree"
+    [ "$(bm_patch_status_of 0012-b.patch)" = failed ]
+    [ "$(bm_patch_status_of 0013-c.patch)" = failed ]
+    [ "$(cat "$tree/drivers/hid/f.c")" = v0 ]
+    bm_module_wanted hid-asus-ally
+    [ "$(bm_module_without hid-asus-ally | tr '\n' ' ')" = "0012-b.patch 0013-c.patch " ]
+}
+
+@test "partial build: a module whose only remaining patches are optional and missing stays stock" {
+    command -v git >/dev/null 2>&1 || skip "git not installed"
+    printf '0012-b.patch\tdrivers/hid\thid-asus-ally.ko\toptional\n' >"$PATCHES_DIR/modules-hid.list"
+    make_patch t drivers/hid/f.c 'v1' 'v2' "$PATCHES_DIR/0012-b.patch"
+    BM_ENTRIES_FULL=$(bm_list_entries_full "$PATCHES_DIR")
+    BM_ENTRIES=$(bm_list_entries "$PATCHES_DIR")
+    tree="$BATS_TEST_TMPDIR/tree"
+    mkdir -p "$tree/drivers/hid"
+    printf 'v0\n' >"$tree/drivers/hid/f.c"
+    BM_PARTIAL=1
+    bm_apply_patches "$tree"
+    bm_is_stock hid-asus-ally
+    [[ "$(bm_stock_reason_of hid-asus-ally)" == "none of its patches is left to apply"* ]]
+}
+
+# shared_fixture : 0003 changes a header and two modules (like the SoundWire
+# set); 0007 is a second patch for one of them only. Sets $tree.
+shared_fixture() {
+    printf '%s\n' \
+        "0003-x.patch${TAB}sound/soc/sdw_utils${TAB}snd-soc-sdw-utils.ko" \
+        "0003-x.patch${TAB}sound/soc/amd/acp${TAB}snd-acp-sdw-sof-mach.ko" \
+        "0007-y.patch${TAB}sound/soc/sdw_utils${TAB}snd-soc-sdw-utils.ko" \
+        "0001-m.patch${TAB}sound/soc/amd/acp${TAB}snd-soc-acpi-amd-match.ko" >"$PATCHES_DIR/modules.list"
+    make_patch t include/sound/soc_sdw_utils.h 'struct old' 'struct new' "$BATS_TEST_TMPDIR/h.diff"
+    make_patch t sound/soc/sdw_utils/soc_sdw_utils.c 'c old' 'c new' "$BATS_TEST_TMPDIR/c.diff"
+    cat "$BATS_TEST_TMPDIR/h.diff" "$BATS_TEST_TMPDIR/c.diff" >"$PATCHES_DIR/0003-x.patch"
+    make_patch t sound/soc/sdw_utils/resume.c 'r old' 'r new' "$PATCHES_DIR/0007-y.patch"
+    make_patch t sound/soc/amd/acp/match.c 'm old' 'm new' "$PATCHES_DIR/0001-m.patch"
+    BM_ENTRIES_FULL=$(bm_list_entries_full "$PATCHES_DIR")
+    BM_ENTRIES=$(bm_list_entries "$PATCHES_DIR")
+    tree="$BATS_TEST_TMPDIR/tree"
+    mkdir -p "$tree/include/sound" "$tree/sound/soc/sdw_utils" "$tree/sound/soc/amd/acp"
+    printf 'struct old\n' >"$tree/include/sound/soc_sdw_utils.h"
+    printf 'c old\n' >"$tree/sound/soc/sdw_utils/soc_sdw_utils.c"
+    printf 'r old\n' >"$tree/sound/soc/sdw_utils/resume.c"
+    printf 'm old\n' >"$tree/sound/soc/amd/acp/match.c"
+}
+
+@test "partial build: modules that share an applied patch are built together or not at all; an unrelated module in the same M= dir is still built" {
+    command -v git >/dev/null 2>&1 || skip "git not installed"
+    shared_fixture
+    # 0007 (required for snd-soc-sdw-utils only) does not apply.
+    printf 'r rewritten\n' >"$tree/sound/soc/sdw_utils/resume.c"
+    BM_PARTIAL=1
+    bm_apply_patches "$tree"
+    [ "$(bm_patch_status_of 0003-x.patch)" = applied ]
+    [ "$(bm_patch_status_of 0007-y.patch)" = failed ]
+    bm_is_stock snd-soc-sdw-utils
+    # The mach module would be built against the patched header while the
+    # stock snd-soc-sdw-utils has the old one.
+    bm_is_stock snd-acp-sdw-sof-mach
+    [[ "$(bm_stock_reason_of snd-acp-sdw-sof-mach)" == "shares patched code ("*") with snd-soc-sdw-utils, which stays stock" ]]
+    bm_module_wanted snd-soc-acpi-amd-match
+    # The header of a patch nobody uses is not put ahead of the kernel's.
+    [ -z "$BM_INCLUDE_OVERLAY" ]
+    BM_HEADERS_DIR=/hdr JOBS=1
+    [ "$(bm_make_args "$tree" sound/soc/amd/acp | tr '\n' '|')" = "-C|/hdr|M=$tree/sound/soc/amd/acp|-j1|snd-soc-acpi-amd-match.ko|" ]
+}
+
+@test "partial build: a make failure leaves that directory's modules and the ones tied to them stock; strict dies" {
+    command -v git >/dev/null 2>&1 || skip "git not installed"
+    shared_fixture
+    BM_PARTIAL=1 BM_HEADERS_DIR=/hdr JOBS=1
+    bm_apply_patches "$tree"
+    ! bm_build_is_partial
+    bm_make() {
+        case "$*" in *"M=$tree/sound/soc/sdw_utils"*) return 2 ;; esac
+        return 0
+    }
+    bm_build_mdirs "$tree"
+    bm_is_stock snd-soc-sdw-utils
+    [[ "$(bm_stock_reason_of snd-soc-sdw-utils)" == "build of M=sound/soc/sdw_utils failed"* ]]
+    bm_is_stock snd-acp-sdw-sof-mach
+    bm_module_wanted snd-soc-acpi-amd-match
+    bm_build_is_partial
+    BM_PARTIAL=0 BM_STOCK="" BM_STOCK_REASONS=""
+    run bm_build_mdirs "$tree"
+    assert_failure
+    assert_output_contains "build of M=sound/soc/sdw_utils failed"
+}
+
+@test "BUILD-INFO of a partial build: partial=1, every patch and module with its state and reason" {
+    command -v git >/dev/null 2>&1 || skip "git not installed"
+    issue68_fixture
+    BM_PARTIAL=1
+    bm_apply_patches "$tree"
+    out="$BATS_TEST_TMPDIR/out"
+    mkdir -p "$out"
+    printf 'ko' >"$out/hid-asus-ally.ko.zst"
+    BM_VERMAGIC="$KVER SMP" BM_HEADER_SOURCE=2 BM_HEADER_DESC=valve-headers-package
+    bm_render_build_info "$out" >"$out/BUILD-INFO"
+    get() { AX20_SRC="$REPO_ROOT" bash -c '. "$1/lib/modules.sh"; modules_build_info_get "$2" "$3"' _ "$REPO_ROOT" "$out/BUILD-INFO" "$1"; }
+    [ "$(get format)" = 2 ]
+    [ "$(get partial)" = 1 ]
+    [ "$(get lists_sha256)" = "$(printf '%s\n' "$BM_ENTRIES_FULL" | bm_lists_digest)" ]
+    [ "$(get patch.0002-acp.patch)" = "$(bm_sha256 "$PATCHES_DIR/0002-acp.patch")" ]
+    [ "$(get patch.0002-acp.patch.status)" = failed ]
+    [[ "$(get patch.0002-acp.patch.reason)" == "does not apply to the $KVER source"* ]]
+    [ "$(get patch.0015-hold.patch.status)" = skipped ]
+    [ "$(get patch.0015-hold.patch.reason)" = "needs 0012-key.patch, which is not in this build" ]
+    [ "$(get patch.0016-light.patch.status)" = applied ]
+    ! grep -q '^patch.0016-light.patch.reason=' "$out/BUILD-INFO"
+    [ "$(get module.hid-asus-ally)" = "$(bm_sha256 "$out/hid-asus-ally.ko.zst")" ]
+    [ "$(get module.hid-asus-ally.without)" = "0012-key.patch 0015-hold.patch" ]
+    [ "$(get module.snd-acp-config)" = stock ]
+    [[ "$(get module.snd-acp-config.reason)" == "0002-acp.patch does not apply"* ]]
+}
+
+@test "BUILD-INFO of a complete build says partial=0" {
+    command -v git >/dev/null 2>&1 || skip "git not installed"
+    shared_fixture
+    bm_apply_patches "$tree"
+    out="$BATS_TEST_TMPDIR/out"
+    mkdir -p "$out"
+    BM_VERMAGIC="$KVER SMP" BM_HEADER_SOURCE=2 BM_HEADER_DESC=x
+    bm_render_build_info "$out" >"$out/BUILD-INFO"
+    grep -qx 'partial=0' "$out/BUILD-INFO"
+    ! grep -q '=stock$' "$out/BUILD-INFO"
+}
+
+# main_stubs <source-tree> : everything bm_main needs from the network, make
+# and binutils, so the whole script runs on a fixture tree. bm_make "builds"
+# each requested .ko by creating the file.
+main_stubs() {
+    FAKE_SRC=$1
+    bm_resolve_headers() {
+        BM_HEADERS_DIR="$BATS_TEST_TMPDIR/hdr"
+        mkdir -p "$BM_HEADERS_DIR"
+        : >"$BM_HEADERS_DIR/Module.symvers"
+        BM_HEADER_SOURCE=1 BM_HEADER_DESC=cache
+    }
+    bm_source_valve_sparse() { BM_VALVE_SRC=$FAKE_SRC; }
+    bm_make_worktree() { cp -R "$1" "$2"; }
+    bm_make() {
+        local a m=""
+        for a in "$@"; do
+            case "$a" in
+                M=*) m=${a#M=} ;;
+                *.ko) printf 'module %s\n' "$a" >"$m/$a" ;;
+            esac
+        done
+    }
+    strip() { :; }
+    modinfo() { printf '%s SMP preempt mod_unload \n' "$KVER"; }
+    nm() { :; }
+    modprobe() { return 1; }
+}
+
+@test "bm_main --partial (issue #68): exits 0, ships the HID module, records the audio module as stock; --strict fails and ships nothing" {
+    command -v git >/dev/null 2>&1 || skip "git not installed"
+    command -v zstd >/dev/null 2>&1 || skip "zstd not installed"
+    issue68_fixture
+    main_stubs "$tree"
+    out="$BATS_TEST_TMPDIR/out"
+    run bm_main --kver "$KVER" --out-dir "$out" --cache-dir "$CACHE_DIR" --patches-dir "$PATCHES_DIR" --strict
+    assert_failure
+    assert_output_contains "strict build: every patch must apply"
+    assert_output_contains "0002-acp.patch does not apply"
+    [ ! -e "$out/$KVER" ]
+    run bm_main --kver "$KVER" --out-dir "$out" --cache-dir "$CACHE_DIR" --patches-dir "$PATCHES_DIR" --partial
+    assert_success
+    assert_output_contains "module hid-asus-ally: patched (without 0012-key.patch 0015-hold.patch)"
+    assert_output_contains "module snd-acp-config: stock (0002-acp.patch does not apply"
+    assert_output_contains "partial build for $KVER"
+    [ -s "$out/$KVER/hid-asus-ally.ko.zst" ]
+    [ ! -e "$out/$KVER/snd-acp-config.ko.zst" ]
+    grep -qx 'partial=1' "$out/$KVER/BUILD-INFO"
+    grep -qx 'module.snd-acp-config=stock' "$out/$KVER/BUILD-INFO"
+    # PARTIAL=1 in the environment is the same as --partial (the container).
+    rm -rf "${out:?}/$KVER"
+    PARTIAL=1 run bm_main --kver "$KVER" --out-dir "$out" --cache-dir "$CACHE_DIR" --patches-dir "$PATCHES_DIR"
+    assert_success
+    [ -s "$out/$KVER/hid-asus-ally.ko.zst" ]
+}
+
+@test "bm_main is strict by default; a partial build in which nothing can be built still writes BUILD-INFO" {
+    command -v git >/dev/null 2>&1 || skip "git not installed"
+    command -v zstd >/dev/null 2>&1 || skip "zstd not installed"
+    issue68_fixture
+    printf 'ring code changed too\n' >"$tree/drivers/hid/ring.c"
+    main_stubs "$tree"
+    out="$BATS_TEST_TMPDIR/out"
+    unset PARTIAL
+    run bm_main --kver "$KVER" --out-dir "$out" --cache-dir "$CACHE_DIR" --patches-dir "$PATCHES_DIR"
+    assert_failure
+    run bm_main --kver "$KVER" --out-dir "$out" --cache-dir "$CACHE_DIR" --patches-dir "$PATCHES_DIR" --partial
+    assert_success
+    [ -z "$(find "$out/$KVER" -name '*.ko.zst')" ]
+    grep -qx 'partial=1' "$out/$KVER/BUILD-INFO"
+    grep -qx 'module.hid-asus-ally=stock' "$out/$KVER/BUILD-INFO"
+    grep -qx 'module.snd-acp-config=stock' "$out/$KVER/BUILD-INFO"
+}
+
+@test "partial build: a module that fails its checks after the build stays stock, the others are shipped" {
+    command -v git >/dev/null 2>&1 || skip "git not installed"
+    command -v zstd >/dev/null 2>&1 || skip "zstd not installed"
+    shared_fixture
+    main_stubs "$tree"
+    # The match module comes out with the wrong vermagic.
+    modinfo() {
+        case "$*" in
+            *snd-soc-acpi-amd-match*) printf 'some-other-kernel SMP\n' ;;
+            *) printf '%s SMP preempt mod_unload \n' "$KVER" ;;
+        esac
+    }
+    out="$BATS_TEST_TMPDIR/out"
+    run bm_main --kver "$KVER" --out-dir "$out" --cache-dir "$CACHE_DIR" --patches-dir "$PATCHES_DIR" --partial
+    assert_success
+    [ -s "$out/$KVER/snd-soc-sdw-utils.ko.zst" ]
+    [ -s "$out/$KVER/snd-acp-sdw-sof-mach.ko.zst" ]
+    [ ! -e "$out/$KVER/snd-soc-acpi-amd-match.ko.zst" ]
+    grep -qx 'module.snd-soc-acpi-amd-match=stock' "$out/$KVER/BUILD-INFO"
+    grep -q "^module.snd-soc-acpi-amd-match.reason=snd-soc-acpi-amd-match.ko vermagic 'some-other-kernel SMP' does not match" "$out/$KVER/BUILD-INFO"
+    run bm_main --kver "$KVER" --out-dir "$out" --cache-dir "$CACHE_DIR" --patches-dir "$PATCHES_DIR" --strict
+    assert_failure
+    assert_output_contains "does not match $KVER"
+}
+
+@test "bm_main --strict with every patch applying ships every module and says partial=0 (what CI does)" {
+    command -v git >/dev/null 2>&1 || skip "git not installed"
+    command -v zstd >/dev/null 2>&1 || skip "zstd not installed"
+    shared_fixture
+    main_stubs "$tree"
+    out="$BATS_TEST_TMPDIR/out"
+    PARTIAL=0 run bm_main --kver "$KVER" --out-dir "$out" --cache-dir "$CACHE_DIR" --patches-dir "$PATCHES_DIR"
+    assert_success
+    assert_output_contains "strict build: every patch must apply"
+    [[ "$output" != *"partial build for"* ]]
+    for m in snd-soc-sdw-utils snd-acp-sdw-sof-mach snd-soc-acpi-amd-match; do
+        [ -s "$out/$KVER/$m.ko.zst" ]
+        grep -q "^module.$m=[0-9a-f]\{64\}\$" "$out/$KVER/BUILD-INFO"
+    done
+    grep -qx 'partial=0' "$out/$KVER/BUILD-INFO"
+    grep -qx 'format=2' "$out/$KVER/BUILD-INFO"
+    [ "$(grep -c '\.status=applied$' "$out/$KVER/BUILD-INFO")" = 3 ]
+    ! grep -Eq '=stock$|\.status=(failed|skipped)$|\.reason=|\.without=' "$out/$KVER/BUILD-INFO"
+    # The workflow's packaging check accepts it.
+    ! grep -Eq '^(partial=1|module\..*=stock|patch\..*\.status=(failed|skipped))$' "$out/$KVER/BUILD-INFO"
+}
+
+@test "the real module lists pass the build script's consistency checks" {
+    BM_ENTRIES_FULL=$(bm_list_entries_full "$REPO_ROOT/patches/kernel")
+    BM_ENTRIES=$(printf '%s\n' "$BM_ENTRIES_FULL" | cut -f1-3)
+    PATCHES_DIR="$REPO_ROOT/patches/kernel"
+    printf '%s\n' "$BM_ENTRIES" | bm_check_patch_scope "$PATCHES_DIR"
+    bm_check_needs
+    [ "$(printf '%s\n' "$BM_ENTRIES_FULL" | awk -F'\t' 'NF != 5' | wc -l | tr -d ' ')" = 0 ]
+}

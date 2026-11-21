@@ -148,3 +148,19 @@ stage_module() {
     assert_success
     grep -q '^modprobe --ignore-install hid-asus-ally$' "$CALLS"
 }
+
+@test "partial build: the patched module is loaded, a module the build left stock loads from the kernel" {
+    stage_module hid-asus-ally
+    # What a partial build stages: no .ko.zst for the module it could not
+    # build, only its BUILD-INFO line.
+    printf 'kver=%s\npartial=1\nmodule.snd-acp-config=stock\nmodule.snd-acp-config.reason=0002 does not apply\n' "$KV" >"$MODDIR/BUILD-INFO"
+    run "${TEST_SH:-sh}" "$HELPER" hid-asus-ally
+    assert_success
+    grep -q "^insmod $MODDIR/hid-asus-ally.ko.zst" "$CALLS"
+    : >"$CALLS"
+    run "${TEST_SH:-sh}" "$HELPER" snd-acp-config opt=1
+    assert_success
+    grep -qx 'modprobe --ignore-install snd-acp-config opt=1' "$CALLS"
+    ! grep -q '^insmod' "$CALLS"
+    grep -q "no patched snd-acp-config for $KV; using stock" "$CALLS"
+}

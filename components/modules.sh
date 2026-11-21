@@ -86,12 +86,16 @@ _modules_files_ok() {
         && _modules_conf_current
 }
 
-# modules_status : active | stock | superseded | n/a
+# modules_status : active | partial | stock | superseded | n/a
 #   superseded  stock modules carry the fixes, or our build for this kernel
 #               found every patch already upstream
 #   active      hooks installed and patched modules staged for this kernel
+#   partial     hooks installed and a partial build staged: some modules are
+#               patched, the others stay stock because their patches do not
+#               apply to this kernel (an unsupported kernel)
 #   stock       hooks installed but nothing staged for this kernel (pending
-#               rebuild) or kernel lockdown blocks unsigned modules; or not
+#               rebuild), or a partial build in which no module could be
+#               patched, or kernel lockdown blocks unsigned modules; or not
 #               installed
 #   n/a         not installed and the probe cannot tell
 modules_status() {
@@ -104,11 +108,15 @@ modules_status() {
         return 0
     fi
     if _modules_files_ok; then
-        if modules_available "$kver" && ! modules_lockdown_active; then
-            printf 'active\n'
-        else
+        if modules_lockdown_active; then
             printf 'stock\n'
+            return 0
         fi
+        case "$(modules_staged_kind "$kver")" in
+            full) printf 'active\n' ;;
+            partial) printf 'partial\n' ;;
+            *) printf 'stock\n' ;;
+        esac
         return 0
     fi
     if component_installed modules || [ "$rc" != "$PROBE_UNKNOWN" ]; then
@@ -131,10 +139,39 @@ modules_status_detail() {
     elif ! _modules_conf_current; then
         printf 'modprobe hooks out of date with the module lists (run: %s apply --only modules)\n' "$AX20_NAME"
     elif modules_available "$kver"; then
-        printf 'patched modules staged for %s\n' "$kver"
+        case "$(modules_staged_kind "$kver")" in
+            partial) printf 'partial build staged for %s: %s (kernel not supported; see: %s status)\n' "$kver" "$(_modules_counts "$kver")" "$AX20_NAME" ;;
+            stock) printf 'no module could be patched for %s: %s (kernel not supported; see: %s status)\n' "$kver" "$(_modules_counts "$kver")" "$AX20_NAME" ;;
+            *) printf 'patched modules staged for %s\n' "$kver" ;;
+        esac
     elif why=$(modules_staged_stale "$kver"); then
         printf 'staged modules for %s are from another release (%s); run: %s rebuild\n' "$kver" "$why" "$AX20_NAME"
     else
         printf 'pending rebuild: no patched modules for %s yet (run: %s rebuild)\n' "$kver" "$AX20_NAME"
     fi
+}
+
+# _modules_counts <kver> : "2 patched, 1 stock, 5 already in this kernel".
+_modules_counts() {
+    modules_staged_states "$1" | awk -F'\t' '
+        $2 == "patched" { p++ } $2 == "stock" { s++ } $2 == "superseded" { u++ }
+        END { printf "%d patched, %d stock, %d already in this kernel\n", p, s, u }'
+}
+
+# modules_probe_details : lines for `probe` and `status --verbose`: the
+# one-line explanation, then every listed module with its state in the
+# build staged for the running kernel.
+modules_probe_details() {
+    local kver name st detail
+    kver=$(probe_running_kver)
+    modules_status_detail
+    [ -f "$(ax20_path "$(modules_dir_for "$kver")")/BUILD-INFO" ] || return 0
+    modules_staged_states "$kver" | while IFS='	' read -r name st detail; do
+        case "$st" in
+            patched) printf '%s: patched%s\n' "$name" "${detail:+ ($detail)}" ;;
+            superseded) printf '%s: stock (already fixed in this kernel)\n' "$name" ;;
+            stock) printf '%s: stock (%s)\n' "$name" "${detail:-not built}" ;;
+            *) printf '%s: stock (not in the staged build)\n' "$name" ;;
+        esac
+    done
 }

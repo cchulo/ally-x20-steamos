@@ -9,9 +9,17 @@
 #
 # The module set is never hard-coded: it comes from the machine-readable
 # lists patches/kernel/modules*.list, one line per patch:
-#   <patch-file> <TAB> <make M= dir> <TAB> <ko name>
+#   <patch-file> <TAB> <make M= dir> <TAB> <ko name> [<TAB> <options>]
 # Blank lines and lines starting with '#' are ignored. Several patches may
-# name the same module (they are applied in file-name order).
+# name the same module (they are applied in file-name order). <options> is a
+# comma separated set of required (default), optional and needs=<patch>; it
+# only matters for partial builds (docs/kernel-modules.md).
+#
+# A staged build is complete (every listed module is patched, or superseded
+# because Valve's kernel already has the patches) or partial: made by a
+# local build for a kernel some patches do not apply to, with BUILD-INFO
+# partial=1 and module.<name>=stock for the modules that were not built.
+# Release artifacts are never partial.
 #
 # Path convention: functions that print a location print it WITHOUT the
 # AX20_ROOT prefix (like manifest paths); resolve with ax20_path.
@@ -54,27 +62,44 @@ modules_list_files() {
     return 0
 }
 
-# modules_list_entries : normalised "<patch>\t<mdir>\t<ko>" lines from every
-# list. <ko> loses any .ko/.ko.zst suffix, <mdir> any leading ./ or trailing /.
-# Returns 1 (after logging) on a malformed line.
-modules_list_entries() {
+# modules_list_entries_full : normalised lines from every list,
+#   "<patch>\t<mdir>\t<ko>\t<required|optional>\t<needs>"
+# <ko> loses any .ko/.ko.zst suffix, <mdir> any leading ./ or trailing /;
+# <needs> is the comma separated needs= ids or "-". Returns 1 (after
+# logging) on a malformed line. Must stay in sync with bm_list_entries_full
+# in build/build-modules.sh (a test compares them).
+modules_list_entries_full() {
     local f
     for f in $(modules_list_files); do
         awk -v file="$f" '
             /^[ \t]*(#|$)/ { next }
             {
-                if (NF != 3) {
-                    printf "%s:%d: expected 3 fields (patch, M= dir, ko name), got %d\n", file, NR, NF > "/dev/stderr"
+                if (NF != 3 && NF != 4) {
+                    printf "%s:%d: expected 3 or 4 fields (patch, M= dir, ko name[, options]), got %d\n", file, NR, NF > "/dev/stderr"
                     bad = 1; exit 1
                 }
-                p = $1; m = $2; k = $3
+                p = $1; m = $2; k = $3; req = "required"; needs = "-"
                 sub(/^\.\//, "", m); sub(/\/+$/, "", m)
                 sub(/\.ko(\.zst|\.xz|\.gz)?$/, "", k)
                 if (m ~ /^\// || m ~ /(^|\/)\.\.(\/|$)/ || p ~ /\// || k ~ /\//) {
                     printf "%s:%d: unsafe entry\n", file, NR > "/dev/stderr"
                     bad = 1; exit 1
                 }
-                printf "%s\t%s\t%s\n", p, m, k
+                if (NF == 4) {
+                    n = split($4, o, ",")
+                    for (i = 1; i <= n; i++) {
+                        if (o[i] == "required" || o[i] == "optional") {
+                            req = o[i]
+                        } else if (o[i] ~ /^needs=[0-9A-Za-z._-]+$/) {
+                            v = substr(o[i], 7)
+                            needs = (needs == "-" ? v : needs "," v)
+                        } else {
+                            printf "%s:%d: unknown option \"%s\" (required, optional, needs=<patch>)\n", file, NR, o[i] > "/dev/stderr"
+                            bad = 1; exit 1
+                        }
+                    }
+                }
+                printf "%s\t%s\t%s\t%s\t%s\n", p, m, k, req, needs
             }
             END { exit bad }
         ' "$f" || {
@@ -82,6 +107,27 @@ modules_list_entries() {
             return 1
         }
     done
+}
+
+# modules_list_entries : "<patch>\t<mdir>\t<ko>" lines (the first three
+# columns of modules_list_entries_full).
+modules_list_entries() {
+    local full
+    full=$(modules_list_entries_full) || return 1
+    [ -n "$full" ] || return 0
+    printf '%s\n' "$full" | cut -f1-3
+}
+
+# modules_lists_digest : sha256 over the normalised list lines, as
+# build/build-modules.sh records it in BUILD-INFO (lists_sha256).
+modules_lists_digest() {
+    local full
+    full=$(modules_list_entries_full) || return 1
+    if ax20_have sha256sum; then
+        printf '%s\n' "$full" | LC_ALL=C sort | sha256sum | cut -d' ' -f1
+    else
+        printf '%s\n' "$full" | LC_ALL=C sort | shasum -a 256 | cut -d' ' -f1
+    fi
 }
 
 # modules_list_names : distinct module names, sorted.
@@ -103,12 +149,39 @@ modules_build_info_get() {
     awk -v k="$2" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); found = 1; exit } END { exit !found }' "$1"
 }
 
-# _modules_has_module <build-dir> <name> : the build provides the module, or
-# records it as superseded (every patch for it is already in Valve's tree,
-# so the stock module is the right one and no .ko.zst is shipped).
+# modules_module_state <build-dir> <name> : what a build says about a module:
+#   patched     <name>.ko.zst is in the build
+#   superseded  every patch for it is already in Valve's tree: the stock
+#               module is the right one and no .ko.zst is shipped
+#   stock       a partial build did not build it (module.<name>.reason says
+#               why); the stock module is loaded
+#   missing     the build says nothing about it (incomplete, or made from
+#               other module lists)
+modules_module_state() {
+    local v
+    v=$(modules_build_info_get "$1/BUILD-INFO" "module.$2" 2>/dev/null || true)
+    case "$v" in
+        superseded | stock)
+            printf '%s\n' "$v"
+            return 0
+            ;;
+    esac
+    if [ -s "$1/$2.ko.zst" ]; then
+        printf 'patched\n'
+    else
+        printf 'missing\n'
+    fi
+}
+
+# _modules_has_module <build-dir> <name> : the build accounts for the module
+# (patched, superseded, or deliberately left stock by a partial build).
 _modules_has_module() {
-    [ -s "$1/$2.ko.zst" ] && return 0
-    [ "$(modules_build_info_get "$1/BUILD-INFO" "module.$2" 2>/dev/null)" = superseded ]
+    [ "$(modules_module_state "$1" "$2")" != missing ]
+}
+
+# modules_build_partial <build-dir> : BUILD-INFO marks the build as partial.
+modules_build_partial() {
+    [ "$(modules_build_info_get "$1/BUILD-INFO" partial 2>/dev/null || true)" = 1 ]
 }
 
 # modules_superseded_names <kver> : modules the staged build marks superseded.
@@ -137,7 +210,9 @@ modules_all_superseded() {
 # every patch it applied (build/build-modules.sh); each listed patch must be
 # there with the checkout's hash. Without that check a release that changes
 # only a patch (v0.1.7: hid-asus-ally 0016) kept loading the previous build,
-# because the kernel version had not changed. Prints the first mismatch.
+# because the kernel version had not changed. A partial build additionally
+# depends on the list options (required/optional/needs=), so its
+# lists_sha256 must be the checkout's too. Prints the first mismatch.
 modules_build_matches_patches() {
     local dir=$1 entries p want got
     entries=$(modules_list_entries) || return 1
@@ -153,11 +228,22 @@ modules_build_matches_patches() {
             return 1
         fi
     done
+    if modules_build_partial "$dir"; then
+        want=$(modules_lists_digest 2>/dev/null || true)
+        got=$(modules_build_info_get "$dir/BUILD-INFO" lists_sha256 2>/dev/null || true)
+        if [ -z "$got" ] || [ "$got" != "$want" ]; then
+            printf 'partial build made with other module lists\n'
+            return 1
+        fi
+    fi
     return 0
 }
 
-# modules_available <kver> : 0 if a complete staged build exists for kver,
-# made from this checkout's patches.
+# modules_available <kver> : 0 if a staged build for kver is current: made
+# from this checkout's patches and accounting for every listed module. That
+# includes a partial build, so that a kernel some patches do not apply to
+# is built once and not again on every boot; modules_staged_kind tells the
+# two apart.
 modules_available() {
     local kver=$1 dir names n
     dir=$(ax20_path "$(modules_dir_for "$kver")")
@@ -182,10 +268,65 @@ modules_staged_stale() {
     ! modules_build_matches_patches "$dir"
 }
 
-# modules_validate_build_dir <kver> <dir> : the directory holds a build for
-# kver with every listed module.
+# modules_staged_states <kver> [build-dir] : one line per listed module for
+# the staged build (or the given build directory):
+#   "<name>\t<patched|superseded|stock|missing>\t<detail>"
+# <detail> is the reason for stock, or "without <patches>" for a patched
+# module that lacks optional patches, else empty.
+modules_staged_states() {
+    local dir=${2:-} names n st detail
+    [ -n "$dir" ] || dir=$(ax20_path "$(modules_dir_for "$1")")
+    names=$(modules_list_names) || return 1
+    for n in $names; do
+        st=$(modules_module_state "$dir" "$n")
+        detail=""
+        case "$st" in
+            stock) detail=$(modules_build_info_get "$dir/BUILD-INFO" "module.$n.reason" 2>/dev/null || true) ;;
+            patched)
+                detail=$(modules_build_info_get "$dir/BUILD-INFO" "module.$n.without" 2>/dev/null || true)
+                [ -z "$detail" ] || detail="without $detail"
+                ;;
+        esac
+        printf '%s\t%s\t%s\n' "$n" "$st" "$detail"
+    done
+}
+
+# modules_staged_kind <kver> : one word for the staged build of kver:
+#   none        nothing current is staged (no build, another kernel's, or
+#               made from other patches)
+#   full        every listed module is patched or superseded
+#   partial     some modules are patched, others stay stock
+#   stock       a partial build in which no module could be patched
+#   superseded  every listed module is superseded
+modules_staged_kind() {
+    local states patched stock
+    if ! modules_available "$1"; then
+        printf 'none\n'
+        return 0
+    fi
+    states=$(modules_staged_states "$1") || {
+        printf 'none\n'
+        return 0
+    }
+    patched=$(printf '%s\n' "$states" | awk -F'\t' '$2 == "patched"' | wc -l | tr -d ' ')
+    stock=$(printf '%s\n' "$states" | awk -F'\t' '$2 == "stock"' | wc -l | tr -d ' ')
+    if [ "$stock" = 0 ] && [ "$patched" = 0 ]; then
+        printf 'superseded\n'
+    elif [ "$stock" = 0 ]; then
+        printf 'full\n'
+    elif [ "$patched" = 0 ]; then
+        printf 'stock\n'
+    else
+        printf 'partial\n'
+    fi
+}
+
+# modules_validate_build_dir <kver> <dir> [allow-partial:0|1] : the directory
+# holds a build for kver that accounts for every listed module. A partial
+# build is accepted only when the caller allows it (a local container
+# build); a release artifact that claims to be partial is refused.
 modules_validate_build_dir() {
-    local kver=$1 src=$2 names n got why
+    local kver=$1 src=$2 allow_partial=${3:-0} names n got why
     if [ ! -f "$src/BUILD-INFO" ]; then
         log_error "no BUILD-INFO in $src"
         return 1
@@ -201,16 +342,51 @@ modules_validate_build_dir() {
         return 1
     fi
     for n in $names; do
-        if ! _modules_has_module "$src" "$n"; then
-            log_error "build in $src lacks $n.ko.zst"
-            return 1
-        fi
+        case "$(modules_module_state "$src" "$n")" in
+            missing)
+                log_error "build in $src lacks $n.ko.zst"
+                return 1
+                ;;
+            stock)
+                if ! modules_build_partial "$src"; then
+                    log_error "build in $src leaves $n stock but is not marked partial"
+                    return 1
+                fi
+                if [ -e "$src/$n.ko.zst" ]; then
+                    log_error "build in $src marks $n as stock but ships $n.ko.zst"
+                    return 1
+                fi
+                ;;
+        esac
     done
+    if modules_build_partial "$src" && [ "$allow_partial" != 1 ]; then
+        log_warn "build in $src is a partial build; only a local build may be partial (release artifacts never are); not staging it"
+        return 1
+    fi
     if ! why=$(modules_build_matches_patches "$src"); then
         log_warn "build in $src does not match this checkout's patches ($why); not staging it"
         return 1
     fi
     return 0
+}
+
+# modules_log_partial <kver> : after staging, say what a partial build left
+# stock. Nothing for a complete build.
+modules_log_partial() {
+    local name st detail
+    case "$(modules_staged_kind "$1")" in
+        partial | stock) ;;
+        *) return 0 ;;
+    esac
+    log_warn "the build for $1 is partial: some patches do not apply to this kernel"
+    modules_staged_states "$1" | while IFS='	' read -r name st detail; do
+        case "$st" in
+            stock) log_warn "  $name: stock module stays in use ($detail)" ;;
+            patched) log_info "  $name: patched${detail:+ ($detail)}" ;;
+            superseded) log_info "  $name: already fixed in this kernel" ;;
+        esac
+    done
+    log_warn "kernel $1 is not a supported kernel (only SteamOS stable is); no support is provided for this state"
 }
 
 # _modules_forget_under <rel-dir> : drop manifest entries below a directory.
@@ -233,18 +409,19 @@ modules_ensure_base_dir() {
     fi
 }
 
-# modules_stage <kver> <src-dir> : install <src-dir>/{*.ko.zst,BUILD-INFO} as
-# the build for kver. The new directory is assembled next to the final one
-# and renamed into place, so a reader sees the old set or the new set.
+# modules_stage <kver> <src-dir> [allow-partial:0|1] : install
+# <src-dir>/{*.ko.zst,BUILD-INFO} as the build for kver. The new directory
+# is assembled next to the final one and renamed into place, so a reader
+# sees the old set or the new set.
 modules_stage() {
-    local kver=$1 src=$2 rel dir base tmp old f
+    local kver=$1 src=$2 allow_partial=${3:-0} rel dir base tmp old f
     case "$kver" in
         '' | */* | .*)
             log_error "modules_stage: bad kernel version '$kver'"
             return 1
             ;;
     esac
-    modules_validate_build_dir "$kver" "$src" || return 1
+    modules_validate_build_dir "$kver" "$src" "$allow_partial" || return 1
     rel=$(modules_dir_for "$kver")
     dir=$(ax20_path "$rel")
     base=$(dirname "$dir")
@@ -471,8 +648,11 @@ _modules_build_uid() { printf '%s\n' "${AX20_BUILD_UID:-1000}"; }
 # (image cached in ~/.local/share/containers); rootful under the boot service
 # (image cached in /var/lib/containers). Both live on /var or /home and
 # survive SteamOS updates. TODO(vm): measure rootful podman on SteamOS.
+# The build is partial (PARTIAL=1: patches that do not apply are left out,
+# see build/build-modules.sh) unless AX20_MODULES_STRICT=1 (rebuild --strict).
 modules_container_build() {
-    local kver=$1 channel=$2 out=$3 image cache digest vmlinuz commit
+    local kver=$1 channel=$2 out=$3 image cache digest vmlinuz commit partial=1
+    [ "${AX20_MODULES_STRICT:-0}" = 1 ] && partial=0
     ax20_have podman || return 1
     image=${AX20_BUILD_IMAGE:-localhost/${AX20_NAME}-build:latest}
     cache=$(ax20_path "$AX20_MODULES_CACHE_REL/build")
@@ -484,7 +664,8 @@ modules_container_build() {
         -v "$AX20_SRC:/src:ro" -v "$cache:/cache" -v "$out:/out" \
         -e "KVER=$kver" -e "CHANNEL=$channel" -e OUT_DIR=/out -e CACHE_DIR=/cache \
         -e PATCHES_DIR=/src/patches/kernel -e HOME=/tmp -e "AX20_COMMIT=$commit" \
-        -e "CONTAINER_IMAGE=$image" -e "CONTAINER_IMAGE_DIGEST=$digest"
+        -e "CONTAINER_IMAGE=$image" -e "CONTAINER_IMAGE_DIGEST=$digest" \
+        -e "PARTIAL=$partial"
     if ax20_is_root; then
         ax20_run chown -R "$(_modules_build_uid)" "$cache" "$out" || return 1
         set -- "$@" --user "$(_modules_build_uid)"
@@ -517,10 +698,13 @@ _modules_try_container() {
     modules_container_build "$kver" "$channel" "$out" || rc=$?
     if [ "$rc" != 0 ]; then
         log_warn "container build for $kver failed (exit $rc)"
+        log_warn "if the output above says 'no space left on device': podman keeps its images under /var, which is small on SteamOS; see docs/kernel-modules.md, \"Podman storage\""
         return 1
     fi
     [ "$AX20_DRY_RUN" = 1 ] && return 0
-    modules_stage "$kver" "$out/$kver"
+    # A local build may be partial; a release artifact (above) may not.
+    modules_stage "$kver" "$out/$kver" 1 || return 1
+    modules_log_partial "$kver"
 }
 
 # _modules_try_source <cache|release|container> <kver> <channel>

@@ -3,9 +3,11 @@
 #
 #   rauc-handler pre-install
 #       self-update (best effort, once), then make sure kernel modules exist
-#       for the incoming kernel; if they cannot be produced, apply
+#       for the incoming kernel; if they cannot be produced, or only as a
+#       partial build (some patches do not apply to that kernel), apply
 #       update-policy: block -> exit 1 (RAUC aborts the update),
-#       degrade -> exit 0 and leave state/pending-rebuild.
+#       degrade -> exit 0 and leave state/pending-rebuild (nothing staged)
+#       or carry on with the partial build.
 #   rauc-handler post-install [--slot-root <dir>] [--slot A|B]
 #       mount the freshly written slot (unless --slot-root is given), stage
 #       modules for its kernel, `apply --slot <dir>` (files, RAUC
@@ -71,7 +73,7 @@ handler_try_build() {
 }
 
 rauc_handler_pre_install() {
-    local kver policy
+    local kver policy reason partial=0
     if _handler_has_cmd self-update && [ -z "${AX20_HANDLER_SELF_UPDATED:-}" ]; then
         AX20_HANDLER_SELF_UPDATED=1
         export AX20_HANDLER_SELF_UPDATED
@@ -83,22 +85,36 @@ rauc_handler_pre_install() {
         log_warn "cannot tell the incoming kernel version before installation; post-install and the boot service will handle modules"
         return 0
     fi
+    reason=""
     if handler_modules_present "$kver"; then
         log_info "modules for incoming kernel $kver are ready"
-        return 0
-    fi
-    if handler_try_build "$kver"; then
+    elif handler_try_build "$kver"; then
         log_info "modules for incoming kernel $kver built"
-        return 0
+    else
+        reason="no kernel modules for incoming kernel $kver"
+    fi
+    if [ -z "$reason" ]; then
+        # A partial build (some patches do not apply to the incoming kernel,
+        # so some modules would stay stock) is not what `block` promises:
+        # treat it like a missing build and let the policy decide.
+        case "$(modules_staged_kind "$kver")" in
+            partial | stock) reason="only a partial build of the kernel modules is possible for incoming kernel $kver (some patches do not apply to it; see '$AX20_NAME rebuild --kver $kver')" ;;
+            *) return 0 ;;
+        esac
+        partial=1
     fi
     policy=$(policy_effective --consume)
     if [ "$policy" = block ]; then
         _handler_note update-blocked "kver=$kver" "ts=$(_ax20_ts)" "commit=$(_handler_commit)"
-        log_error "no kernel modules for incoming kernel $kver; blocking this SteamOS update (policy: block). Run '$AX20_NAME update-policy degrade --once' to let it through."
+        log_error "$reason; blocking this SteamOS update (policy: block). Run '$AX20_NAME update-policy degrade --once' to let it through."
         return 1
     fi
-    _handler_note pending-rebuild "kver=$kver" "ts=$(_ax20_ts)"
     ax20_run rm -f "$(_handler_state)/update-blocked"
+    if [ "$partial" = 1 ]; then
+        log_warn "$reason; continuing (policy: degrade): the modules that could not be built stay stock, without support"
+        return 0
+    fi
+    _handler_note pending-rebuild "kver=$kver" "ts=$(_ax20_ts)"
     log_warn "no kernel modules for incoming kernel $kver; continuing (policy: degrade), stock modules until a rebuild succeeds"
     return 0
 }

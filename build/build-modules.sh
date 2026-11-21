@@ -16,6 +16,7 @@
 #   --vmlinuz <f>         VMLINUZ         target slot's kernel image, for scripts/extract-ikconfig
 #   --config <f>          KERNEL_CONFIG   explicit .config for steps 3/4
 #   --jobs <n>            JOBS            make -j (default: nproc)
+#   --strict | --partial  PARTIAL=0|1     what to do when a patch does not apply (default: strict)
 # Provenance passed in by the caller: AX20_COMMIT, CONTAINER_IMAGE,
 # CONTAINER_IMAGE_DIGEST.
 #
@@ -39,6 +40,16 @@
 # a module whose patches are all upstream is not built and is recorded as
 # superseded in BUILD-INFO. Only the listed .ko files are built; include/
 # headers changed by a patch are searched before the kernel's own.
+#
+# Strict and partial builds (docs/kernel-modules.md, "Partial builds"):
+#   strict   (default; release artifacts) any patch that does not apply, or
+#            any module that does not build, fails the whole build.
+#   partial  (--partial; local builds for kernels without a release) a patch
+#            that does not apply is left out. A module that needs it (the
+#            patch is "required" for the module, the default) is not built
+#            and stays stock; a module for which it is "optional" is built
+#            without it. The other modules are built as usual. BUILD-INFO
+#            records every patch and module and sets partial=1.
 #
 # Every function is side-effect free on load: the script can be sourced by the
 # test-suite, which stubs bm_fetch / bm_git / bm_make and calls the pure
@@ -69,16 +80,28 @@ bm_die() {
 }
 
 bm_usage() {
-    sed -n '3,37p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '3,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 bm_have() { command -v "$1" >/dev/null 2>&1; }
+
+# bm_partial : this is a partial build (--partial); the default is strict.
+bm_partial() { [ "${BM_PARTIAL:-0}" = 1 ]; }
 
 bm_sha256() {
     if bm_have sha256sum; then
         sha256sum <"$1" | cut -d' ' -f1
     else
         shasum -a 256 "$1" | cut -d' ' -f1
+    fi
+}
+
+# bm_sha256_stdin : digest of stdin.
+bm_sha256_stdin() {
+    if bm_have sha256sum; then
+        sha256sum | cut -d' ' -f1
+    else
+        shasum -a 256 | cut -d' ' -f1
     fi
 }
 
@@ -93,6 +116,10 @@ bm_parse_args() {
     VMLINUZ="${VMLINUZ:-}"
     KERNEL_CONFIG="${KERNEL_CONFIG:-}"
     JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
+    case "${PARTIAL:-0}" in
+        1 | yes | true) BM_PARTIAL=1 ;;
+        *) BM_PARTIAL=0 ;;
+    esac
     while [ $# -gt 0 ]; do
         case "$1" in
             --kver | --channel | --out-dir | --cache-dir | --patches-dir | --kernel-src-url | --vmlinuz | --config | --jobs)
@@ -109,6 +136,14 @@ bm_parse_args() {
                     --jobs) JOBS=$2 ;;
                 esac
                 shift 2
+                ;;
+            --partial)
+                BM_PARTIAL=1
+                shift
+                ;;
+            --strict)
+                BM_PARTIAL=0
+                shift
                 ;;
             -h | --help)
                 bm_usage
@@ -149,32 +184,105 @@ bm_vermagic_ok() {
 }
 
 # ---------------------------------------------------------- module lists --
-# bm_list_entries <patches-dir> : "<patch>\t<mdir>\t<ko>" from modules*.list.
-# Must stay in sync with modules_list_entries in lib/modules.sh (a test
-# compares them).
-bm_list_entries() {
+# bm_list_entries_full <patches-dir> : one line per modules*.list line,
+#   "<patch>\t<mdir>\t<ko>\t<required|optional>\t<needs>"
+# The optional fourth field of a list line is a comma separated set of
+#   required     (default) the module is not built without this patch
+#   optional     the module may be built without this patch
+#   needs=<id>   this patch is left out unless patch <id> (a file name, or
+#                its leading number such as 0012) is in the build
+# <needs> is the comma separated ids, or "-". Must stay in sync with
+# modules_list_entries_full in lib/modules.sh (a test compares them).
+bm_list_entries_full() {
     local f
     for f in "$1"/modules*.list; do
         [ -f "$f" ] || continue
         awk -v file="$f" '
             /^[ \t]*(#|$)/ { next }
             {
-                if (NF != 3) {
-                    printf "%s:%d: expected 3 fields (patch, M= dir, ko name), got %d\n", file, NR, NF > "/dev/stderr"
+                if (NF != 3 && NF != 4) {
+                    printf "%s:%d: expected 3 or 4 fields (patch, M= dir, ko name[, options]), got %d\n", file, NR, NF > "/dev/stderr"
                     bad = 1; exit 1
                 }
-                p = $1; m = $2; k = $3
+                p = $1; m = $2; k = $3; req = "required"; needs = "-"
                 sub(/^\.\//, "", m); sub(/\/+$/, "", m)
                 sub(/\.ko(\.zst|\.xz|\.gz)?$/, "", k)
                 if (m ~ /^\// || m ~ /(^|\/)\.\.(\/|$)/ || p ~ /\// || k ~ /\//) {
                     printf "%s:%d: unsafe entry\n", file, NR > "/dev/stderr"
                     bad = 1; exit 1
                 }
-                printf "%s\t%s\t%s\n", p, m, k
+                if (NF == 4) {
+                    n = split($4, o, ",")
+                    for (i = 1; i <= n; i++) {
+                        if (o[i] == "required" || o[i] == "optional") {
+                            req = o[i]
+                        } else if (o[i] ~ /^needs=[0-9A-Za-z._-]+$/) {
+                            v = substr(o[i], 7)
+                            needs = (needs == "-" ? v : needs "," v)
+                        } else {
+                            printf "%s:%d: unknown option \"%s\" (required, optional, needs=<patch>)\n", file, NR, o[i] > "/dev/stderr"
+                            bad = 1; exit 1
+                        }
+                    }
+                }
+                printf "%s\t%s\t%s\t%s\t%s\n", p, m, k, req, needs
             }
             END { exit bad }
         ' "$f" || return 1
     done
+}
+
+# bm_list_entries <patches-dir> : "<patch>\t<mdir>\t<ko>" from modules*.list
+# (the first three columns of bm_list_entries_full).
+bm_list_entries() {
+    local full
+    full=$(bm_list_entries_full "$1") || return 1
+    [ -n "$full" ] || return 0
+    printf '%s\n' "$full" | cut -f1-3
+}
+
+# bm_lists_digest : sha256 over the normalised list lines (stdin), in a
+# locale independent order. lib/modules.sh computes the same value to tell
+# whether a partial build was made with the lists the checkout ships now.
+bm_lists_digest() {
+    LC_ALL=C sort | bm_sha256_stdin
+}
+
+# bm_entry_optional <patch> <ko> : the patch is optional for that module.
+bm_entry_optional() {
+    printf '%s\n' "${BM_ENTRIES_FULL:-}" \
+        | awk -F'\t' -v p="$1" -v k="$2" '$1 == p && $3 == k && $4 == "optional" { f = 1 } END { exit !f }'
+}
+
+# bm_patch_needs <patch> : the ids named by needs= on any line of the patch.
+bm_patch_needs() {
+    printf '%s\n' "${BM_ENTRIES_FULL:-}" | awk -F'\t' -v p="$1" '
+        $1 == p && $5 != "-" && $5 != "" { n = split($5, a, ","); for (i = 1; i <= n; i++) print a[i] }' | sort -u
+}
+
+# bm_resolve_need <id> : the listed patches an id names (the file name itself
+# or a file name starting with "<id>-"), one per line.
+bm_resolve_need() {
+    printf '%s\n' "$BM_ENTRIES" | cut -f1 | sort -u | awk -v id="$1" '$0 == id || index($0, id "-") == 1'
+}
+
+# bm_check_needs : every needs=<id> names exactly one listed patch that sorts
+# before the patch itself (patches are applied in file-name order).
+bm_check_needs() {
+    local p n hit bad=0
+    for p in $(printf '%s\n' "$BM_ENTRIES" | bm_entries_column 1); do
+        for n in $(bm_patch_needs "$p"); do
+            hit=$(bm_resolve_need "$n")
+            if [ -z "$hit" ] || [ "$(printf '%s\n' "$hit" | wc -l | tr -d ' ')" != 1 ]; then
+                bm_warn "$p: needs=$n must name exactly one listed patch (matches: $(printf '%s' "$hit" | tr '\n' ' '))"
+                bad=1
+            elif [ "$(printf '%s\n%s\n' "$hit" "$p" | LC_ALL=C sort | head -n1)" != "$hit" ] || [ "$hit" = "$p" ]; then
+                bm_warn "$p: needs=$n names $hit, which is not applied before it"
+                bad=1
+            fi
+        done
+    done
+    return "$bad"
 }
 
 # bm_entries_column <n> : distinct values of column n of entries on stdin.
@@ -899,22 +1007,76 @@ bm_patch_state() {
     fi
 }
 
+# bm_patch_status_of <patch> : applied | already-upstream | failed | skipped,
+# or nothing when the patch has not been looked at yet.
+bm_patch_status_of() {
+    printf '%s' "${BM_PATCH_STATUS:-}" | awk -v p="$1" '$1 == p { print $2; exit }'
+}
+
+# bm_patch_reason_of <patch> : why a patch is failed or skipped.
+bm_patch_reason_of() {
+    printf '%s' "${BM_PATCH_REASONS:-}" | awk -F'\t' -v p="$1" '$1 == p { print $2; exit }'
+}
+
+# _bm_patch_record <patch> <status> [reason]
+_bm_patch_record() {
+    BM_PATCH_STATUS="${BM_PATCH_STATUS:-}$1 $2
+"
+    [ -z "${3:-}" ] || BM_PATCH_REASONS="${BM_PATCH_REASONS:-}$1	$3
+"
+}
+
+# bm_patch_unmet_need <patch> : prints the first patch named by needs= that
+# is not in the build (neither applied nor already upstream); 1 if all are.
+bm_patch_unmet_need() {
+    local n dep
+    for n in $(bm_patch_needs "$1"); do
+        dep=$(bm_resolve_need "$n" | head -n1)
+        case "$(bm_patch_status_of "$dep")" in
+            applied | already-upstream) ;;
+            *)
+                printf '%s\n' "${dep:-$n}"
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
 # bm_apply_patches <tree> : apply every listed patch in file-name order on one
-# tree. Sets BM_PATCH_STATUS ("<patch> <applied|already-upstream>" lines) and
-# BM_SUPERSEDED (modules whose patches are all already upstream).
+# tree. Sets BM_PATCH_STATUS ("<patch> <applied|already-upstream|failed|
+# skipped>" lines), BM_PATCH_REASONS ("<patch>\t<why>" for failed and
+# skipped ones) and, through bm_plan_modules, what happens to each module.
+# Strict builds die on the first patch that does not apply. Partial builds
+# record it as failed and go on: a later patch is then checked against the
+# tree without it, so a patch that needs its text does not apply either, and
+# a patch that only needs its behaviour declares that with needs=.
 bm_apply_patches() {
-    local tree=$1 p f state k
+    local tree=$1 p f state dep why
     BM_PATCH_STATUS=""
+    BM_PATCH_REASONS=""
     for p in $(printf '%s\n' "$BM_ENTRIES" | bm_entries_column 1); do
+        if dep=$(bm_patch_unmet_need "$p"); then
+            why="needs $dep, which is not in this build"
+            bm_partial || bm_die "$p $why"
+            bm_warn "$p left out: it $why"
+            _bm_patch_record "$p" skipped "$why"
+            continue
+        fi
         state=$(bm_patch_state "$tree" "$PATCHES_DIR/$p")
         case "$state" in
             upstream)
                 bm_log "$p is already in the $KVER source; skipping it"
-                BM_PATCH_STATUS="$BM_PATCH_STATUS$p already-upstream
-"
+                _bm_patch_record "$p" already-upstream
                 continue
                 ;;
-            conflict) bm_die "$p does not apply to the $KVER source (neither forward nor reverse)" ;;
+            conflict)
+                why="does not apply to the $KVER source (neither forward nor reverse)"
+                bm_partial || bm_die "$p $why"
+                bm_warn "$p $why; continuing without it"
+                _bm_patch_record "$p" failed "$why"
+                continue
+                ;;
         esac
         for f in $(bm_patch_touched_files "$PATCHES_DIR/$p"); do
             # break the hard link to the cache before patching
@@ -925,18 +1087,17 @@ bm_apply_patches() {
         bm_log "applying $p"
         # Documentation/ hunks are excluded: the sparse source tree has only the
         # M= directories, and docs do not change the built module.
-        (cd "$tree" && bm_git apply -p1 --exclude='Documentation/*' "$PATCHES_DIR/$p") || bm_die "applying $p failed"
-        BM_PATCH_STATUS="$BM_PATCH_STATUS$p applied
-"
-    done
-    bm_include_overlay "$tree" "$tree.include" || bm_die "cannot stage the patched headers"
-    BM_SUPERSEDED=""
-    for k in $(printf '%s\n' "$BM_ENTRIES" | bm_entries_column 3); do
-        if bm_module_superseded "$k"; then
-            bm_log "every patch for $k is already upstream: not building it (superseded)"
-            BM_SUPERSEDED="$BM_SUPERSEDED $k"
+        if ! (cd "$tree" && bm_git apply -p1 --exclude='Documentation/*' "$PATCHES_DIR/$p"); then
+            # git apply changes nothing when it fails, so the tree is intact.
+            bm_partial || bm_die "applying $p failed"
+            bm_warn "applying $p failed; continuing without it"
+            _bm_patch_record "$p" failed "git apply failed on the $KVER source"
+            continue
         fi
+        _bm_patch_record "$p" applied
     done
+    bm_plan_modules
+    bm_include_overlay "$tree" "$tree.include" || bm_die "cannot stage the patched headers"
 }
 
 # bm_module_superseded <ko> : all patches listed for the module are upstream.
@@ -950,27 +1111,156 @@ bm_module_superseded() {
 
 # bm_is_superseded <ko>
 bm_is_superseded() {
-    case " $BM_SUPERSEDED " in *" $1 "*) return 0 ;; esac
+    case " ${BM_SUPERSEDED:-} " in *" $1 "*) return 0 ;; esac
     return 1
+}
+
+# bm_is_stock <ko> : the module is not built in this (partial) build.
+bm_is_stock() {
+    case " ${BM_STOCK:-} " in *" $1 "*) return 0 ;; esac
+    return 1
+}
+
+# bm_module_wanted <ko> : the module is to be built and shipped.
+bm_module_wanted() {
+    ! bm_is_superseded "$1" && ! bm_is_stock "$1"
+}
+
+# bm_mark_stock <ko> <reason> : leave the module stock. Only partial builds
+# may do that; a strict build dies instead.
+bm_mark_stock() {
+    bm_is_stock "$1" && return 0
+    bm_partial || bm_die "$1 cannot be built: $2"
+    bm_warn "$1 stays stock: $2"
+    BM_STOCK="${BM_STOCK:-} $1"
+    BM_STOCK_REASONS="${BM_STOCK_REASONS:-}$1	$2
+"
+}
+
+# bm_stock_reason_of <ko>
+bm_stock_reason_of() {
+    printf '%s' "${BM_STOCK_REASONS:-}" | awk -F'\t' -v k="$1" '$1 == k { print $2; exit }'
+}
+
+# bm_module_without <ko> : optional patches the built module lacks.
+bm_module_without() {
+    printf '%s' "${BM_WITHOUT:-}" | awk -F'\t' -v k="$1" '$1 == k { print $2 }'
+}
+
+# bm_plan_modules : decide, from the patch statuses, what happens to each
+# listed module. Sets
+#   BM_SUPERSEDED     every patch is already upstream: nothing to build
+#   BM_STOCK          not built in this partial build (BM_STOCK_REASONS)
+#   BM_WITHOUT        "<ko>\t<patch>": built, but without that optional patch
+# A module stays stock when a patch that is required for it is not in the
+# build, or when none of its patches is left to apply.
+bm_plan_modules() {
+    local k p first applied missing
+    BM_SUPERSEDED=""
+    BM_STOCK=""
+    BM_STOCK_REASONS=""
+    BM_WITHOUT=""
+    for k in $(printf '%s\n' "$BM_ENTRIES" | bm_entries_column 3); do
+        if bm_module_superseded "$k"; then
+            bm_log "every patch for $k is already upstream: not building it (superseded)"
+            BM_SUPERSEDED="$BM_SUPERSEDED $k"
+            continue
+        fi
+        first="" applied=0 missing=""
+        for p in $(printf '%s\n' "$BM_ENTRIES" | awk -F'\t' -v k="$k" '$3 == k { print $1 }' | sort -u); do
+            case "$(bm_patch_status_of "$p")" in
+                applied) applied=1 ;;
+                already-upstream) ;;
+                *)
+                    if bm_entry_optional "$p" "$k"; then
+                        missing="$missing $p"
+                    elif [ -z "$first" ]; then
+                        first=$p
+                    fi
+                    ;;
+            esac
+        done
+        if [ -n "$first" ]; then
+            bm_mark_stock "$k" "$first $(bm_patch_reason_of "$first")"
+        elif [ "$applied" = 0 ]; then
+            bm_mark_stock "$k" "none of its patches is left to apply (not in this build:$missing)"
+        else
+            for p in $missing; do
+                bm_log "$k will be built without the optional $p"
+                BM_WITHOUT="$BM_WITHOUT$k	$p
+"
+            done
+        fi
+    done
+    bm_tie_modules
+}
+
+# bm_tie_modules : modules that share patched code are built together or not
+# at all. For every file an applied patch changes, the modules listed for
+# the applied patches touching that file form one set; if one of them stays
+# stock, the rest would be built against code (a shared header, an exported
+# function) that the stock module does not have, so they stay stock too.
+# Repeats until nothing changes.
+bm_tie_modules() {
+    local applied p f ks k tied changed=1
+    applied=$(printf '%s' "${BM_PATCH_STATUS:-}" | awk '$2 == "applied" { print $1 }')
+    [ -n "$applied" ] && [ -n "${BM_STOCK:-}" ] || return 0
+    while [ "$changed" = 1 ]; do
+        changed=0
+        for f in $(for p in $applied; do bm_patch_touched_files "$PATCHES_DIR/$p"; done | sort -u); do
+            case "$f" in Documentation/*) continue ;; esac
+            ks=$(for p in $applied; do
+                bm_patch_touched_files "$PATCHES_DIR/$p" | grep -Fxq -- "$f" || continue
+                printf '%s\n' "$BM_ENTRIES" | awk -F'\t' -v p="$p" '$1 == p { print $3 }'
+            done | sort -u)
+            tied=""
+            for k in $ks; do
+                if bm_is_stock "$k"; then
+                    tied=$k
+                    break
+                fi
+            done
+            [ -n "$tied" ] || continue
+            for k in $ks; do
+                bm_module_wanted "$k" || continue
+                bm_mark_stock "$k" "shares patched code ($f) with $tied, which stays stock"
+                changed=1
+            done
+        done
+    done
 }
 
 # bm_mdir_needed <mdir> : at least one module of the dir must be built.
 bm_mdir_needed() {
     local k
     for k in $(printf '%s\n' "$BM_ENTRIES" | bm_kos_for_mdir "$1"); do
-        bm_is_superseded "$k" || return 0
+        bm_module_wanted "$k" && return 0
+    done
+    return 1
+}
+
+# bm_patch_in_use <patch> : applied, and at least one module it is listed
+# for is built.
+bm_patch_in_use() {
+    local k
+    [ "$(bm_patch_status_of "$1")" = applied ] || return 1
+    for k in $(printf '%s\n' "$BM_ENTRIES" | awk -F'\t' -v p="$1" '$1 == p { print $3 }'); do
+        bm_module_wanted "$k" && return 0
     done
     return 1
 }
 
 # bm_include_overlay <tree> <dir> : copy the include/ headers changed by the
 # applied patches to <dir> (laid out like include/). Sets BM_INCLUDE_OVERLAY
-# to <dir>, or to "" when no applied patch changes a header.
+# to <dir>, or to "" when no applied patch changes a header. Patches whose
+# modules all stay stock are left out (bm_tie_modules guarantees that no
+# built module shares a file with them).
 bm_include_overlay() {
     local tree=$1 dir=$2 p f
     BM_INCLUDE_OVERLAY=""
     rm -rf "$dir"
     for p in $(printf '%s' "${BM_PATCH_STATUS:-}" | awk '$2 == "applied" { print $1 }'); do
+        bm_patch_in_use "$p" || continue
         for f in $(bm_patch_touched_files "$PATCHES_DIR/$p"); do
             case "$f" in include/*) ;; *) continue ;; esac
             [ -f "$tree/$f" ] || continue
@@ -992,22 +1282,35 @@ bm_make_args() {
     printf '%s\n' -C "$BM_HEADERS_DIR" "M=$1/$2" "-j$JOBS"
     [ -z "${BM_INCLUDE_OVERLAY:-}" ] || printf '%s\n' "NOSTDINC_FLAGS=-nostdinc -I$BM_INCLUDE_OVERLAY"
     for k in $(printf '%s\n' "$BM_ENTRIES" | bm_kos_for_mdir "$2"); do
-        bm_is_superseded "$k" || printf '%s.ko\n' "$k"
+        if bm_module_wanted "$k"; then
+            printf '%s.ko\n' "$k"
+        fi
     done
 }
 
+# bm_build_mdirs <tree> : run make for every M= dir that has a module to
+# build. Strict builds die when make fails; partial builds leave that
+# directory's modules (and the ones tied to them) stock and go on.
 bm_build_mdirs() {
-    local tree=$1 m old_ifs
+    local tree=$1 m k old_ifs
     for m in $(printf '%s\n' "$BM_ENTRIES" | bm_entries_column 2); do
         bm_mdir_needed "$m" || continue
-        bm_log "make M=$m $(printf '%s\n' "$BM_ENTRIES" | bm_kos_for_mdir "$m" | tr '\n' ' ')"
+        bm_log "make M=$m $(bm_make_args "$tree" "$m" | grep '\.ko$' | tr '\n' ' ')"
         old_ifs=$IFS
         IFS='
 '
         # shellcheck disable=SC2046
         set -- $(bm_make_args "$tree" "$m")
         IFS=$old_ifs
-        bm_make "$@" || bm_die "build of M=$m failed"
+        if ! bm_make "$@"; then
+            bm_partial || bm_die "build of M=$m failed"
+            for k in $(printf '%s\n' "$BM_ENTRIES" | bm_kos_for_mdir "$m"); do
+                if bm_module_wanted "$k"; then
+                    bm_mark_stock "$k" "build of M=$m failed with the patches that apply to $KVER"
+                fi
+            done
+            bm_tie_modules
+        fi
     done
 }
 
@@ -1047,11 +1350,18 @@ bm_symbol_check() {
     ' "$undef" "$vers" "$@"
 }
 
+# bm_build_is_partial : a patch was left out or a module stays stock.
+bm_build_is_partial() {
+    [ -n "${BM_STOCK:-}" ] && return 0
+    printf '%s' "${BM_PATCH_STATUS:-}" | awk '$2 == "failed" || $2 == "skipped" { f = 1 } END { exit !f }'
+}
+
 # bm_render_build_info <module-dir> : BUILD-INFO on stdout (key=value).
+# Keys are documented in docs/kernel-modules.md ("BUILD-INFO").
 bm_render_build_info() {
-    local dir=$1 p f
+    local dir=$1 p f k st
     printf '# BUILD-INFO written by %s build/build-modules.sh\n' ally-x20-steamos
-    printf 'format=1\n'
+    printf 'format=2\n'
     printf 'kver=%s\n' "$KVER"
     printf 'vermagic=%s\n' "$BM_VERMAGIC"
     printf 'header_source=%s\n' "$BM_HEADER_SOURCE"
@@ -1067,16 +1377,29 @@ bm_render_build_info() {
     printf 'source_url=%s\n' "${BM_SOURCE_URL:-}"
     printf 'source_ref=%s\n' "${BM_SOURCE_REF:-}"
     printf 'source_sha256=%s\n' "${BM_SOURCE_SHA256:-}"
+    printf 'partial=%s\n' "$(bm_build_is_partial && echo 1 || echo 0)"
+    printf 'lists_sha256=%s\n' "$(printf '%s\n' "${BM_ENTRIES_FULL:-}" | bm_lists_digest)"
     for p in $(printf '%s\n' "$BM_ENTRIES" | bm_entries_column 1); do
         printf 'patch.%s=%s\n' "$p" "$(bm_sha256 "$PATCHES_DIR/$p")"
-        printf 'patch.%s.status=%s\n' "$p" "$(printf '%s' "${BM_PATCH_STATUS:-}" | awk -v p="$p" '$1 == p { print $2; exit }')"
+        st=$(bm_patch_status_of "$p")
+        printf 'patch.%s.status=%s\n' "$p" "$st"
+        case "$st" in
+            failed | skipped) printf 'patch.%s.reason=%s\n' "$p" "$(bm_patch_reason_of "$p")" ;;
+        esac
     done
     for f in "$dir"/*.ko.zst; do
         [ -f "$f" ] || continue
-        printf 'module.%s=%s\n' "$(basename "$f" .ko.zst)" "$(bm_sha256 "$f")"
+        k=$(basename "$f" .ko.zst)
+        printf 'module.%s=%s\n' "$k" "$(bm_sha256 "$f")"
+        st=$(bm_module_without "$k" | tr '\n' ' ')
+        [ -z "$st" ] || printf 'module.%s.without=%s\n' "$k" "${st% }"
     done
     for f in ${BM_SUPERSEDED:-}; do
         printf 'module.%s=superseded\n' "$f"
+    done
+    for f in ${BM_STOCK:-}; do
+        printf 'module.%s=stock\n' "$f"
+        printf 'module.%s.reason=%s\n' "$f" "$(bm_stock_reason_of "$f")"
     done
     printf 'ax20_commit=%s\n' "${AX20_COMMIT:-unknown}"
     printf 'build_date=%s\n' "${BUILD_DATE:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
@@ -1084,12 +1407,53 @@ bm_render_build_info() {
     printf 'container_digest=%s\n' "${CONTAINER_IMAGE_DIGEST:-none}"
 }
 
-# bm_collect <tree> <stage-dir> : verify and compress every listed module.
+# bm_collect_one <tree> <mdir> <ko> <stage-dir> <symvers...> : check one
+# built module (vermagic, symbols) and compress it into the stage dir.
+# Returns 1 with the reason in BM_COLLECT_ERR.
+bm_collect_one() {
+    local tree=$1 m=$2 k=$3 stage=$4 ko vm work="$WORK/ko"
+    shift 4
+    BM_COLLECT_ERR=""
+    ko=$(bm_find_ko "$tree/$m" "$k")
+    if [ -z "$ko" ]; then
+        BM_COLLECT_ERR="M=$m did not produce $k.ko"
+        return 1
+    fi
+    cp "$ko" "$work/$k.ko"
+    if bm_have strip && ! strip --strip-debug "$work/$k.ko"; then
+        BM_COLLECT_ERR="strip $k.ko failed"
+        return 1
+    fi
+    vm=$(modinfo -F vermagic "$work/$k.ko")
+    if ! bm_vermagic_ok "$vm" "$KVER"; then
+        BM_COLLECT_ERR="$k.ko vermagic '$vm' does not match $KVER"
+        return 1
+    fi
+    if [ -n "$BM_VERMAGIC" ] && [ "$vm" != "$BM_VERMAGIC" ]; then
+        BM_COLLECT_ERR="$k.ko vermagic '$vm' differs from other modules ('$BM_VERMAGIC')"
+        return 1
+    fi
+    nm -u "$work/$k.ko" | awk '{ print $NF }' >"$work/$k.undef"
+    modprobe --dump-modversions "$work/$k.ko" >"$work/$k.vers" 2>/dev/null || : >"$work/$k.vers"
+    if ! bm_symbol_check "$work/$k.undef" "$work/$k.vers" "$@" >&2; then
+        BM_COLLECT_ERR="$k.ko does not link against the $KVER kernel"
+        return 1
+    fi
+    if ! zstd -q -19 -f "$work/$k.ko" -o "$stage/$k.ko.zst"; then
+        BM_COLLECT_ERR="zstd $k.ko failed"
+        return 1
+    fi
+    BM_VERMAGIC=$vm
+    bm_log "built $k.ko.zst ($vm)"
+}
+
+# bm_collect <tree> <stage-dir> : verify and compress every module that was
+# built. Strict builds die on the first module that fails a check; partial
+# builds leave it (and the modules tied to it) stock.
 bm_collect() {
-    local tree=$1 stage=$2 m k ko work vm symvers
+    local tree=$1 stage=$2 m k symvers
     mkdir -p "$stage" || return 1
-    work="$WORK/ko"
-    mkdir -p "$work"
+    mkdir -p "$WORK/ko"
     symvers="$BM_HEADERS_DIR/Module.symvers"
     BM_VERMAGIC=""
     for m in $(printf '%s\n' "$BM_ENTRIES" | bm_entries_column 2); do
@@ -1097,37 +1461,54 @@ bm_collect() {
     done
     for m in $(printf '%s\n' "$BM_ENTRIES" | bm_entries_column 2); do
         for k in $(printf '%s\n' "$BM_ENTRIES" | bm_kos_for_mdir "$m"); do
-            bm_is_superseded "$k" && continue
-            ko=$(bm_find_ko "$tree/$m" "$k")
-            [ -n "$ko" ] || bm_die "M=$m did not produce $k.ko"
-            cp "$ko" "$work/$k.ko"
-            if bm_have strip; then
-                strip --strip-debug "$work/$k.ko" || bm_die "strip $k.ko failed"
-            fi
-            vm=$(modinfo -F vermagic "$work/$k.ko")
-            bm_vermagic_ok "$vm" "$KVER" || bm_die "$k.ko vermagic '$vm' does not match $KVER"
-            if [ -n "$BM_VERMAGIC" ] && [ "$vm" != "$BM_VERMAGIC" ]; then
-                bm_die "$k.ko vermagic '$vm' differs from other modules ('$BM_VERMAGIC')"
-            fi
-            BM_VERMAGIC=$vm
-            nm -u "$work/$k.ko" | awk '{ print $NF }' >"$work/$k.undef"
-            modprobe --dump-modversions "$work/$k.ko" >"$work/$k.vers" 2>/dev/null || : >"$work/$k.vers"
+            bm_module_wanted "$k" || continue
             # shellcheck disable=SC2086
-            bm_symbol_check "$work/$k.undef" "$work/$k.vers" $symvers >&2 \
-                || bm_die "$k.ko does not link against the $KVER kernel"
-            zstd -q -19 -f "$work/$k.ko" -o "$stage/$k.ko.zst" || bm_die "zstd $k.ko failed"
-            bm_log "built $k.ko.zst ($vm)"
+            if ! bm_collect_one "$tree" "$m" "$k" "$stage" $symvers; then
+                bm_partial || bm_die "$BM_COLLECT_ERR"
+                bm_mark_stock "$k" "$BM_COLLECT_ERR"
+                bm_tie_modules
+            fi
         done
     done
+    # A module collected earlier may have been tied to one that failed later.
+    for k in ${BM_STOCK:-}; do
+        rm -f "${stage:?}/${k:?}.ko.zst"
+    done
+}
+
+# bm_report : what the build did, one line per patch left out and per module.
+bm_report() {
+    local p k st
+    for p in $(printf '%s\n' "$BM_ENTRIES" | bm_entries_column 1); do
+        st=$(bm_patch_status_of "$p")
+        case "$st" in
+            failed | skipped) bm_warn "patch $p: $st ($(bm_patch_reason_of "$p"))" ;;
+        esac
+    done
+    for k in $(printf '%s\n' "$BM_ENTRIES" | bm_entries_column 3); do
+        if bm_is_superseded "$k"; then
+            bm_log "module $k: superseded (already in the $KVER kernel)"
+        elif bm_is_stock "$k"; then
+            bm_warn "module $k: stock ($(bm_stock_reason_of "$k"))"
+        else
+            st=$(bm_module_without "$k" | tr '\n' ' ')
+            bm_log "module $k: patched${st:+ (without ${st% })}"
+        fi
+    done
+    if bm_build_is_partial; then
+        bm_warn "partial build for $KVER: only the modules marked patched above are replaced; this kernel is not supported"
+    fi
 }
 
 bm_main() {
     local stage
     bm_parse_args "$@"
     bm_parse_kver "$KVER" || bm_die "cannot parse kernel version '$KVER' (expected <x.y.z>-<valveN>-<rel>-neptune[-<series>][-g<commit>])"
-    BM_ENTRIES=$(bm_list_entries "$PATCHES_DIR") || bm_die "malformed modules list in $PATCHES_DIR"
-    [ -n "$BM_ENTRIES" ] || bm_die "no modules listed in $PATCHES_DIR/modules*.list"
+    BM_ENTRIES_FULL=$(bm_list_entries_full "$PATCHES_DIR") || bm_die "malformed modules list in $PATCHES_DIR"
+    [ -n "$BM_ENTRIES_FULL" ] || bm_die "no modules listed in $PATCHES_DIR/modules*.list"
+    BM_ENTRIES=$(printf '%s\n' "$BM_ENTRIES_FULL" | cut -f1-3)
     printf '%s\n' "$BM_ENTRIES" | bm_check_patch_scope "$PATCHES_DIR" || bm_die "patch/list consistency check failed"
+    bm_check_needs || bm_die "patch/list consistency check failed (needs=)"
     mkdir -p "$CACHE_DIR" "$OUT_DIR" || bm_die "cannot create $CACHE_DIR or $OUT_DIR"
     WORK=$(mktemp -d "${TMPDIR:-/tmp}/ax20-build.XXXXXX") || bm_die "mktemp failed"
     if [ "${BM_KEEP_WORK:-0}" != 1 ]; then
@@ -1135,6 +1516,11 @@ bm_main() {
     fi
     BM_TREE_SRC=""
     bm_log "kernel $KVER ($BM_PKGBASE $BM_PKGVER-$BM_REL, tag $BM_TAG${BM_GITHASH:+, commit $BM_GITHASH})"
+    if bm_partial; then
+        bm_log "partial build allowed: patches that do not apply are left out"
+    else
+        bm_log "strict build: every patch must apply"
+    fi
     bm_resolve_headers || bm_die "no usable kernel headers for $KVER (tried: cache, Valve headers package, Valve source, linux-stable)"
     bm_log "headers: source $BM_HEADER_SOURCE ($BM_HEADER_DESC) at $BM_HEADERS_DIR"
     if [ -z "$BM_TREE_SRC" ]; then
@@ -1152,6 +1538,7 @@ bm_main() {
     mv "$stage" "$OUT_DIR/$KVER" || bm_die "cannot move results into $OUT_DIR/$KVER"
     bm_log "done: $OUT_DIR/$KVER"
     cat "$OUT_DIR/$KVER/BUILD-INFO"
+    bm_report
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then

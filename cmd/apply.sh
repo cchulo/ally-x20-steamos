@@ -98,7 +98,7 @@ apply_components() {
             fi
             st=$(component_status "$c" 2>/dev/null || printf 'stock')
             case "$st" in
-                active | superseded)
+                active | partial | superseded)
                     log_debug "$c: $st, nothing to re-apply"
                     continue
                     ;;

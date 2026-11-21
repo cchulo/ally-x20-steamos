@@ -113,6 +113,39 @@ setup() {
     [ "$(tree_digest "$AX20_ROOT")" = "$before" ]
 }
 
+@test "an opt-in component is left alone by plain apply, installed by --only, then kept like the others" {
+    demo_components
+    cat >"$AX20_COMPONENTS_DIR/optional.sh" <<'C'
+COMPONENT_DESCRIPTION="opt-in"
+COMPONENT_OPT_IN=1
+optional_files() { printf 'demo/a.conf\t/etc/demo.d/ally-x20-steamos-optional.conf\t0644\n'; }
+optional_probe() { return 1; }
+C
+    f="$AX20_ROOT/etc/demo.d/ally-x20-steamos-optional.conf"
+    s="$AX20_ROOT/var/lib/ally-x20-steamos/state/status.json"
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply
+    assert_success
+    [ ! -e "$f" ]
+    [ "$(jq -r .applied "$s")" = "alpha beta" ]
+    [ "$(jq -r '.components[] | select(.name == "optional") | .status' "$s")" = off ]
+    # the boot service does not bring it in either
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply --missing-only
+    assert_success
+    [ ! -e "$f" ]
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply --only optional
+    assert_success
+    [ -f "$f" ]
+    [ "$(jq -r '.components[] | select(.name == "optional") | .status' "$s")" = active ]
+    # once installed: re-applied by plain apply and repaired by --missing-only
+    rm "$f"
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply --missing-only
+    assert_success
+    [ -f "$f" ]
+    run "$FAKE_CLI" --root "$AX20_ROOT" apply
+    assert_success
+    [ "$(jq -r .applied "$s")" = "alpha beta optional" ]
+}
+
 @test "--missing-only re-applies only the drifted components" {
     demo_components
     "$FAKE_CLI" --root "$AX20_ROOT" apply 2>/dev/null

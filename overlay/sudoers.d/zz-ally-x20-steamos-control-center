@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Installed by ally-x20-steamos (components/controlcenter.sh); remove it with
+#   ally-x20-steamos uninstall --component controlcenter
+# Lets the Control Center UI, running as deck, start five fixed operations
+# without a password. Each entry names the helper with its one argument, so
+# sudo itself refuses any other or additional argument. The file name starts
+# with "zz-" on purpose: sudo uses the LAST matching rule, and it must come
+# after the stock "%wheel ALL=(ALL) ALL" rule, which asks for the password.
+# See docs/control-center.md.
+Cmnd_Alias AX20_CONTROL_CENTER = /etc/ally-x20-steamos/control-center-helper status, /etc/ally-x20-steamos/control-center-helper check, /etc/ally-x20-steamos/control-center-helper update, /etc/ally-x20-steamos/control-center-helper apply, /etc/ally-x20-steamos/control-center-helper rollback
+Defaults!AX20_CONTROL_CENTER env_reset, !setenv, secure_path="/usr/bin:/usr/sbin:/bin:/sbin"
+deck ALL=(root) NOPASSWD: AX20_CONTROL_CENTER

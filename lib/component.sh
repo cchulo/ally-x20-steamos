@@ -17,6 +17,11 @@
 #   <name>_status          optional override of component_default_status.
 #   <name>_remove          optional. Extra cleanup before the manifest-driven
 #                          file removal (stop services, remove caches).
+#   COMPONENT_OPT_IN=1     optional. A plain `apply` (and `install`) leaves
+#                          the component alone until it has been installed
+#                          once with `apply --only <name>`; from then on it
+#                          is re-applied like any other. Status is `off`
+#                          while it is not installed.
 #
 # Components never write files themselves outside manifest_install_* so that
 # `uninstall` can always undo them. Names contain [a-z0-9_] only; the file
@@ -56,10 +61,13 @@ component_load() {
     eval "[ -n \"\${AX20_COMPONENT_LOADED_$name:-}\" ]" && return 0
     # shellcheck disable=SC2034  # set by the component file, read via eval below
     COMPONENT_DESCRIPTION=""
+    # shellcheck disable=SC2034  # set by the component file, read via eval below
+    COMPONENT_OPT_IN=""
     # shellcheck disable=SC1090
     . "$f"
     eval "AX20_COMPONENT_LOADED_$name=1"
     eval "AX20_COMPONENT_DESC_$name=\"\$COMPONENT_DESCRIPTION\""
+    eval "AX20_COMPONENT_OPT_IN_$name=\"\$COMPONENT_OPT_IN\""
     _component_has_fn "${name}_probe" || die "component '$name' does not define ${name}_probe"
     _component_has_fn "${name}_files" || die "component '$name' does not define ${name}_files"
 }
@@ -70,6 +78,12 @@ _component_has_fn() { declare -F "$1" >/dev/null 2>&1; }
 component_description() {
     component_load "$1"
     eval "printf '%s\n' \"\${AX20_COMPONENT_DESC_$1}\""
+}
+
+# component_opt_in <name> : 0 if the component declared COMPONENT_OPT_IN=1.
+component_opt_in() {
+    component_load "$1"
+    eval "[ \"\${AX20_COMPONENT_OPT_IN_$1:-}\" = 1 ]"
 }
 
 # component_files <name> : the normalised file list (tab separated).
@@ -108,11 +122,12 @@ component_installed() {
     [ -n "$(manifest_paths "$1" | head -n1)" ]
 }
 
-# component_default_status <name> : active | stock | superseded | n/a
+# component_default_status <name> : active | stock | superseded | n/a | off
 #   superseded  stock now provides it (probe == 0), regardless of install state
 #   active      installed, every manifest file verifies, probe says still needed
 #   stock       not installed (or incomplete), still needed
 #   n/a         probe cannot tell on this host and nothing is installed
+#   off         an opt-in component (COMPONENT_OPT_IN=1) that is not installed
 component_default_status() {
     local name=$1 rc p drift=0
     component_probe "$name" >/dev/null 2>&1
@@ -132,7 +147,9 @@ component_default_status() {
         fi
         return 0
     fi
-    if [ "$rc" = "$PROBE_UNKNOWN" ]; then
+    if component_opt_in "$name"; then
+        printf 'off\n'
+    elif [ "$rc" = "$PROBE_UNKNOWN" ]; then
         printf 'n/a\n'
     else
         printf 'stock\n'

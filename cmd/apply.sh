@@ -8,7 +8,9 @@
 #   --missing-only   skip components whose files all verify (boot service).
 #   --verify-only    report drift, write nothing; exit 1 if anything drifted.
 # Components whose probe says stock SteamOS provides them, and that are not
-# installed, are skipped (never installed on top of a native fix). Files of
+# installed, are skipped (never installed on top of a native fix). Opt-in
+# components (COMPONENT_OPT_IN=1, e.g. controlcenter) are skipped until they
+# have been installed once with --only <c>. Files of
 # components this version no longer ships are removed (lib/retired.sh),
 # except with --slot.
 # Writes state/status.json at the end.
@@ -88,6 +90,10 @@ apply_components() {
             APPLY_SKIPPED="$APPLY_SKIPPED $c"
             continue
         fi
+        if [ -z "$only" ] && component_opt_in "$c" && ! component_installed "$c"; then
+            log_debug "$c: opt-in and not installed; enable it with: $AX20_NAME apply --only $c"
+            continue
+        fi
         if [ "$missing" = 1 ]; then
             # Re-apply only what was installed and drifted. A component with no
             # manifest entries was never installed (or was uninstalled on
@@ -154,7 +160,7 @@ cmd_apply() {
             --missing-only) missing=1 ;;
             --verify-only) verify=1 ;;
             -h | --help)
-                sed -n '3,14s/^# \{0,1\}//p' "$AX20_SRC/cmd/apply.sh"
+                sed -n '3,16s/^# \{0,1\}//p' "$AX20_SRC/cmd/apply.sh"
                 return 0
                 ;;
             *) die 2 "apply: unknown argument '$1'" ;;

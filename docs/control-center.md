@@ -13,82 +13,81 @@ else on this page is a plan.
 |---|---|
 | `controlcenter` component: root helper + sudoers drop-in | implemented, bats-tested on fixture roots (macOS; the real `visudo` accepts the drop-in). Not run on SteamOS. |
 | opt-in components (`COMPONENT_OPT_IN=1`, status `off`) | implemented, bats-tested |
-| UI (`ui/control-center/`): Home and Update screens, controller/keyboard focus | builds (`npm run build`); runs in a browser against a mock. Never shown on the device, never run under gamescope. |
-| Tauri shell (`ui/control-center/src-tauri/`) | compiles on macOS (`cargo check`). No Linux build, no AppImage yet. |
+| UI (`ui/control-center/`): Home and Update screens, controller/keyboard focus, partial-update display | builds (`npm run build`); runs in a browser against a mock. Never shown on the device, never run under gamescope. |
+| Electron shell (`ui/control-center/electron/`) | type-checks and compiles; the operation whitelist has unit tests (`npm test`). A Linux x64 AppImage was built once on a macOS host (123 MB) and **never started**: no window has been opened anywhere. |
 | opening it from the Armoury Crate button, overlay over a running game | designed only (section 2) |
 | packaging, installing the UI from the CLI, adding it to Steam | designed only (sections 1, 5) |
 
 Contents: [1 stack](#1-stack) · [2 Game Mode](#2-how-it-appears-in-game-mode) ·
 [3 architecture](#3-architecture) · [4 security](#4-security-of-the-privileged-path) ·
-[5 roadmap](#5-scope-and-roadmap) · [6 open questions](#6-open-questions-for-the-owner) ·
+[5 roadmap](#5-scope-and-roadmap) · [6 decisions](#6-decisions) · [7 open questions](#7-open-questions) ·
 [sources](#sources)
 
 ## 1. Stack
 
-### What SteamOS gives us
+### Decision
 
-- Tauri v2 on Linux links against WebKitGTK **4.1** (`libwebkit2gtk-4.1.so.0`) [T1].
-- The SteamOS image does not contain it. A report from a Steam Deck on
-  SteamOS 3.9.2 (2026-10): "libwebkit2gtk-4.1.so.0 was missing" [S1]; a
-  third-party README says the same without naming a version [S2]. The
-  package exists in Valve's pacman repository for 3.9
-  (`webkit2gtk-4.1-2.52.5-2`) [S3], but installing it means writing to
-  `/usr`, which this project never does (and a SteamOS update would remove
-  it again).
-- So a bare Tauri binary (2–6 MB [T2]) **cannot run on stock SteamOS**. The
-  WebView has to come with the app.
-- `TODO(hw)`: confirm on the X20 with `pacman -Q webkit2gtk-4.1 fuse2`.
+**Electron + React + TypeScript (Vite), shipped as an AppImage.** The owner
+decided this on 2026-11-20: "Let's just use what is already proven." It is
+the stack Handheld Daemon ships for the same job on the same kind of device
+[H1][H2].
 
-### Options
+| | |
+|---|---|
+| size | **123 MB** for the AppImage built from this branch (Electron 45, x64; built on a macOS host, never started). hhd-ui v3.4.2 is 131 MB [H1]. |
+| web engine | Chromium, inside the AppImage. Nothing is needed from SteamOS's read-only `/usr`. |
+| under gamescope | proven by HHD: a fullscreen Electron window; HHD's main process adds no Chromium switches [H2]. Not yet tried with **this** app. |
+| controller | Chromium's Gamepad API, which the UI already uses (`src/nav.ts`). HHD additionally feeds events over stdin when it runs as an overlay [H3]; not needed for a full-screen app that Steam Input drives. |
+| shell code | `electron/main.ts`, `electron/preload.ts`, `electron/operations.ts`, about 250 lines together |
 
-| option | download | brings its own web engine | works under gamescope | controller input | verdict |
-|---|---|---|---|---|---|
-| **Tauri v2 AppImage** (React + TS) | 70+ MB [T2] | yes: the bundler copies WebKitGTK's processes and libraries into the AppImage [T3] | **unknown**: no report found of a Tauri app in Game Mode; the documented workarounds for blank windows (`WEBKIT_DISABLE_DMABUF_RENDERER=1`, then `WEBKIT_DISABLE_COMPOSITING_MODE=1`) are written for NVIDIA/Wayland [T4] | **unknown**: WebKitGTK's Gamepad API is built on libmanette [W1]; a "does not work" bug was fixed in 2024 [W2], another (axes but no buttons) is open [W3]. Fallback: read the pad in Rust with `gilrs` and send events to the page (a plugin doing this exists [T5]) | **recommended, with a device gate** (below) |
-| Tauri v2 Flatpak | app small, but needs the GNOME runtime: about 400 MB download, 1 GB installed (figure for runtime 48 [F1]) | yes (runtime) [T6] | unknown; sandbox needs `--device=input` for pads [T7] and cannot run `sudo` without `flatpak-spawn --host` | as above | rejected: bigger than Electron, and the sandbox is in the way of the helper |
-| **Electron AppImage** (same React UI) | 131 MB (hhd-ui v3.4.2, the closest comparable app) [H1] | yes (Chromium) | **yes, proven**: this is what Handheld Daemon ships [H2] | Chromium's Gamepad API works; HHD additionally feeds events over stdin [H3] | **fallback** if the gate fails |
-| Decky plugin | under 1 MB | uses Steam's own CEF | yes | Steam's own focus system | rejected for now: needs Decky Loader installed, which "sometimes … disappear[s] on SteamOS updates" [D1]; a `root` plugin flag gives the whole plugin root [D2], which is a weaker boundary than the helper |
-| local web server + a browser | under 1 MB + a browser | no | no source found for using Steam's browser this way | unknown | rejected: an HTTP port that can trigger root operations is a larger attack surface than a child process, for no gain |
+Risks, plainly:
 
-### Recommendation
-
-**Tauri v2 + React + TypeScript (Vite), shipped as an AppImage**, about
-70 MB, roughly half of Electron. It is what the owner asked for and it is
-feasible on paper, but two things are unproven and both can only be answered
-on the device:
-
-1. does a WebKitGTK window render under gamescope on the X20's AMD GPU, and
-2. does the page receive controller input there.
-
-So the first hardware session runs this gate before more is built on Tauri:
-
-| check (`TODO(hw)`) | pass | if it fails |
-|---|---|---|
-| AppImage starts from Desktop Mode | window with the panel | try `--appimage-extract-and-run` (no FUSE needed); note whether `fuse2` is in the image [S3][S4] |
-| started as a non-Steam shortcut in Game Mode | panel visible, not black | set `WEBKIT_DISABLE_DMABUF_RENDERER=1`, then `WEBKIT_DISABLE_COMPOSITING_MODE=1` [T4] |
-| D-pad moves the focus, A selects | works through `navigator.getGamepads()` | keyboard path: a Steam Input layout that sends arrow keys/Enter/Esc (the UI already handles those); or `gilrs` in the Rust shell |
-| all three fail | | **switch the shell to Electron** |
-
-Switching is cheap by construction: the React app talks to its shell only
-through `src/backend.ts` (one function, `run(op)`). An Electron shell would
-replace `src-tauri/` (120 lines of Rust) with a main process of similar
-size; no screen changes.
-
-Risks of the recommendation, plainly:
-
-- **Unverified under gamescope** (above). This is the main risk.
+- **Size.** About 120 to 130 MB to download and keep on disk. Accepted with
+  the decision.
 - **AppImage needs FUSE 2 or extraction.** `fuse2` is in Valve's 3.9
-  repository [S3] and an open request asks Valve to drop it [S4]; whether
-  it is in the image is not confirmed. The launcher should therefore always
-  use `--appimage-extract-and-run` or a one-time extraction into the state
-  directory.
-- **The AppImage must be built on Linux**, on the oldest distribution that
-  has WebKitGTK 4.1, because the glibc of the build host becomes the
-  minimum [T2]. That is a CI job this slice does not contain.
-- **Transparent windows are unreliable on Linux** in Tauri [T8]. The first
-  version does not use one (section 2).
-- Tauri's "truly portable AppImage" rework is still a draft [T9]; the
-  current bundle leans on host libraries for everything that is not
-  WebKitGTK/GTK.
+  package repository [S3] and an open request asks Valve to drop it [S4];
+  whether it is in the image is not confirmed. The launcher should
+  therefore use `--appimage-extract-and-run` or a one-time extraction into
+  the state directory. `TODO(hw)`: `pacman -Q fuse2`.
+- **Chromium's sandbox inside an AppImage.** An AppImage cannot carry the
+  setuid `chrome-sandbox` helper, so the renderer sandbox depends on
+  unprivileged user namespaces. Steam's own runtime and Flatpak rely on
+  them too, so they are expected to be available. `TODO(hw)`: confirm the
+  app starts **without** `--no-sandbox`; if it only starts with that flag,
+  the page loses one layer of isolation (the helper boundary is unaffected).
+- **Electron releases move fast** (a new major about every eight weeks);
+  the bundled Chromium has to be updated with the app. The page loads no
+  remote content, which removes most of the usual exposure.
+- **Not started anywhere yet.** The AppImage built once; nobody has seen
+  the window.
+
+### The alternative that was considered first: Tauri
+
+Tauri v2 (Rust shell, system WebView) was the first recommendation because
+it is smaller. It is recorded here because the owner asked for the
+comparison; the first commit of this branch contains that scaffold.
+
+- Tauri v2 on Linux links against WebKitGTK **4.1** [T1]. SteamOS does not
+  ship it: "libwebkit2gtk-4.1.so.0 was missing" on SteamOS 3.9.2 [S1], and
+  [S2] says the same. The package is in Valve's repository [S3] but
+  installing it means writing to `/usr`.
+- So only the AppImage form works, which bundles WebKitGTK [T3]: "70+ MB"
+  per Tauri's documentation [T2], about half of Electron.
+- Unproven, and only answerable on the device: no report was found of a
+  Tauri app in Game Mode; the documented fixes for blank WebKitGTK windows
+  target NVIDIA/Wayland [T4]; WebKitGTK's Gamepad API (libmanette [W1]) has
+  one fixed [W2] and one open bug [W3]; transparent windows are unreliable
+  on Linux [T8].
+- Verdict: about 50 MB smaller, at the cost of two unknowns that could each
+  end in "switch to Electron anyway". Rejected in favor of what is proven.
+
+### Other options
+
+| option | why not |
+|---|---|
+| Tauri as a Flatpak | needs the GNOME runtime (about 400 MB download for runtime 48 [F1]) [T6]; the sandbox needs `--device=input` for controllers [T7] and is in the way of `sudo` |
+| Decky plugin | needs Decky Loader installed, which "sometimes … disappear[s] on SteamOS updates" [D1]; a `root` plugin flag gives the whole plugin root [D2], a weaker boundary than the helper |
+| local web server + a browser | an HTTP port that can trigger root operations is a larger attack surface than a child process; no source found for using Steam's browser this way |
 
 ## 2. How it appears in Game Mode
 
@@ -115,6 +114,8 @@ Two facts decide the design:
 - Input focus goes only to a `STEAM_OVERLAY` window with a non-zero
   `STEAM_INPUT_FOCUS` [G1]. There is one such slot, and Steam's own overlay
   normally holds it.
+- HHD's Electron window in overlay mode is fullscreen and `transparent: true`
+  [H2]; transparency is what a v3 overlay here would need too.
 
 ### How Handheld Daemon does it
 
@@ -159,7 +160,7 @@ Upstream InputPlumber's map for this device (`ally_type2.yaml`, used by
 - `TODO(hw)`: what the **SteamOS-shipped** InputPlumber and this project's
   own profile (`overlay/inputplumber/`, [inputplumber.md](inputplumber.md))
   do with the Armoury Crate short press today, whether that press is free
-  to take, whether changing intercept mode needs polkit authorisation for
+  to take, whether changing intercept mode needs polkit authorization for
   `deck`, and whether a `dbus:` mapping in our device profile is enough.
   The table above is upstream's file, not a measurement.
 
@@ -167,13 +168,14 @@ Upstream InputPlumber's map for this device (`ally_type2.yaml`, used by
 
 | step | what the user gets | needs |
 |---|---|---|
-| **v1: a non-Steam shortcut** | "Control Center" in the Library (Non-Steam). Opens full-screen like a game; Steam Input gives it the controller. It **replaces** the running game on screen (a shortcut is a normal app, not an overlay), so it is used from the Library, not mid-game. | the AppImage on disk; `steamos-add-to-steam <path>` once, as `deck` (it refuses to run as root) [V1]. `TODO(hw)`: whether that can be done without Desktop Mode. |
+| **v1: a non-Steam shortcut** | "Control Center" in the Library (Non-Steam). Opens full-screen like a game; Steam Input gives it the controller, which Chromium's Gamepad API reads. It **replaces** the running game on screen (a shortcut is a normal app, not an overlay), so it is used from the Library, not mid-game. | the AppImage on disk; `steamos-add-to-steam <path>` once, as `deck` (it refuses to run as root) [V1]. `TODO(hw)`: whether that can be done without Desktop Mode. |
 | v2: the button opens it | Armoury Crate short press launches or focuses the shortcut | a user service listening for the InputPlumber D-Bus event; a way to start a shortcut from outside Steam (`steam://rungameid/…` for non-Steam shortcuts is reported as unreliable; unverified) |
-| v3: overlay over the game | the left-docked panel over a running game, as in the reference | the hhd pattern: property swap on Steam's window, InputPlumber intercept mode, a transparent window. Touches Steam's own window state; highest risk. |
+| v3: overlay over the game | the left-docked panel over a running game, as in the reference | the hhd pattern, which is known to work with an Electron window: property swap on Steam's window, InputPlumber intercept mode, a transparent window, a stable window class to find it by (`desktopName` is set for that). Touches Steam's own window state; highest risk. |
 
-This slice builds towards v1. The panel is drawn left-docked already so
+This slice builds toward v1. The panel is drawn left-docked already so
 that v3 needs no redesign, but in v1 the area to its right is a plain
-backdrop, not the game.
+backdrop, not the game. The app holds a single-instance lock: starting it a
+second time (later: from the button) raises the running panel.
 
 ## 3. Architecture
 
@@ -181,8 +183,8 @@ backdrop, not the game.
  deck (unprivileged)                              root
 ┌──────────────────────────────┐   sudo -n    ┌─────────────────────────────────────────────┐
 │ Control Center               │ ───────────▶ │ /etc/ally-x20-steamos/control-center-helper │
-│  React UI  ── run(op) ──▶    │  one word    │   one word from a closed list               │
-│  Tauri shell (Rust)          │ ◀─────────── │   checks ownership, cleans the environment  │
+│  React page (sandboxed)      │  one word    │   one word from a closed list               │
+│   ── IPC ──▶ Electron main   │ ◀─────────── │   checks ownership, cleans the environment  │
 │  no network, no file access  │ stdout/stderr│   exec ally-x20-steamos.sh <fixed arguments>│
 └──────────────────────────────┘  exit status └─────────────────────────────────────────────┘
 ```
@@ -198,6 +200,26 @@ backdrop, not the game.
 | running when idle | nothing | nothing | a root process, always |
 | failure mode | a broken drop-in can lock sudo: prevented by `visudo -cf` before install | a broken rule is ignored | a bug is a root bug at all times |
 | tested with stubs | yes (`sudo`, `visudo` are plain commands) | harder (needs polkitd) | needs a harness |
+
+### Inside the UI process
+
+Electron has two parts, and the split is a second, inner boundary:
+
+| part | can do | file |
+|---|---|---|
+| the page (renderer) | draw, read the Gamepad API, call two functions on `window.controlCenter` | `src/` |
+| preload | forward those two calls over IPC (`helper:run`, `app:quit`) and hand back output lines (`helper:log`) | `electron/preload.ts` |
+| main process | check that the call comes from the top frame of its own window showing its own file, check the operation against its own list, start `sudo` | `electron/main.ts`, `electron/operations.ts` |
+
+Settings (checked by a bats test that greps `main.ts`):
+`contextIsolation: true`, `nodeIntegration: false`, `sandbox: true` plus
+`app.enableSandbox()`, no `remote` module, `webviewTag: false`. Navigation,
+redirects, new windows and `<webview>` are blocked; every permission
+request is denied; a request filter cancels every URL that is not a file
+inside the app's `dist/`; the page is loaded with `loadFile`, never from a
+URL. The built page carries a CSP of `default-src 'none'` with scripts,
+styles, images and fonts from its own files only and `connect-src 'none'`.
+`sudo` is started with `spawn`, an argument vector and `shell: false`.
 
 **Chosen: (a)**, as the owner leaned. It is the smallest amount of
 privileged code, sudo does half of the argument checking, and nothing runs
@@ -218,13 +240,15 @@ sudo -n /etc/ally-x20-steamos/control-center-helper <operation>
 |---|---|---|---|
 | `status` | `ally-x20-steamos status --json` | rewrites `state/status.json` only | one JSON document (shape: `lib/status.sh`) |
 | `check` | `ally-x20-steamos self-update --check` | `git fetch`; writes `state/last-update-check` | one line of text; exit 3 = offline |
-| `update` | `ally-x20-steamos self-update` | checks out the newest release **signed by a pinned key**, runs migrations and `apply`, stages modules | log lines; "updated to vX" or "already up to date" |
+| `update` | `ally-x20-steamos self-update` | on the channel the device is set to (decision 3): for `stable`, checks out the newest release **signed by a pinned key**; then runs migrations and `apply`, stages modules | log lines; "updated to vX" or "already up to date" |
 | `apply` | `ally-x20-steamos apply` | re-installs the files of the enabled components | log lines |
 | `rollback` | `ally-x20-steamos self-update --rollback` | checks out the commit recorded before the last update, then `apply` | log lines |
 
-- Exit status: the CLI's own. The helper's refusals are 64 (not exactly one
-  known word), 69 (CLI missing), 75 (another changing operation is
-  running), 77 (not root, or unsafe ownership/mode).
+- Exit status: the CLI's own, passed through unchanged. That includes
+  **4, "finished, but some components failed"** (see
+  [Partial updates](#partial-updates)). The helper's own refusals are 64
+  (not exactly one known word), 69 (CLI missing), 75 (another changing
+  operation is running), 77 (not root, or unsafe ownership/mode).
 - stdout and stderr are the CLI's, unmodified; the UI shows them in its log.
 - `update`, `apply` and `rollback` take a lock (`flock`) so two cannot run
   at once.
@@ -235,6 +259,37 @@ sudo -n /etc/ally-x20-steamos/control-center-helper <operation>
 - `status` does not strictly need root either (the CLI and `status.json`
   are world-readable). It is in the helper so the UI has one path; it can
   move out later.
+
+### Partial updates
+
+Decision 3: an update is applied in place, on whatever channel the device
+is set to, and **a component that cannot be applied does not stop the
+rest**. That component fails, its error is reported, and the others go
+through.
+
+- The behavior itself is not in this branch. It comes with PR #79
+  ("resilient apply", not merged when this was written): `apply` and
+  `self-update` skip a failing component, exit with **4**, and record each
+  component's outcome in `/var/lib/ally-x20-steamos/state/last-apply.json`.
+  `status --json` then has `last_apply` (`file`, `when`, `command`,
+  `result`: `ok` or `failed`) and, per component, `last_apply`
+  (`applied`, `unchanged`, `failed`, `skipped` or empty) and
+  `last_apply_reason`.
+- The helper needs no change: it has no knowledge of exit codes and
+  `exec`s the CLI, so 4 arrives at the UI as 4. A unit test of the Electron
+  side covers the pass-through.
+- The UI treats 4 as "finished, some components failed", not as an error:
+  the log ends with that sentence, the Update screen lists every failed
+  component with its reason (and skipped ones with theirs), and the Home
+  screen marks the failed tiles and says how many failed in its top line.
+- **Without #79** the fields are absent and the UI shows exactly what it
+  showed before: no outcome list, tiles by status only. On such a version a
+  failing component still makes `apply` exit 1, which the UI reports as a
+  failure. Both shapes are in the mock (`?legacy` in the dev URL gives the
+  old one).
+- Not tested against the real #79 output: the field names above were read
+  from that branch's `lib/status.sh` and documentation, and the mock
+  imitates them.
 
 ## 4. Security of the privileged path
 
@@ -259,7 +314,7 @@ deck ALL=(root) NOPASSWD: AX20_CONTROL_CENTER
 |---|---|---|
 | Only a fixed list of operations | The helper compares its single argument against five words and replaces it with constants (`set -- self-update --check`) before anything is executed. | bats: each word maps to its command line; more than 20 other inputs are refused |
 | sudo allows no extra arguments | Each sudoers entry is the helper path **plus one word**. In sudoers, a command given with arguments matches only that exact argument list; a bare path would allow any. No wildcards. | bats: file content compared; no `*`, `?`, `[`; every mention of the helper is followed by exactly one word; list equals the helper's list |
-| No user-controlled string reaches a shell | The argument is never expanded into a command, never passed to the CLI, never logged. The helper has no `eval` and sources nothing. The Rust side starts `sudo` with an argument vector (no shell) and also picks the word from its own constants. | bats: `status; id`, `$(id)`, backticks, `--root /`, newline, extra arguments → exit 64 and the CLI is not started; `cargo test` for the Rust list |
+| No user-controlled string reaches a shell | The argument is never expanded into a command, never passed to the CLI, never logged. The helper has no `eval` and sources nothing. The Electron main process starts `sudo` with `spawn`, an argument vector and no shell, and also picks the word from its own constants. | bats: `status; id`, `$(id)`, backticks, `--root /`, newline, extra arguments → exit 64 and the CLI is not started; `npm test` for the Electron list (7 tests, including objects, arrays and prototype names as input) |
 | Clean environment and PATH | sudo: `env_reset`, `!setenv`, `secure_path`. Helper: sets `PATH` and `IFS` first, uses absolute paths for every tool, and starts the CLI with `env -i PATH=… HOME=/root LANG=C LC_ALL=C`. `AX20_ROOT`, `AX20_SRC`, `AX20_DRY_RUN`, `BASH_ENV`, `LD_PRELOAD`, `GIT_DIR` … never arrive. | bats: the CLI stand-in dumps its environment; none of 13 planted variables is in it |
 | The helper cannot be reconfigured | Its paths are constants in the file. There is no option, no config file, no environment switch (the tests run a copy with the constant lines rewritten; the shipped file is also tested, with the same variables planted in the environment). | bats |
 | Everything it executes is root-owned and not writable by `deck` | At every call, before running anything: each directory from the checkout up to `/` (on the **real** path, because `/var/lib/ally-x20-steamos` is a symlink into `/home/.ally-x20-steamos`), every file and directory inside the checkout including `.git`, and the pinned keys must be owned by root and not group- or world-writable. Otherwise exit 77. | bats: group-writable file, world-writable file, writable directory inside and above, writable key, symlinked state directory |
@@ -310,7 +365,7 @@ login) can, without the password:
   with a known bug could be brought back). It cannot reach older versions:
   each rollback swaps the same two commits;
 - do any of these repeatedly (wasting time and flash writes; changing
-  operations are serialised by the lock).
+  operations are serialized by the lock).
 
 It **cannot** run another command as root, pass options, point the CLI at
 another root (`--root`), another checkout or other keys, or change the
@@ -324,13 +379,17 @@ Honest limits:
   code paths.
 - If the update channel was set to `beta` on the device (by root, earlier),
   `update` follows `beta`, where signatures are optional
-  ([self-update.md](self-update.md)). The helper cannot change the channel;
-  it also does not force `stable`. Open question 4.
+  ([self-update.md](self-update.md)). The helper cannot change the channel,
+  and by decision 3 it does not force `stable`: the device's own setting
+  decides.
 - `deck` is in `wheel`. Whoever knows the `deck` password is root anyway;
   the drop-in adds nothing for them. It matters for code that runs as
   `deck` *without* knowing the password.
 - sudo's rule cannot tell the UI from any other process of `deck`. polkit
   could restrict to the active local session (section 3).
+- The Electron lockdown (section 3) protects the page from loading or
+  running foreign content. It adds nothing against another process of
+  `deck`, which can call `sudo` itself; the helper is the boundary.
 
 ### The drop-in cannot lock sudo
 
@@ -399,9 +458,12 @@ with the password.
 - Update: check, update, apply, rollback, with the CLI's output as it runs.
   Update and rollback ask for a second press. B does not leave while an
   operation runs.
-- Missing for a usable v1: the Linux build and AppImage (CI), a CLI command
-  that downloads/places the AppImage and adds the shortcut, the device gate
-  of section 1, a "reboot now" prompt after an update that needs one.
+- Per-component outcome of the last apply, with the reason for a failure,
+  once the installed version reports it ([Partial updates](#partial-updates)).
+- Missing for a usable v1: an AppImage build in CI and a place to download
+  it from, a CLI command that fetches/places it and adds the shortcut, the
+  first start on the device, a "reboot now" prompt after an update that
+  needs one.
 
 ### Later
 
@@ -410,7 +472,7 @@ with the password.
 | project status | `status` | **`--json`** | nothing |
 | drift report | `audit` | **`--json`** | a helper operation |
 | update check | `self-update --check` | text; result also in `state/last-update-check` and in `status --json` (`last_update_check`) | fine as is |
-| update / apply / rollback | `self-update`, `apply` | log text, exit status | progress as JSON lines would allow a progress bar |
+| update / apply / rollback | `self-update`, `apply` | log text, exit status; per-component outcomes in `status --json` with PR #79 | progress as JSON lines would allow a progress bar |
 | "has stock caught up?" | `probe` | text | `--json` |
 | power profile, TDP slider on/off | `power` | text | `--json` for reading; **setting takes an argument**, so the helper needs a closed list per value (e.g. `power-tdp-slider-on`), never a free string |
 | Xbox-button light | `xbox-led on|off|brightness 0-3|breathe on|off` | text | same: one helper word per allowed value |
@@ -423,26 +485,29 @@ listed in the sudoers alias**; a value that cannot be enumerated (free
 text, paths) does not go through the helper. A test already fails if the
 helper's list and the sudoers list differ.
 
-## 6. Open questions for the owner
+## 6. Decisions
 
-1. **Tauri with the device gate, or Electron straight away?** Tauri is
-   ~70 MB against ~130 MB and matches the request, but is unproven under
-   gamescope; Electron is proven by HHD. The UI code is the same.
-2. **Turn the component on by default later?** Now it is opt-in. Default-on
+Made by the owner on 2026-11-20, after the first version of this page.
+
+| # | question | decision |
+|---|---|---|
+| 1 | Tauri (smaller, unproven under gamescope) or Electron (larger, proven)? | **Electron.** "Let's just use what is already proven." Section 1. |
+| 2 | Is `rollback` in the passwordless set? | **Yes, it stays.** The one-step downgrade it allows is accepted (section 4). |
+| 3 | Should `update` through the helper force the stable channel? | **No.** It updates in place on whatever channel the device is set to. If part of an update cannot be applied, that component fails and the error is reported; the rest still goes through. Depends on PR #79 for the "rest goes through" part ([Partial updates](#partial-updates)). |
+| 4 | Is the user `deck` hard-coded in the sudoers file? | **Yes.** The file stays static and explicit, which is also what lets the tests run `visudo` on it. |
+
+## 7. Open questions
+
+1. **Turn the component on by default later?** Now it is opt-in. Default-on
    would put a NOPASSWD rule on every install.
-3. **Is `rollback` wanted in the passwordless set?** It is the one
-   operation that lets a `deck` process downgrade (one step). It could
-   stay CLI-only.
-4. **Should `update` through the helper force the stable channel**, even
-   when the device is set to beta?
-5. **`deck` hard-coded in the rule.** SteamOS's user is always `deck`; a
-   static file is what allows checking it in CI. A different user name
-   would need a rendered file.
-6. **Which press opens it?** Armoury Crate short press (`KeyF16`) looks
+2. **Which press opens it?** Armoury Crate short press (`KeyF16`) looks
    free upstream; what this project's own profile does with it must be
    checked against [inputplumber.md](inputplumber.md) and on the device.
-7. **Name.** "Control Center" is used here; the product name of the ASUS
+3. **Name.** "Control Center" is used here; the product name of the ASUS
    software is deliberately not.
+4. **Where does the AppImage come from?** A release asset built by CI is
+   the obvious answer (as with the kernel modules); it then needs the same
+   trust story as `self-update` (a checksum in the signed tag, for example).
 
 ## Sources
 
@@ -454,11 +519,9 @@ Tauri / WebKitGTK
 - [T2] Tauri AppImage guide (size "2-6 MB … to 70+ MB", glibc of the build host): <https://v2.tauri.app/distribute/appimage/>
 - [T3] Tauri bundler, AppImage (copies WebKit processes): <https://github.com/tauri-apps/tauri/blob/dev/crates/tauri-bundler/src/bundle/linux/appimage/linuxdeploy.rs>
 - [T4] Tauri, Linux graphics workarounds: <https://v2.tauri.app/develop/debug/linux-graphics/>
-- [T5] gilrs-based gamepad plugin for Tauri 2: <https://github.com/DeveloperMindset-com/tauri-plugin-gamepad>
 - [T6] Tauri Flatpak guide: <https://v2.tauri.app/distribute/flatpak/>
 - [T7] A Tauri Flatpak needing `--device=input`: <https://github.com/PhilipK/BoilR/pull/523>
 - [T8] Transparent window bug on Linux: <https://github.com/tauri-apps/tauri/issues/14924>
-- [T9] Portable AppImage rework (draft): <https://github.com/tauri-apps/tauri/pull/12491>
 - [W1] WebKitGTK gamepad support uses libmanette: <https://lore.kernel.org/all/20220823203346.AAB3287BEE@busybox.osuosl.org/T/>; Arch package dependency: <https://archlinux.org/packages/extra/x86_64/webkit2gtk-4.1/>
 - [W2] WebKit bug 258264, "[GTK] gamepad API does not work" (fixed 2024-01): <https://bugs.webkit.org/show_bug.cgi?id=258264>
 - [W3] WebKit bug 298310 (axes but no button events): <https://bugs.webkit.org/show_bug.cgi?id=298310>
@@ -478,7 +541,7 @@ gamescope, overlays
 
 Handheld Daemon
 - [H1] hhd-ui release v3.4.2, `hhd-ui.AppImage` 131.2 MB: <https://github.com/hhd-dev/hhd-ui/releases/latest>
-- [H2] hhd-ui is React + Vite in Electron: <https://github.com/hhd-dev/hhd-ui/blob/main/package.json>, <https://github.com/hhd-dev/hhd-ui/blob/main/electron/main.js>
+- [H2] hhd-ui is React + Vite in Electron (`electron-builder`, Linux target AppImage; fullscreen, `transparent: true` in overlay mode, no Chromium switches): <https://github.com/hhd-dev/hhd-ui/blob/main/package.json>, <https://github.com/hhd-dev/hhd-ui/blob/main/electron/package.json>, <https://github.com/hhd-dev/hhd-ui/blob/main/electron/main.js>
 - [H3] hhd overlay plugin at fd72e75 (`x11.py`, `overlay.py`, `controllers.py`, `base.py`): <https://github.com/hhd-dev/hhd/tree/fd72e7550e4f13b98678b63566d5d51f00f2464f/src/hhd/plugins/overlay>
 - [H4] hhd installer (AppImage to `~/.local/bin/hhd-ui`; refuses SteamOS by default): <https://github.com/hhd-dev/hhd/blob/master/install.sh>
 - [H5] `hhd@.service`: <https://github.com/hhd-dev/hhd/blob/master/usr/lib/systemd/system/hhd@.service>
@@ -492,6 +555,10 @@ InputPlumber (at 0f4b199)
 Decky
 - [D1] Decky Loader README: <https://github.com/SteamDeckHomebrew/decky-loader/blob/main/README.md>
 - [D2] Decky plugin flags (`root`): <https://wiki.deckbrew.xyz/plugin-dev/getting-started>
+
+Electron
+- Security checklist (context isolation, sandbox, navigation, CSP): <https://www.electronjs.org/docs/latest/tutorial/security>
+- electron-builder, AppImage target: <https://www.electron.build/appimage>
 
 sudo
 - sudoers(5), "Sudoers file format" (last match wins; arguments in a command specification; `@includedir` skips names with a `.`): <https://www.sudo.ws/docs/man/sudoers.man/>

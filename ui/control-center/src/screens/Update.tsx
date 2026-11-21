@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Update: check, update, apply, rollback, with the output of the CLI below.
 import { useEffect, useRef, useState } from "react";
-import { backend, explainExit, type LogLine, type Operation, type Status } from "../backend";
+import { backend, explainExit, failedComponents, hasApplyOutcomes, outcomeOf, type LogLine, type Operation, type Status } from "../backend";
 import { Tile } from "../Tile";
 
 type Action = Exclude<Operation, "status">;
@@ -46,7 +46,12 @@ export function Update({ status, onChanged, onBusy }: Props) {
     append({ op, stream: "ui", line: `$ ${op}` });
     try {
       const r = await backend.run(op, append);
-      append({ op, stream: "ui", line: r.code === 0 ? "done" : `failed: ${explainExit(r.code)}` });
+      const outcome = outcomeOf(r.code);
+      append({
+        op,
+        stream: "ui",
+        line: outcome === "ok" ? "done" : outcome === "partial" ? `${explainExit(r.code)}; the rest was applied` : `failed: ${explainExit(r.code)}`,
+      });
     } catch (e) {
       append({ op, stream: "ui", line: `failed: ${String(e)}` });
     } finally {
@@ -57,6 +62,8 @@ export function Update({ status, onChanged, onBusy }: Props) {
   };
 
   const check = status?.last_update_check;
+  const failed = failedComponents(status);
+  const skipped = status ? status.components.filter((c) => c.last_apply === "skipped") : [];
 
   return (
     <>
@@ -91,6 +98,30 @@ export function Update({ status, onChanged, onBusy }: Props) {
       <p className="detail" aria-live="polite">
         {armed ? "Press A again to confirm, or move away to cancel." : help}
       </p>
+
+      {hasApplyOutcomes(status) && (failed.length > 0 || skipped.length > 0) && (
+        <section className={`outcomes ${failed.length > 0 ? "is-alert" : ""}`} aria-label="Last apply">
+          <h2>
+            {failed.length > 0 ? `Last ${status?.last_apply?.command ?? "apply"}: ${failed.length} failed, the rest went through` : "Last apply"}
+          </h2>
+          <ul>
+            {failed.map((c) => (
+              <li key={c.name}>
+                <span className="outcome-word outcome-failed">failed</span>
+                <span className="outcome-name">{c.name}</span>
+                <span className="outcome-reason">{c.last_apply_reason || "no reason recorded"}</span>
+              </li>
+            ))}
+            {skipped.map((c) => (
+              <li key={c.name}>
+                <span className="outcome-word">skipped</span>
+                <span className="outcome-name">{c.name}</span>
+                <span className="outcome-reason">{c.last_apply_reason}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <div className="log" data-focusable tabIndex={0} role="log" aria-label="Output">
         {log.length === 0 && <div className="log-empty">Output appears here.</div>}

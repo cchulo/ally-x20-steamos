@@ -4,7 +4,7 @@ import { Icon } from "./icons";
 interface TileProps {
   icon: string;
   label: string;
-  /** Short state word shown in the accent colour above the label ("Active", "Off"). */
+  /** Short state word shown in the accent color above the label ("Active", "Off"). */
   state?: string;
   /** Dim the state word (nothing to act on). */
   muted?: boolean;

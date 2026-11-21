@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Home: version, kernel and module state, and one tile per component.
 import { useState } from "react";
-import type { Status } from "../backend";
+import { failedComponents, type ComponentStatus, type Status } from "../backend";
 import { Icon } from "../icons";
 import { Tile } from "../Tile";
 
@@ -15,6 +15,10 @@ const STATE_WORD: Record<string, string> = {
 };
 
 function updateLine(s: Status): string {
+  const failed = failedComponents(s);
+  if (failed.length > 0) {
+    return `Last ${s.last_apply?.command ?? "apply"}: ${failed.length} of ${s.components.length} components failed`;
+  }
   const c = s.last_update_check;
   if (!c) return "Updates: never checked";
   switch (c.result) {
@@ -27,6 +31,22 @@ function updateLine(s: Status): string {
     default:
       return "Up to date";
   }
+}
+
+/** The state word of a component tile; a failed last apply wins over the status. */
+function stateWord(c: ComponentStatus): string {
+  if (c.last_apply === "failed") return "Failed";
+  return STATE_WORD[c.status] ?? c.status;
+}
+
+/** The line under the grid for a component; adds the last outcome when the status has one. */
+function componentDetail(c: ComponentStatus): string {
+  let line = `${c.name}: ${c.description}`;
+  if (c.last_apply) {
+    line += ` · last apply: ${c.last_apply}`;
+    if (c.last_apply_reason) line += ` (${c.last_apply_reason})`;
+  }
+  return line;
 }
 
 export function Home({ status, error, onOpenUpdate }: { status: Status | null; error: string | null; onOpenUpdate: () => void }) {
@@ -45,7 +65,7 @@ export function Home({ status, error, onOpenUpdate }: { status: Status | null; e
 
   return (
     <>
-      <button type="button" className="banner" data-focusable data-autofocus="" onClick={onOpenUpdate}>
+      <button type="button" className={`banner ${failedComponents(status).length > 0 ? "is-alert" : ""}`} data-focusable data-autofocus="" onClick={onOpenUpdate}>
         <span>{updateLine(status)}</span>
         <Icon name="chevron" size={20} />
       </button>
@@ -87,9 +107,10 @@ export function Home({ status, error, onOpenUpdate }: { status: Status | null; e
             key={c.name}
             icon={c.name}
             label={c.name}
-            state={STATE_WORD[c.status] ?? c.status}
-            muted={c.status === "superseded" || c.status === "off"}
-            onFocus={() => setDetail(`${c.name}: ${c.description}`)}
+            state={stateWord(c)}
+            selected={c.last_apply === "failed"}
+            muted={c.last_apply !== "failed" && (c.status === "superseded" || c.status === "off")}
+            onFocus={() => setDetail(componentDetail(c))}
           />
         ))}
       </section>

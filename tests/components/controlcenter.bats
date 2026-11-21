@@ -204,14 +204,29 @@ deck ALL=(root) NOPASSWD: AX20_CONTROL_CENTER"
     [ "$in_sudoers" = "$in_helper" ]
 }
 
-@test "the UI's operation lists (Rust shell, TypeScript) are the helper's" {
+@test "the UI's operation lists (Electron main process, page) are the helper's" {
     in_helper=$(sed -n '/^case "\$1" in$/,/^esac$/p' "$SHIPPED" | sed -n 's/^    \([a-z]*\)).*/\1/p' | sort | tr '\n' ' ')
     ui="$REPO_ROOT/ui/control-center"
-    in_rust=$(grep '^const OPERATIONS' "$ui/src-tauri/src/main.rs" | grep -o '"[a-z]*"' | tr -d '"' | sort | tr '\n' ' ')
-    in_ts=$(grep '^export const OPERATIONS' "$ui/src/backend.ts" | grep -o '"[a-z]*"' | tr -d '"' | sort | tr '\n' ' ')
-    [ "$in_rust" = "$in_helper" ]
-    [ "$in_ts" = "$in_helper" ]
-    grep -q '^const HELPER: &str = "/etc/ally-x20-steamos/control-center-helper";$' "$ui/src-tauri/src/main.rs"
+    in_main=$(grep '^export const OPERATIONS' "$ui/electron/operations.ts" | grep -o '"[a-z]*"' | tr -d '"' | sort | tr '\n' ' ')
+    in_page=$(grep '^export const OPERATIONS' "$ui/src/backend.ts" | grep -o '"[a-z]*"' | tr -d '"' | sort | tr '\n' ' ')
+    [ -n "$in_helper" ]
+    [ "$in_main" = "$in_helper" ]
+    [ "$in_page" = "$in_helper" ]
+    grep -qx 'export const HELPER = "/etc/ally-x20-steamos/control-center-helper";' "$ui/electron/operations.ts"
+    grep -qx 'export const SUDO = "/usr/bin/sudo";' "$ui/electron/operations.ts"
+}
+
+@test "the Electron window is sandboxed, isolated and without Node integration" {
+    m="$REPO_ROOT/ui/control-center/electron/main.ts"
+    grep -q 'contextIsolation: true' "$m"
+    grep -q 'nodeIntegration: false' "$m"
+    grep -q 'sandbox: true' "$m"
+    grep -q 'app.enableSandbox()' "$m"
+    grep -q 'setWindowOpenHandler(() => ({ action: "deny" }))' "$m"
+    grep -q '"will-navigate", (e) => e.preventDefault()' "$m"
+    # no remote module, no shell, no loading of a URL
+    run grep -nE '@electron/remote|enableRemoteModule|shell: true|loadURL|exec\(|execSync|shell\.open' "$m" "$REPO_ROOT/ui/control-center/electron/operations.ts" "$REPO_ROOT/ui/control-center/electron/preload.ts"
+    assert_failure
 }
 
 @test "sudoers: file name has no dot (sudo skips those) and sorts after 'wheel' (last match wins)" {

@@ -139,6 +139,48 @@ button {
   text-align: left;
 }
 
+.banner.is-alert {
+  border-color: var(--accent);
+  background: var(--accent-fill);
+}
+
+.outcomes {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--tile-border);
+  font-size: 0.85rem;
+}
+.outcomes.is-alert {
+  border-color: var(--accent);
+}
+.outcomes h2 {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.outcomes ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 3px;
+}
+.outcomes li {
+  display: grid;
+  grid-template-columns: 4.5em 8em 1fr;
+  gap: 8px;
+}
+.outcome-word {
+  color: var(--text-dim);
+}
+.outcome-failed {
+  color: var(--accent);
+}
+.outcome-reason {
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
 .group {
   padding: 16px 16px 14px;
   border-radius: var(--radius);
@@ -215,6 +257,10 @@ button {
   color: var(--text);
 }
 .tile-mode.is-selected .tile-box {
+  background: var(--accent-fill);
+  border-color: var(--accent);
+}
+.tile-grid.is-selected {
   background: var(--accent-fill);
   border-color: var(--accent);
 }

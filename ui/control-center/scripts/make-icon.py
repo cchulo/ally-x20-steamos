@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Draw the app icon (src-tauri/icons/icon.png) from scratch.
+"""Draw the app icon (assets/icon.png) from scratch.
 
 An original mark for this project: a dark rounded square with a 2x2 grid of
 tiles, one of them red (the "selected" tile of the panel). Standard library
@@ -56,7 +56,7 @@ def main():
     png += chunk(b"IHDR", struct.pack(">IIBBBBB", SIZE, SIZE, 8, 6, 0, 0, 0))
     png += chunk(b"IDAT", zlib.compress(bytes(raw), 9))
     png += chunk(b"IEND", b"")
-    out = Path(__file__).resolve().parent.parent / "src-tauri" / "icons" / "icon.png"
+    out = Path(__file__).resolve().parent.parent / "assets" / "icon.png"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(png)
     print(f"wrote {out} ({SIZE}x{SIZE}, {len(png)} bytes)")

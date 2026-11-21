@@ -204,6 +204,16 @@ deck ALL=(root) NOPASSWD: AX20_CONTROL_CENTER"
     [ "$in_sudoers" = "$in_helper" ]
 }
 
+@test "the UI's operation lists (Rust shell, TypeScript) are the helper's" {
+    in_helper=$(sed -n '/^case "\$1" in$/,/^esac$/p' "$SHIPPED" | sed -n 's/^    \([a-z]*\)).*/\1/p' | sort | tr '\n' ' ')
+    ui="$REPO_ROOT/ui/control-center"
+    in_rust=$(grep '^const OPERATIONS' "$ui/src-tauri/src/main.rs" | grep -o '"[a-z]*"' | tr -d '"' | sort | tr '\n' ' ')
+    in_ts=$(grep '^export const OPERATIONS' "$ui/src/backend.ts" | grep -o '"[a-z]*"' | tr -d '"' | sort | tr '\n' ' ')
+    [ "$in_rust" = "$in_helper" ]
+    [ "$in_ts" = "$in_helper" ]
+    grep -q '^const HELPER: &str = "/etc/ally-x20-steamos/control-center-helper";$' "$ui/src-tauri/src/main.rs"
+}
+
 @test "sudoers: file name has no dot (sudo skips those) and sorts after 'wheel' (last match wins)" {
     name=$(basename "$SUDOERS")
     case "$name" in *.* | *~) false ;; esac

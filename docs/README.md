@@ -26,6 +26,7 @@ Developer-facing:
 | [architecture.md](architecture.md) | CLI, fixture-root contract, component model, manifest, state dir |
 | [contributing.md](contributing.md) | rules, workflow, dev host setup |
 | [vm-testing.md](vm-testing.md) | QEMU/KVM harness, what each VM check proves |
+| [control-center.md](control-center.md) | the Game Mode panel (design and first slice): stack choice, how overlays work under gamescope, the root helper and its sudo rule, threat model, roadmap; UI sources in [`../ui/control-center/`](../ui/control-center/README.md) |
 | [etc-survival.md](etc-survival.md) | measurement template for `/etc` carry-over across slots |
 | [hardware-data.md](hardware-data.md) | every fact still to be collected on a real X20 (`TODO(hw)`) |
 | [rumble-analysis.md](rumble-analysis.md) | rumble report formats (kernel, InputPlumber, hhd), the kernel magnitude-scaling bug, speaker-hiss hypotheses and the raw-report device test |

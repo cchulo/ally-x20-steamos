@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[package]
+name = "ally-x20-control-center"
+version = "0.1.0"
+description = "Control Center for ally-x20-steamos (status, update, apply, rollback)"
+edition = "2021"
+license = "GPL-2.0-only"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+
+# Size first: this ships to a handheld.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

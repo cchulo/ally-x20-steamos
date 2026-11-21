@@ -121,4 +121,5 @@ modules are staged for it, the update policy (`block` by default), whether
 a post-update reboot check is pending, and the last self-update check. Each component is `active` (installed and
 intact), `stock` (not installed or drifted; the boot service re-applies),
 `superseded` (stock SteamOS now provides it; remove ours with
-`uninstall --superseded`), `n/a` (cannot tell on this machine) or `error`.
+`uninstall --superseded`), `n/a` (cannot tell on this machine), `off` (an opt-in component that has
+not been turned on, such as `controlcenter`) or `error`.

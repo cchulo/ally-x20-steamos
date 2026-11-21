@@ -1,0 +1,351 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Dark, left-docked panel; red accent for the selected state, light blue
+   outline for the controller focus. No external fonts or images. */
+:root {
+  --bg-stage: #05070a;
+  --panel: rgba(22, 24, 28, 0.92);
+  --panel-header: rgba(34, 37, 43, 0.96);
+  --tile: #1d2025;
+  --tile-border: #2c3037;
+  --text: #f1f3f5;
+  --text-dim: #8d939c;
+  --accent: #ff2d46;
+  --accent-fill: rgba(190, 28, 48, 0.42);
+  --focus: #6fd0ff;
+  --radius: 10px;
+  color-scheme: dark;
+  font-family: "Noto Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 17px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  /* In Game Mode the game would be behind the panel; the first version runs
+     as its own full-screen app, so paint a quiet backdrop instead. */
+  background: radial-gradient(120% 90% at 85% 20%, #132034 0%, var(--bg-stage) 60%);
+  color: var(--text);
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.stage {
+  height: 100%;
+  padding: 3vh 0 3vh 3vw;
+  display: flex;
+}
+
+.panel {
+  width: min(680px, 94vw);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid #2a2d33;
+  border-radius: 14px;
+  overflow: hidden;
+  backdrop-filter: blur(14px);
+}
+
+.panel-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 24px;
+  background: var(--panel-header);
+}
+.panel-title {
+  font-size: 1.15rem;
+}
+.panel-sub {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* ---- rail ---- */
+.rail {
+  width: 76px;
+  padding: 18px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.rail-btn {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  border: 2px solid transparent;
+}
+.rail-btn.is-current {
+  color: var(--text);
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: rgba(255, 255, 255, 0.04);
+}
+.rail-gap {
+  flex: 1;
+}
+
+/* ---- content ---- */
+.content {
+  flex: 1;
+  min-width: 0;
+  padding: 18px 20px 12px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px;
+  border-radius: var(--radius);
+  background: #17212b;
+  border: 2px solid var(--tile-border);
+  font-weight: 600;
+  text-align: left;
+}
+
+.group {
+  padding: 16px 16px 14px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--tile-border);
+}
+.group h2 {
+  margin: 0 0 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.group-note {
+  font-weight: 400;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.mode-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+/* ---- tiles ---- */
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  border-radius: var(--radius);
+  border: 2px solid transparent;
+  text-align: center;
+}
+.tile-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+.tile-state {
+  color: var(--accent);
+  font-size: 0.82rem;
+}
+.tile.is-muted .tile-state {
+  color: var(--text-dim);
+}
+
+/* "mode" tiles: a box with the icon, the words below it */
+.tile-mode {
+  padding: 4px 2px 6px;
+  color: var(--text-dim);
+}
+.tile-mode .tile-box {
+  width: 100%;
+  height: 62px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--tile);
+  border: 2px solid var(--tile-border);
+}
+.tile-mode.is-selected {
+  color: var(--text);
+}
+.tile-mode.is-selected .tile-box {
+  background: var(--accent-fill);
+  border-color: var(--accent);
+}
+
+/* "grid" tiles: square, icon above, state word, label */
+.tile-grid {
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  padding: 10px 6px;
+  background: var(--tile);
+  border-color: var(--tile-border);
+}
+.tile-grid .tile-box {
+  margin-bottom: 4px;
+}
+
+.tile:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ---- focus: one rule for everything a controller can reach ---- */
+[data-focusable]:focus {
+  outline: none;
+}
+[data-focusable]:focus,
+.tile-mode:focus .tile-box {
+  border-color: var(--focus);
+}
+.tile-mode:focus {
+  border-color: transparent;
+  color: var(--text);
+}
+.banner:focus,
+.tile-grid:focus,
+.rail-btn:focus,
+.log:focus {
+  box-shadow: 0 0 0 1px var(--focus), 0 0 14px rgba(111, 208, 255, 0.35);
+}
+
+/* ---- text blocks ---- */
+.detail {
+  min-height: 2.6em;
+  margin: 0;
+  padding: 0 4px;
+  color: var(--text-dim);
+  font-size: 0.88rem;
+  line-height: 1.3;
+}
+
+.notice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--tile-border);
+  color: var(--text-dim);
+}
+.notice-error {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.log {
+  flex: 1;
+  min-height: 120px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 2px solid var(--tile-border);
+  background: #0c0e11;
+  font-family: "Noto Sans Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow-y: auto;
+  user-select: text;
+}
+.log-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.log-stderr {
+  color: var(--text-dim);
+}
+.log-ui {
+  color: var(--focus);
+}
+.log-empty {
+  color: var(--text-dim);
+}
+
+/* ---- footer ---- */
+.panel-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 26px;
+  padding: 14px 24px;
+  background: rgba(12, 13, 16, 0.9);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.pad {
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  font: inherit;
+  font-size: 0.8rem;
+  color: #fff;
+}
+.pad-y {
+  background: #b5179e;
+}
+.pad-b {
+  background: #6a4fd8;
+}
+.pad-a {
+  background: #2f6fe0;
+}
+
+@media (max-height: 620px) {
+  :root {
+    font-size: 15px;
+  }
+  .tile-mode .tile-box {
+    height: 50px;
+  }
+}

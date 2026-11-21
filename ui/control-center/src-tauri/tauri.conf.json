@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ally-x20-control-center",
+  "version": "0.1.0",
+  "identifier": "io.github.ally-x20-steamos.control-center",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Control Center",
+        "fullscreen": true,
+        "decorations": false,
+        "resizable": false,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["appimage"],
+    "icon": ["icons/icon.png"],
+    "category": "Utility",
+    "shortDescription": "Control Center for ally-x20-steamos",
+    "license": "GPL-2.0-only"
+  }
+}

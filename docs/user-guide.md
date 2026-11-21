@@ -156,6 +156,7 @@ drivers are ready for it, then one line per part:
 | `stock` | not in place right now (for example after an update); the boot service puts it back |
 | `superseded` | SteamOS now has its own fix; you can remove ours (see [Updating](#updating)) |
 | `n/a` | cannot be checked on this machine |
+| `off` | an optional part that you have not turned on (`controlcenter`, see [control-center.md](control-center.md)) |
 | `error` | something went wrong; see [Troubleshooting](#troubleshooting) |
 
 Then, in Game Mode:

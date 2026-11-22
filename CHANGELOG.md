@@ -8,10 +8,6 @@ pushed, the release job takes that version's section from here
 released: the tests fail for the `VERSION` file, and the release job fails
 for the tag. How to add an entry: [docs/contributing.md](docs/contributing.md#release-notes).
 
-## Unreleased
-
-- **SD Express is marked as not fully supported** (#89): a card can be missing after a long sleep, cards cannot be swapped reliably while the device is on, and a restart has hung. The cause may be the device's firmware or missing kernel support; it is not known yet. The README, the user guide and the component's documentation now say so and point to the issue. Also documented: give each card its own `--label`, since two cards with the same label are taken for one library.
-
 ## v0.2.1 (2026-11-21)
 
 - **HDR in Desktop Mode without a manual build** (component `hdr`). Desktop Mode (KDE) needs a rebuilt libdisplay-info that nothing built or installed until now; `apply` only pointed at a script that cannot be run on the device. Game Mode HDR is unchanged and already worked.

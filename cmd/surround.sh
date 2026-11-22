@@ -58,6 +58,28 @@ _surround_helper() {
     fi
 }
 
+# _surround_installed : the installed helper is there. This command runs as
+# the user, who cannot read the root-owned manifest, so the manifest cannot
+# be what decides it.
+_surround_installed() {
+    [ -x "$(ax20_path "${AX20_EARLY_REL}/surround/x20-surround")" ]
+}
+
+# _surround_print_status : the component's status line. The full check needs
+# the manifest; without read access to it, say only whether the helper is
+# installed.
+_surround_print_status() {
+    local m
+    m=$(ax20_manifest_file)
+    if [ ! -e "$m" ] || [ -r "$m" ]; then
+        printf 'status: %s\n' "$(component_status surround)"
+    elif _surround_installed; then
+        printf "status: installed (run 'sudo %s status' for the full check)\n" "$AX20_NAME"
+    else
+        printf 'status: not installed\n'
+    fi
+}
+
 cmd_surround() {
     component_load surround
     case "${1:-}" in
@@ -80,12 +102,12 @@ cmd_surround() {
         log_error "surround: python3 not found"
         return 1
     fi
-    if { [ "$1" = set ] || [ "$1" = xtc ]; } && ! component_installed surround; then
-        log_error "surround is not installed (status: $(component_status surround)); run 'sudo $AX20_NAME apply --only surround' first"
+    if { [ "$1" = set ] || [ "$1" = xtc ]; } && ! _surround_installed; then
+        log_error "surround is not installed; run 'sudo $AX20_NAME apply --only surround' first"
         return 1
     fi
     if [ "$1" = status ]; then
-        printf 'status: %s\n' "$(component_status surround)"
+        _surround_print_status
     fi
     if [ "$AX20_DRY_RUN" = 1 ] && [ "$1" != status ] && [ "$1" != list ]; then
         printf '[dry-run] surround %s\n' "$*" >&2

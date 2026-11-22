@@ -284,3 +284,29 @@ systemctl --user -M $me@ restart ally-x20-steamos-surround.service" ]
     run "$CLI" --root "$AX20_ROOT" help
     assert_output_contains 'surround'
 }
+
+@test "as the user, with a manifest only root can read: set, xtc and status still work" {
+    [ "$(id -u)" != 0 ] || skip "root can read everything"
+    "$CLI" --root "$AX20_ROOT" apply --only surround 2>/dev/null
+    chmod 000 "$AX20_ROOT/var/lib/ally-x20-steamos/manifest"
+    run "$CLI" --root "$AX20_ROOT" surround set headphones hutubs-pp1-dry
+    chmod 644 "$AX20_ROOT/var/lib/ally-x20-steamos/manifest"
+    assert_success
+    assert_output_contains 'headphones: hutubs-pp1-dry'
+    [ -z "$(printf '%s\n' "$output" | grep -i 'permission denied' || true)" ]
+    chmod 000 "$AX20_ROOT/var/lib/ally-x20-steamos/manifest"
+    run "$CLI" --root "$AX20_ROOT" surround xtc 80 50
+    s1=$status
+    run "$CLI" --root "$AX20_ROOT" surround status
+    chmod 644 "$AX20_ROOT/var/lib/ally-x20-steamos/manifest"
+    [ "$s1" -eq 0 ]
+    assert_success
+    assert_output_contains "status: installed (run 'sudo ally-x20-steamos status' for the full check)"
+    [ -z "$(printf '%s\n' "$output" | grep -i 'permission denied' || true)" ]
+}
+
+@test "surround set before apply says it is not installed" {
+    run "$CLI" --root "$AX20_ROOT" surround set headphones stereo
+    assert_failure
+    assert_output_contains 'surround is not installed'
+}

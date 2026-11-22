@@ -13,7 +13,7 @@ User-facing:
 | [hdr.md](hdr.md) | Desktop and Game Mode HDR, the gamescope profile and wrapper |
 | [power.md](power.md) | Steam's power profiles (measured wattages), why there is no TDP slider (firmware ignores PPT writes), the steamos-manager device file shim, re-testing after a BIOS update, the battery charge limit that is lost at power-off and how `chargelimit` keeps it |
 | [surround.md](surround.md) | virtual 7.1 surround for the built-in headphones and speakers: the profiles, choosing one per output, crosstalk cancellation on the speakers, your own HeSuVi file, how the filter becomes the default output and how it switches, the listening behind the defaults |
-| [sdexpress.md](sdexpress.md) | the SD Express slot: why stock ignores the card (NVMe, not MMC), the swapping `nvmeN` names and root-port matching, the automount rule, `sdexpress format`, migrating from an fstab mount |
+| [sdexpress.md](sdexpress.md) | the SD Express slot: why stock ignores the card (NVMe, not MMC), the swapping `nvmeN` names and root-port matching, the automount rule, `sdexpress format`, migrating from an fstab mount; the open problems with sleep and with swapping cards ([#89](https://github.com/cchulo/ally-x20-steamos/issues/89)) |
 | [kernel-modules.md](kernel-modules.md) | what is rebuilt, when, lockdown, forcing a rebuild |
 | [update-survival.md](update-survival.md) | what a SteamOS update does to us and how we survive it; update policy |
 | [self-update.md](self-update.md) | channels, signed tags, rollback, migrations |

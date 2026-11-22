@@ -31,7 +31,7 @@ override, so read what you run and use it at your own risk.
 | Steam's **Performance** tab has no power profile switch. | **Low power**, **Balanced** and **Performance** profiles are there (about 12, 16-21 and 25-30 W for the processor on battery). Balanced is the default. |
 | The battery stops charging at 80 % although Steam shows no charge limit. | The battery charges to 100 %, or to the charge limit you set in Steam (Settings → Power), and that limit is kept across reboots. |
 | Games only send stereo to the built-in headphone jack and speakers. | Games can send 7.1 and you hear it as virtual surround, on headphones in the jack and on the speakers. It is on after the install; [Sound](#sound-virtual-surround) shows how to pick another profile, use your own (for example Dolby Atmos for Headphones), or go back to plain stereo. |
-| An SD Express card in the slot never shows up, and Steam's **Format** button fails on it. | The card mounts at `/run/media/deck/<label>` when inserted, like a microSD card, and can be added in Settings → Storage. Steam's button still fails for this slot; [format the card from the command line](#sd-express-card). |
+| An SD Express card in the slot never shows up, and Steam's **Format** button fails on it. | The card mounts at `/run/media/deck/<label>` when inserted, like a microSD card, and can be added in Settings → Storage. Steam's button still fails for this slot; [format the card from the command line](#sd-express-card). **Not fully supported:** the card can be missing after a long sleep and cannot be swapped while the device is on ([#89](https://github.com/cchulo/ally-x20-steamos/issues/89)). |
 | Steam's controller screens show a generic handheld outline. | They show the Xbox Ally X, which has the same shell, screen and controls. |
 
 ## What it does not do yet
@@ -363,6 +363,14 @@ plays its charger sound each time.
 More: [power.md](power.md).
 
 ### SD Express card
+
+> **Not fully supported.** The SD Express slot has open problems on the X20:
+> a card can be missing after a long sleep, cards cannot be swapped reliably
+> while the device is on, and a restart has hung. The cause is not known
+> yet; it may be the device's firmware, or kernel support for this slot that
+> is not there yet. Use the slot knowing that, and keep nothing on the card
+> that you cannot download again. Details and progress:
+> [issue #89](https://github.com/cchulo/ally-x20-steamos/issues/89).
 
 A card that is in the SD Express slot at boot mounts by itself at
 `/run/media/deck/<label>`, like a microSD card, and can be added as a

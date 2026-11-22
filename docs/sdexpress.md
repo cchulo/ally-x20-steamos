@@ -7,6 +7,14 @@ like a microSD slot: the card is automounted by the same stock scripts
 SteamOS uses for microSD cards, and `ally-x20-steamos sdexpress format`
 formats it the way Steam's button would.
 
+> **Not fully supported.** The SD Express slot has open problems on the X20:
+> a card can be missing after a long sleep, cards cannot be swapped reliably
+> while the device is on, and a restart has hung. The cause is not known
+> yet; it may be the device's firmware, or kernel support for this slot that
+> is not there yet. Use the slot knowing that, and keep nothing on the card
+> that you cannot download again. Details and progress:
+> [issue #89](https://github.com/cchulo/ally-x20-steamos/issues/89).
+
 Measured on one X20 (BIOS `RC74XA.303`, SteamOS 3.7, 2026-11-05) with a
 SanDisk SD Express card (`ST51271_WDC SanDisk SD Express SDSQXFN`, 456 GiB).
 

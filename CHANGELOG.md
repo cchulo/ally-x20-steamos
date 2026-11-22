@@ -12,7 +12,7 @@ for the tag. How to add an entry: [docs/contributing.md](docs/contributing.md#re
 
 - **`sdexpress format` no longer names every card `sdcard`** (#89): like Steam's own format, it writes no label unless `--label` is given, and the card is mounted under its own unique ID. Two cards formatted before this share the path `/run/media/deck/sdcard`, and Steam takes them for the same library; format one of them again.
 - **SD Express: the card is reported as SD media** (#89): the SD flags are now also set on the card's NVMe controller, where udisks reads them. Steam's Storage page looks the same as before.
-- **SD Express: swapping cards while the device is on is documented as not supported** (#89), and so is a card that is missing after a long sleep. The user guide says what to do.
+- **SD Express is marked as not fully supported** (#89): a card can be missing after a long sleep, cards cannot be swapped reliably while the device is on, and a restart has hung. The cause may be the device's firmware or missing kernel support; it is not known yet. The README, the user guide, the component's documentation and the command's help now say so and point to the issue.
 
 ## v0.2.1 (2026-11-21)
 

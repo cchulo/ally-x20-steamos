@@ -36,7 +36,10 @@ usage: $AX20_NAME sdexpress <command>
                               (e.g. 0000:00:02.2) and re-apply the rule
 
 Needs root (except status, root-port without an argument, and --dry-run).
-See docs/sdexpress.md.
+The slot is not fully supported: a card can be missing after a long sleep and
+cannot be swapped reliably while the device is on (firmware or kernel support
+may be the cause). See docs/sdexpress.md and
+https://github.com/cchulo/ally-x20-steamos/issues/89
 USAGE
 }
 

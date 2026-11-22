@@ -87,7 +87,7 @@ SteamOS updates and troubleshooting: [user guide](docs/user-guide.md),
 | **No power profiles in Steam's Performance menu.** steamos-manager 26.4.1 has no X20 device file. | The upstream steamos-manager RC74XA entry, merged into `/usr/share/steamos-manager/devices` by a boot-time bind mount of a copy in `/run` (nothing written to `/usr`, steps aside once SteamOS ships it): Low power / Balanced / Performance hold the APU at about 12 / 16-21 / 25-30 W on battery. No TDP slider on purpose: BIOS `RC74XA.303` ignores PPT writes (`power tdp-slider on` to re-test; the mainline `asus-armoury` RC74XA table is still built) | `power`, `modules` · [docs/power.md](docs/power.md) |
 | **Battery stops charging at 80 %** with no limit shown in Steam. With its charge limit off, Steam writes `0` ("no limit" on a Steam Deck) to `charge_control_end_threshold`; this firmware takes only `100` as "no limit" and stops at about 80 % with `0`. | A unit writes the recorded limit (100 % when none) before Steam starts, then replaces every `0` by `100` and records a real limit set in Steam, which is left alone; a second unit writes it again after resume; `charge-limit follow\|off\|<20-100>` picks the behaviour | `chargelimit` · [docs/power.md](docs/power.md#10-battery-charge-limit-component-chargelimit) |
 | **Built-in headphones and speakers are stereo only**, so games send a stereo mix. | A user service puts an 8-channel PipeWire sink in front of the built-in output in use and convolves it with a head-related impulse response set; it becomes the default by priority, no default is forced. Four heads, each as `-dry` (fronts unfiltered) and `-full`; `-dry` is recommended on both outputs (by the owner's ear, `-full` makes the fronts sound quieter on the speakers and may suit headphones for sharper positioning). Each output has its own profile: headphones default to `sadie-d2-dry`, speakers to `sadie-d2-dry` with crosstalk cancellation (60 µs, 50 %), which is generated on the device and applies to the speakers only. `surround set <headphones\|speakers> <profile>` switches on the fly, the new filter starting before the old one stops, and `user` takes your own HeSuVi file | `surround` · [docs/surround.md](docs/surround.md) |
-| **SD Express card never mounts; Steam's Format button fails on it.** The card is a PCIe/NVMe device and stock's automount rule only matches `mmcblk*\|sd*`; `format-device.sh` rejects nvme nodes. | One udev rule that hands the card's partitions to the stock `block-device-event.sh` / `holo-automount.sh` (udisks mount at `/run/media/deck/<label>`), matched by the slot's PCIe root port because the card and the SSD swap `nvmeN` names between boots; `sdexpress format` runs the stock format sequence (GPT, ext4 casefold, owned by deck) | `sdexpress` · [docs/sdexpress.md](docs/sdexpress.md) |
+| **SD Express card never mounts; Steam's Format button fails on it.** The card is a PCIe/NVMe device and stock's automount rule only matches `mmcblk*\|sd*`; `format-device.sh` rejects nvme nodes. | One udev rule that hands the card's partitions to the stock `block-device-event.sh` / `holo-automount.sh` (udisks mount at `/run/media/deck/<label>`), matched by the slot's PCIe root port because the card and the SSD swap `nvmeN` names between boots; `sdexpress format` runs the stock format sequence (GPT, ext4 casefold, owned by deck). **Not fully supported:** a card can be missing after a long sleep and cannot be swapped while the device is on; firmware or kernel support may be the cause ([#89](https://github.com/cchulo/ally-x20-steamos/issues/89)) | `sdexpress` · [docs/sdexpress.md](docs/sdexpress.md) |
 | **SteamOS updates wipe out-of-tree changes.** | RAUC pre/post-install handlers, boot service, user notifier; `block`/`degrade` policy when modules cannot be built for an incoming kernel | `update` · [docs/update-survival.md](docs/update-survival.md) |
 
 Audio plays through the hardware sinks as on stock SteamOS. The headphone
@@ -141,7 +141,7 @@ ally-x20-steamos.sh [--root <dir>] [--dry-run] [--verbose] [--yes] [--i-know] <c
 | `power status\|tdp-slider [on\|off]` | power profiles; the TDP slider test switch (default off) |
 | `charge-limit status\|follow\|off\|<20-100>` | the battery charge limit: 100 % unless one is set in Steam (default), a fixed one, or hands off |
 | `surround status\|list\|set <headphones\|speakers> <profile>\|xtc off\|xtc <delay_us> <strength_pct>\|prepare` | virtual 7.1 surround for the built-in outputs: pick a profile per output, set the speakers' crosstalk cancellation, generate and check its tested settings for the speakers' profile (as the user, no sudo; kept across updates) |
-| `sdexpress status\|format [--label <l>] [--full] [--validate]\|mount\|root-port [<bdf>]` | the SD Express slot: automount state, format a card like Steam does (root; the card is found by PCIe root port, never by `nvmeN`) |
+| `sdexpress status\|format [--label <l>] [--full] [--validate]\|mount\|root-port [<bdf>]` | the SD Express slot: automount state, format a card like Steam does (root; the card is found by PCIe root port, never by `nvmeN`). The slot is not fully supported, see [#89](https://github.com/cchulo/ally-x20-steamos/issues/89) |
 | `xbox-led on\|off\|brightness <0-3>\|breathe on\|off\|restore\|node` | the Xbox button light (root; kept across reboots: on/off by the patched driver, brightness/breathe by component `xboxled`) |
 | `update-policy show\|block\|degrade [--once]` | what an update does if modules cannot be built |
 | `boot-entry show\|set\|clear\|apply\|restore` | the boot-entry exception (early initrd, cmdline args) |
@@ -228,6 +228,15 @@ flipping between `Connected` and `Disconnected`, or `Connected slow`). Use
 the 65 W charger that came with the device. With the 80 % stop described
 above the loop only shows below 80 %, because above it the device asks for
 nothing; with `chargelimit` installed it shows at any level.
+
+**Can I rely on the SD Express slot?**
+Not fully. A card that is in the slot when the device starts is mounted and
+works, but it can be missing after a long sleep, cards cannot be swapped
+reliably while the device is on, and a restart has hung. The cause may be the
+device's firmware or kernel support for this slot that is not there yet; it
+is not known. Keep nothing on the card that you cannot download again, and
+see [issue #89](https://github.com/cchulo/ally-x20-steamos/issues/89) and the
+[user guide](docs/user-guide.md#sd-express-card).
 
 **Should I add the SD Express card to `/etc/fstab`?**
 No. The `sdexpress` component mounts it at `/run/media/deck/<label>` by

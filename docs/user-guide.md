@@ -14,15 +14,15 @@ everything again. It is not a custom SteamOS image and not a Decky plugin.
 
 **Honest status:** tested on one device only, with BIOS `RC74XA.303`,
 SteamOS 3.9.5 and kernel `7.2.7-valve2`. Other BIOS versions, SteamOS
-versions or kernels may behave differently. It ships patched kernel modules
-and an ACPI table override, so read what you run and use it at your own
-risk.
+versions or kernels may behave differently. Only the SteamOS **stable**
+channel is supported. It ships patched kernel modules and an ACPI table
+override, so read what you run and use it at your own risk.
 
 ## What it fixes
 
 | On stock SteamOS | With ally-x20-steamos |
 |---|---|
-| The speakers are silent ("Dummy Output" or HDMI only). | Both speakers play. Steam's audio output list shows just **Speakers** (plus headphones, HDMI or Bluetooth when connected). |
+| The speakers are silent ("Dummy Output" or HDMI only). | Both speakers play. Steam's audio output list shows one entry for them, **Speakers (Surround - SADIE D2 Dry)** (plus HDMI or Bluetooth when connected). |
 | The Armoury Crate button (top left) and the action button (top right) do nothing. | The **action button** opens Steam's **Quick Access** menu, like the right-hand button of a Steam Deck. **Armoury Crate** is a second **Steam button**, like the Xbox button. A **screenshot** is Xbox button + R1. (Up to v0.1.11 Armoury Crate opened Quick Access and the action button took a screenshot; [you can switch back](#changing-what-the-top-buttons-do).) |
 | Rumble at 100 % feels weak, and strong rumble makes the speakers hiss. | Rumble uses its full range, and the static from the speakers during strong rumble is gone. |
 | The joystick-ring lights cannot be changed from Steam. | **Settings → Customization** in Game Mode shows the joystick-ring lighting (colour and brightness). |
@@ -30,7 +30,7 @@ risk.
 | Game Mode does not detect HDR on the OLED screen and only offers 60 and 120 Hz. | **HDR** is available in Game Mode, and the refresh rate can be set anywhere from 30 to 120 Hz. |
 | Steam's **Performance** tab has no power profile switch. | **Low power**, **Balanced** and **Performance** profiles are there (about 12, 16-21 and 25-30 W for the processor on battery). Balanced is the default. |
 | The battery stops charging at 80 % although Steam shows no charge limit. | The battery charges to 100 %, or to the charge limit you set in Steam (Settings → Power), and that limit is kept across reboots. |
-| Games only send stereo to the built-in headphone jack and speakers. | Games can send 7.1 and you hear it as virtual surround, on headphones in the jack and on the speakers. `./ally-x20-steamos.sh surround list` shows the profiles, and `surround set headphones <profile>` or `surround set speakers <profile>` switches while you play; each output keeps its own choice. The `-dry` profiles are recommended. On the speakers a correction for sound from each speaker reaching the other ear is added (`surround xtc`, `surround xtc off`). `surround set speakers stereo` gives the speakers back as they were. |
+| Games only send stereo to the built-in headphone jack and speakers. | Games can send 7.1 and you hear it as virtual surround, on headphones in the jack and on the speakers. It is on after the install; [Sound](#sound-virtual-surround) shows how to pick another profile, use your own (for example Dolby Atmos for Headphones), or go back to plain stereo. |
 | An SD Express card in the slot never shows up, and Steam's **Format** button fails on it. | The card mounts at `/run/media/deck/<label>` when inserted, like a microSD card, and can be added in Settings → Storage. Format it with `sudo ./ally-x20-steamos.sh sdexpress format` (Steam's button still fails for this slot: it runs a stock script that rejects NVMe devices). |
 | Steam's controller screens show a generic handheld outline. | They show the Xbox Ally X, which has the same shell, screen and controls. |
 
@@ -51,6 +51,12 @@ risk.
 - **Surviving SteamOS updates** is built in and covered by automated tests,
   but it has not yet been through many real SteamOS updates. If something
   stops working after an update, see [Troubleshooting](#troubleshooting).
+- **Virtual surround is new.** On the device so far: the speakers with the
+  default profile and with the owner's own file, the volume range, and the
+  profile commands. Not tried on the device yet: headphones through this
+  component (the profiles were chosen in listening tests on headphones with
+  a separate test tool), plugging headphones in and out, sleep, and whether
+  Steam's list really drops the plain "Speakers" entry.
 - Some details are still unconfirmed on the hardware, for example the
   long-press actions of the two extra buttons and the motion sensor axes.
   The button layout that came after v0.1.11 (action button = Quick Access,
@@ -166,7 +172,9 @@ drivers are ready for it, then one line per part:
 Then, in Game Mode:
 
 - **Speakers:** play a video or a game. Steam's audio output (Settings →
-  Audio) should show **Speakers**.
+  Audio) should show **Speakers (Surround - SADIE D2 Dry)** as the default,
+  and the volume keys should reach full volume.
+- **Battery:** on the charger above 80 %, it keeps charging.
 - **Buttons:** press the action button (top right): Quick Access opens.
   Press Armoury Crate (top left) or the Xbox button: the Steam menu opens.
   Hold the Xbox button and press R1: a screenshot is taken.
@@ -196,6 +204,139 @@ is kept across reboots and updates. Armoury Crate is planned to open a
 settings screen of this project in a later version; until then it is a
 second Steam button, and because the controller only reports it when it is
 released, use the Xbox button for Steam chords such as the screenshot.
+
+## Everyday settings
+
+Run these from the installed copy (`cd /var/lib/ally-x20-steamos/src`).
+Commands with `sudo` ask for your password; the `surround` commands run
+without it.
+
+### Sound: virtual surround
+
+After the install, sound from the built-in speakers and from headphones in
+the jack goes through a virtual surround output. Steam's audio output list
+shows it under a name like **Speakers (Surround - SADIE D2 Dry)**, and the
+plain "Speakers" entry is gone. Leave Steam's output on **Default**: it
+then follows you when you plug headphones in or out.
+
+A game decides between stereo and 7.1 when it starts, so restart a game
+after you change from stereo to surround or back.
+
+| I want to | Command |
+|---|---|
+| see what is in use | `./ally-x20-steamos.sh surround status` |
+| see the profiles | `./ally-x20-steamos.sh surround list` |
+| pick a profile for the speakers | `./ally-x20-steamos.sh surround set speakers hutubs-pp1-dry` |
+| pick a profile for headphones | `./ally-x20-steamos.sh surround set headphones mit-kemar-dry` |
+| plain stereo on the speakers | `./ally-x20-steamos.sh surround set speakers stereo` (shows as **Speakers (Stereo)**) |
+| go back to the default | `./ally-x20-steamos.sh surround set speakers sadie-d2-dry` |
+
+Each output keeps its own profile, and a change takes effect within a few
+seconds while a game is running.
+
+**Which profile?** A profile is a recording of how sound reaches the two
+ears of one head, so the one closest to your ears works best: try them.
+Each comes as `-dry` and `-full`. **`-dry` is recommended** and is the
+default on both outputs: music and other stereo sound stay as they are, and
+only what is meant to be beside or behind you is processed. `-full`
+processes everything; it places sounds more sharply on headphones, changes
+the tone of everything, and on the speakers it makes the front sound
+quieter.
+
+**The speakers have one more setting.** From two speakers each ear also
+hears the other speaker, which weakens the effect. A correction for that is
+on by default (delay 60, strength 50):
+
+```sh
+./ally-x20-steamos.sh surround xtc 80 50     # another setting: delay, strength
+./ally-x20-steamos.sh surround xtc off       # no correction
+./ally-x20-steamos.sh surround xtc 60 50     # the default
+./ally-x20-steamos.sh surround prepare       # list the tested settings for your profile
+```
+
+**Volume** works as before: the volume keys and Steam's slider go from
+silent to full.
+
+**If you want the plain outputs back in Steam's list:**
+`./ally-x20-steamos.sh surround plain shown` (and `plain hidden` to undo).
+Steam may need a restart before it lists them again.
+
+#### Your own profile, for example Dolby Atmos for Headphones
+
+Any HeSuVi impulse response file works: a `.wav` with 14 channels at
+48 kHz. Such files are not included because they are not ours to pass on.
+The owner's Atmos file came from the HRIR collection at
+<https://airtable.com/appayGNkn3nSuXkaz/shruimhjdSakUPg2m/tbloLjoZKWJDnLtTc>.
+
+1. Copy the file to the device, into
+   `~/.config/ally-x20-steamos/surround-user/`. From another computer:
+
+   ```sh
+   ssh deck@<device> 'mkdir -p ~/.config/ally-x20-steamos/surround-user'
+   scp atmos.wav deck@<device>:.config/ally-x20-steamos/surround-user/
+   ```
+
+   Keep one `.wav` in that folder. With several, the first in alphabetical
+   order is used.
+2. Select it for both outputs:
+
+   ```sh
+   ./ally-x20-steamos.sh surround set headphones user
+   ./ally-x20-steamos.sh surround set speakers user
+   ```
+
+3. Prepare the speaker versions (about half a minute for a long file; the
+   headphones need nothing):
+
+   ```sh
+   ./ally-x20-steamos.sh surround prepare
+   ```
+
+4. Check: `./ally-x20-steamos.sh surround status` shows `user` with your
+   file's name, and Steam's list shows **Speakers (Surround - User)**. If it
+   says `user -> sadie-d2-dry`, the note under it says what is wrong with
+   the file.
+
+More, including how it works: [surround.md](surround.md).
+
+### Power and battery
+
+**Power profiles.** Quick Access → Performance has **Low power**,
+**Balanced** and **Performance** (about 12, 16-21 and 25-30 W for the
+processor on battery). There is no TDP slider, on purpose: this BIOS
+ignores it.
+
+**Charging to 100 %.** Stock SteamOS on this device stops charging at about
+80 % even with no charge limit set. With ally-x20-steamos the battery
+charges to 100 %.
+
+**A charge limit of your own.** Set it in Steam (Settings → Power). It is
+respected and kept across reboots. Turning it off there goes back to
+100 %.
+
+```sh
+sudo ./ally-x20-steamos.sh charge-limit status   # what is in force
+sudo ./ally-x20-steamos.sh charge-limit 80       # last resort: a limit without Steam
+sudo ./ally-x20-steamos.sh charge-limit follow   # back to the default
+```
+
+Once the battery has been full, the device itself may stop charging between
+90 % and 100 % and resume later. That is its own battery protection and is
+expected.
+
+**Use the 65 W charger that came with the device.** With a charger that is
+too weak, or a cable that does not carry the power, the device beeps and
+rumbles every few seconds, because the connection keeps dropping and Steam
+plays its charger sound each time.
+
+More: [power.md](power.md).
+
+### Buttons and the Xbox light
+
+- The two top buttons: [Changing what the top buttons do](#changing-what-the-top-buttons-do).
+- The Xbox button light: `sudo ./ally-x20-steamos.sh xbox-led on` (or
+  `off`), `xbox-led brightness 0-3`, `xbox-led breathe on|off`. It is kept
+  across reboots and sleep.
 
 ## Updating
 
@@ -319,6 +460,28 @@ sudo reboot
 
 If the buttons are still wrong, re-apply the controller profile too:
 `sudo ./ally-x20-steamos.sh apply --only inputplumber`, then reboot.
+
+**No sound, or the sound is wrong, and you want plain SteamOS audio back
+right now.** Stop the surround service; the plain speakers and headphones
+take over at once:
+
+```sh
+systemctl --user stop ally-x20-steamos-surround.service
+```
+
+It starts again at the next login. To keep surround off, choose stereo for
+both outputs (`surround set speakers stereo`, `surround set headphones
+stereo`). If Steam's output list is empty or missing "Speakers" afterwards,
+restart the audio services:
+`systemctl --user restart pipewire pipewire-pulse wireplumber`.
+
+**The battery stops at 80 %.** Run
+`sudo ./ally-x20-steamos.sh charge-limit status`. `in_force` should be
+100 %, or the limit you set in Steam. If it says about 80 %, run
+`sudo ./ally-x20-steamos.sh apply --only chargelimit`.
+
+**The device beeps and rumbles every few seconds on the charger.** The
+charger or cable is too weak; see [Power and battery](#power-and-battery).
 
 **Power profiles missing in the Performance tab.** Run
 `sudo ./ally-x20-steamos.sh power status`, then restart Steam or reboot

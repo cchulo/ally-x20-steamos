@@ -119,6 +119,26 @@ def main():
             time.sleep(0.25)
         return check(False, what)
 
+    def node_id(name):
+        for o in dump():
+            if ((o.get("info") or {}).get("props") or {}).get("node.name") == name:
+                return o.get("id")
+        return None
+
+    def volume(name):
+        """The volume wpctl shows for a node, or None."""
+        ident = node_id(name)
+        if ident is None:
+            return None
+        out = subprocess.run(["wpctl", "get-volume", str(ident)], env=env, check=False,
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode()
+        m = re.search(r"Volume:\s*([0-9.]+)", out)
+        return round(float(m.group(1)), 2) if m else None
+
+    def set_volume(name, value):
+        subprocess.run(["wpctl", "set-volume", str(node_id(name)), "%.2f" % value], env=env,
+                       check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     def helper(*argv):
         return subprocess.run([sys.executable, HELPER] + list(argv), env=env, check=False,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout.decode()
@@ -197,8 +217,16 @@ def main():
         status = helper("status")
         check("speakers   sadie-d2-dry" in status and "not generated yet" in status,
               "defaults: sadie-d2-dry, the speaker variant not generated yet")
+        # the user's volume sits on the hardware sink before the filter exists
+        set_volume(SPEAKERS, 0.50)
+        wait(lambda: volume(SPEAKERS) == 0.50, "the speaker sink is at 0.50 before the filter")
         spawn([sys.executable, HELPER, "run"])
         wait(lambda: ours() == [OURS + "a"], "the surround sink appears as ..._a")
+        wait(lambda: volume(OURS + "a") == 0.50 and volume(SPEAKERS) == 1.00,
+             "the surround sink took the volume (0.50) and the speaker sink is held at 1.00")
+        check((sinks().get(OURS + "a") or {}).get("node.description")
+              == "Speakers (Surround - SADIE D2 Dry)",
+              "the sink is called 'Speakers (Surround - SADIE D2 Dry)'")
         props = sinks().get(OURS + "a") or {}
         check(str(props.get("audio.channels")) == "8" and
               int(props.get("priority.session") or 0) == 713,
@@ -210,7 +238,7 @@ def main():
               "PipeWire loaded the generated crosstalk variant from the cache")
         wait(lambda: default_sink() == OURS + "a", "WirePlumber makes it the default")
         status = helper("status")
-        check("running: Speakers (7.1 surround)" in status and "[in use]" in status
+        check("running: Speakers (Surround - SADIE D2 Dry)" in status and "[in use]" in status
               and "sadie-d2-dry + xtc 60 us / 50 %" in status, "status reports it")
 
         spawn(["pw-cat", "--playback", "--raw", "--format", "s16", "--rate", "48000",
@@ -219,8 +247,15 @@ def main():
         wait(lambda: stream_sinks(dump()) == {OURS + "a"},
              "an 8-channel stream plays into the surround sink")
 
+        set_volume(OURS + "a", 0.40)            # the volume keys move the default sink
+        time.sleep(3)                           # one look of the service, to remember it
         now = hand_over("profile a->b", "profile: hutubs-pp1-dry\n", "set", "speakers",
                         "hutubs-pp1-dry")
+        wait(lambda: volume(now) == 0.40 and volume(SPEAKERS) == 1.00,
+             "the volume (0.40) went along to the new sink; the speaker sink is still at 1.00",
+             timeout=5)
+        check((sinks().get(now) or {}).get("node.description")
+              == "Speakers (Surround - HUTUBS PP1 Dry)", "and it shows the new profile's name")
         check((sinks().get(now) or {}).get("priority.session") == 714,
               "the second slot has priority 714")
         now = hand_over("profile b->a", "profile: mit-kemar-dry\n", "set", "speakers",
@@ -240,6 +275,8 @@ def main():
         wait(lambda: not ours(), "stereo removes the surround sink")
         wait(lambda: default_sink() == SPEAKERS, "the speaker sink is the default again")
         wait(lambda: not filters(), "no filter process is left")
+        wait(lambda: volume(SPEAKERS) == 0.40,
+             "the speaker sink got the volume back (0.40), not left at 1.00", timeout=5)
 
         helper("set", "speakers", "user")
         wait(lambda: len(ours()) == 1 and "sadie-d2-dry.wav" not in conf_of(ours()[0])

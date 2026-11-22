@@ -430,15 +430,15 @@ until the device turns off, then turn it on again.
    sudo ./ally-x20-steamos.sh sdexpress format
    ```
 
-   Options: `--label games` names the card (1 to 16 letters, digits, `.`,
-   `_` or `-`), `--full` also trims the whole card, `--validate` tests the
-   card for fake capacity first (slow).
-6. The card is then mounted under `/run/media/deck/`, in a folder named
-   after your label, or after the card's own unique ID when you gave none.
-   Add it in Steam → Settings → Storage.
+   Options: `--label games` names the card (default `sdcard`; 1 to 16
+   letters, digits, `.`, `_` or `-`), `--full` also trims the whole card,
+   `--validate` tests the card for fake capacity first (slow).
+6. The card is then mounted at `/run/media/deck/sdcard` (or your label). Add
+   it in Steam → Settings → Storage.
 
-If you own two cards that were formatted with v0.2.1 or older, both are
-named `sdcard` and Steam mixes them up. Format one of them again.
+If you own more than one card, give each its own `--label`. Two cards with
+the same name are mounted at the same place and Steam mixes up what is
+installed on them.
 
 The card and the internal drive can swap their `nvme0`/`nvme1` names
 between boots. The command does not go by those names; it finds the card

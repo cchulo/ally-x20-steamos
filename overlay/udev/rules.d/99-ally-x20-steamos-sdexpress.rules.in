@@ -15,17 +15,9 @@
 # a reboot with it present (the internal SSD moved to nvme1n1). The slot's
 # root port (@ROOT_PORT_DEFAULT@; the SSD sits behind 0000:00:02.1) is a fixed
 # SoC function and the only stable identifier, so the rule matches on the
-# DEVPATH passing through it.
-#
-# The SD flags: udisks takes a drive's media type from the NVMe controller
-# device, not from the disk node. Measured on the X20 (udisks 2.11.1,
-# 2026-11-22): with the flags on the disk node only, the drive had an empty
-# Media and MediaCompatibility; with ID_DRIVE_FLASH_SD and
-# ID_DRIVE_MEDIA_FLASH_SD on the controller it reports flash_sd for both, as
-# for a microSD card (ID_DRIVE_MEDIA_FLASH there as well made Media "flash",
-# so it is left out). Steam's Storage page did not change with it. The flags
-# on the disk node are kept as they were.
-SUBSYSTEM=="nvme", KERNEL=="nvme[0-9]*", DEVPATH=="*/@ROOT_PORT@/*", ENV{ID_DRIVE_FLASH_SD}="1", ENV{ID_DRIVE_MEDIA_FLASH_SD}="1"
+# DEVPATH passing through it. The SD flags on the whole-disk node are a
+# cosmetic hint for udisks/Steam ("MicroSD Card" rather than "External
+# Drive"); unverified.
 SUBSYSTEM!="block", GOTO="ally_x20_sdexpress_end"
 DEVPATH!="*/@ROOT_PORT@/*", GOTO="ally_x20_sdexpress_end"
 KERNEL=="nvme*n[0-9]", ENV{ID_DRIVE_FLASH_SD}="1", ENV{ID_DRIVE_MEDIA_FLASH_SD}="1", ENV{ID_DRIVE_MEDIA_FLASH}="1"

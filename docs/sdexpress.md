@@ -101,22 +101,19 @@ dd if=/dev/zero of=/dev/<card> bs=512 count=1024 status=none
 sync
 parted --script /dev/<card> mklabel gpt mkpart primary 0% 100%
 udevadm settle
-mkfs.ext4 -m 0 -O casefold -E nodiscard,root_owner=1000:1000 [-L <label>] -F /dev/<card>p1
+mkfs.ext4 -m 0 -O casefold -E nodiscard,root_owner=1000:1000 -L <label> -F /dev/<card>p1
 udevadm settle
 /usr/lib/hwsupport/holo-automount.sh add <card>p1
 ```
 
 `--full` uses `discard` instead of `nodiscard` (trims the whole card, as
 Steam's "full format"). `--validate` runs `f3probe --destructive` first, as
-Steam does by default; it is slow and exits 14 when the card fails.
-`--label` names the card (1 to 16 characters of `A-Za-z0-9._-`). Without it
-the filesystem gets no label, as with the stock script, and udisks mounts
-the card under its filesystem UUID (`/run/media/deck/<UUID>`), which is
-different for every card. Up to v0.2.1 every card was labeled `sdcard`, so
-two cards were mounted at the same path and Steam took them for one library
-(seen on the X20 on 2026-11-22, issue #89: a 512 GB card listed the games
-installed on a 1 TB card). Give two cards formatted that way different
-labels, or format one of them again.
+Steam does by default; it is slow and exits 14 when the card fails. The
+label defaults to `sdcard` and must be 1 to 16 characters of `A-Za-z0-9._-`.
+**Give each card its own `--label`.** Two cards with the same label are
+mounted at the same path, and Steam takes them for one library (seen on the
+X20 on 2026-11-22, issue #89: a 512 GB card listed the games installed on a
+1 TB card, both formatted with the default label).
 `--dry-run` prints the commands without running them; do that once and check
 that every line names the card's node.
 
@@ -131,8 +128,7 @@ failed with "unable to inform the kernel of the change ... in use", and
 Remove the fstab line first (next section); the command does not check for
 it.
 
-Afterwards the card is mounted at `/run/media/deck/<UUID>` (or
-`/run/media/deck/<label>` with `--label`) and can be added
+Afterwards the card is mounted at `/run/media/deck/<label>` and can be added
 as a library in Steam → Settings → Storage.
 
 **Why Steam's Format button cannot work.** It runs `format-device.sh`, which
@@ -236,7 +232,7 @@ container). What did not change that:
 | tried | result |
 |---|---|
 | `steam://removelibraryfolder/<path>`, as the stock mount script sent until Steam took drive handling over (library path, mount point, encoded and plain) | Steam logs `ExecuteSteamURL` and does nothing |
-| SD flags on the NVMe controller, so that udisks reports `flash_sd` | no change in Steam |
+| SD flags on the card's NVMe controller (a temporary rule), so that udisks reports `flash_sd` for the drive instead of nothing; the flags this component sets on the disk node do not reach udisks | no change in Steam |
 
 Not tried: a library at the top folder of the card, where Steam puts the
 library of a card it adopts itself (ours is `<card>/SteamLibrary`, added by

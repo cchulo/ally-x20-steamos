@@ -364,11 +364,25 @@ More: [power.md](power.md).
 
 ### SD Express card
 
-A card in the SD Express slot mounts by itself at
+A card that is in the SD Express slot at boot mounts by itself at
 `/run/media/deck/<label>`, like a microSD card, and can be added as a
 library in Steam → Settings → Storage. **Steam's own Format button does not
 work for this slot** (its script rejects this kind of device), so a card is
 formatted from the command line.
+
+**Insert the card before you turn the device on, and eject it before you
+take it out.** For now the slot only works reliably that way
+([#89](https://github.com/cchulo/ally-x20-steamos/issues/89)):
+
+- A card inserted while the system is running may not be seen at all, and
+  after a card has been taken out the slot sees no card until the next boot.
+  If `sdexpress status` says `card: none under that root port` with a card
+  in the slot, restart with the card in.
+- That restart has hung twice here. If the screen stays on the restart
+  logo for more than a minute, hold the power button until the device turns
+  off, then turn it on again.
+- Before taking a card out, eject it in Steam → Settings → Storage (select
+  the card, then Eject). Pulling a mounted card can damage its files.
 
 **Formatting erases everything on the card.**
 

@@ -323,14 +323,16 @@ status_file() { cat "$AX20_ROOT/var/lib/ally-x20-steamos/state/gamescope-status.
 
 # --------------------------------------------------------------- status --
 
-@test "status: stock before apply, stock when the library is not built, active when it is" {
+@test "status: stock before apply, stock when the library is not installed, active when it is" {
     stock_gamescope
     stock_ldi 0.3.0
     [ "$(hdr_status 2>/dev/null)" = stock ]
     component_apply hdr 2>/dev/null
     [ "$(hdr_status 2>/dev/null)" = stock ]
     run hdr_status
-    assert_output_contains "not built"
+    assert_output_contains "Desktop Mode library not installed"
+    assert_output_contains "Game Mode HDR is not affected"
+    assert_output_contains "ally-x20-steamos hdr fetch"
     our_lib
     [ "$(hdr_status 2>/dev/null)" = active ]
 }

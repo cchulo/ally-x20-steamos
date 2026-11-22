@@ -19,7 +19,7 @@ tracked_shell_files() {
 }
 
 @test "no pacman on the host" {
-    run bash -c 'cd "$1" && git grep -nE "^[^#]*\bpacman +-[SU]" -- . ":(exclude)tests" ":(exclude)*.md" ":(exclude)build/Containerfile" ":(exclude)build/*.sh"' _ "$REPO_ROOT"
+    run bash -c 'cd "$1" && git grep -nE "^[^#]*\bpacman +-[SU]" -- . ":(exclude)tests" ":(exclude)*.md" ":(exclude)build/Containerfile" ":(exclude)build/Containerfile.hdr" ":(exclude)build/*.sh"' _ "$REPO_ROOT"
     [ "$status" -ne 0 ] || { echo "$output"; false; }
 }
 

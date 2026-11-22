@@ -169,6 +169,37 @@ gamescope_commit=d93118d"
     assert_failure
 }
 
+@test "artifact: names carry the libdisplay-info version" {
+    assert_equal "$(hdr_ldi_real_name)" libdisplay-info.so.0.3.0
+    assert_equal "$(hdr_ldi_artifact_top)" libdisplay-info-0.3.0
+    assert_equal "$(hdr_ldi_artifact_name)" hdr-libdisplay-info-0.3.0.tar.zst
+}
+
+@test "artifact: --artifact-dir collects the library, the tool, BUILD-INFO and the license" {
+    local d="$BATS_TEST_TMPDIR/dest" a="$BATS_TEST_TMPDIR/art" out
+    mkdir -p "$d/var/lib/ally-x20-steamos/lib" "$d/var/lib/ally-x20-steamos/libdisplay-info/bin"
+    printf 'ELF lib' >"$d/var/lib/ally-x20-steamos/lib/libdisplay-info.so.0.3.0"
+    ln -s libdisplay-info.so.0.3.0 "$d/var/lib/ally-x20-steamos/lib/libdisplay-info.so.3"
+    printf 'ELF tool' >"$d/var/lib/ally-x20-steamos/libdisplay-info/bin/di-edid-decode"
+    printf 'build_id=abc\n' >"$d/var/lib/ally-x20-steamos/libdisplay-info/BUILD-INFO"
+    run hdr_ldi_collect_artifact "$d" "$a"
+    assert_success
+    out="$a/libdisplay-info-0.3.0"
+    assert_equal "$(ls "$out" | tr '\n' ' ')" "BUILD-INFO LICENSE di-edid-decode libdisplay-info.so.0.3.0 "
+    [ -x "$out/di-edid-decode" ]
+    cmp "$out/LICENSE" "$REPO_ROOT/patches/libdisplay-info/LICENSE"
+    rm "$d/var/lib/ally-x20-steamos/libdisplay-info/BUILD-INFO"
+    run hdr_ldi_collect_artifact "$d" "$a"
+    assert_failure
+    assert_output_contains "BUILD-INFO is missing"
+}
+
+@test "artifact: --artifact-dir makes no sense with --only gamescope" {
+    run "$REPO_ROOT/build/build-hdr.sh" --only gamescope --artifact-dir "$BATS_TEST_TMPDIR/a"
+    assert_failure
+    assert_output_contains "cannot be combined with --only gamescope"
+}
+
 @test "hdr-deps.txt lists packages one per line" {
     run grep -vcE '^(#|$)' "$REPO_ROOT/build/hdr-deps.txt"
     [ "$output" -gt 10 ]

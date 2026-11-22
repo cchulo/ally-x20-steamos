@@ -2,6 +2,12 @@
 # Build the patched kernel modules for every known SteamOS kernel
 # (build/kernels.txt) in the Arch build container, upload them as artifacts,
 # and attach them to the GitHub release on tags (X20-STEAMOS-PLAN.md §3).
+#
+# Job "hdr" builds the Desktop Mode HDR library (libdisplay-info 0.3.0 + the
+# DisplayID 2 backport, docs/hdr.md) in the same container and uploads
+# hdr-libdisplay-info-<version>.tar.zst; it does not depend on a kernel. The
+# one "release" job waits for both and attaches everything, so no second
+# workflow ever creates or edits the release.
 name: build-modules
 on:
   push:
@@ -13,11 +19,13 @@ on:
     paths:
       - 'build/**'
       - 'patches/kernel/**'
+      - 'patches/libdisplay-info/**'
       - '.github/workflows/build-modules.yml'
   pull_request:
     paths:
       - 'build/**'
       - 'patches/kernel/**'
+      - 'patches/libdisplay-info/**'
       - '.github/workflows/build-modules.yml'
   workflow_dispatch:
     inputs:
@@ -108,8 +116,46 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  hdr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build container images
+        run: |
+          podman build -t localhost/ally-x20-steamos-build:ci -f build/Containerfile build
+          podman build -t localhost/ally-x20-steamos-build-hdr:ci \
+            --build-arg BASE_IMAGE=localhost/ally-x20-steamos-build:ci -f build/Containerfile.hdr build
+      - name: Build libdisplay-info
+        run: |
+          mkdir -p build/hdr-out
+          digest=$(podman image inspect --format '{{.Digest}}' localhost/ally-x20-steamos-build-hdr:ci)
+          # Same user mapping as the module build. build-hdr.sh fails, and
+          # so does this job, when a pinned tag moved, a patch does not
+          # apply, the soname is not the pinned one or the backport dropped
+          # an exported symbol of the unpatched library (the ABI check).
+          podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" --security-opt label=disable \
+            -v "$PWD:/src:ro" -v "$PWD/build/hdr-out:/out" -e HOME=/tmp \
+            -e "AX20_BUILD_IMAGE=localhost/ally-x20-steamos-build-hdr:ci@$digest" \
+            localhost/ally-x20-steamos-build-hdr:ci \
+            --only libdisplay-info --destdir /out/stage --artifact-dir /out/artifact
+      - name: Package
+        run: |
+          ver=$(sed -n 's/^LDI_VERSION=//p' build/hdr.lock)
+          name="hdr-libdisplay-info-$ver"
+          mkdir -p dist
+          tar -C build/hdr-out/artifact -cf - "libdisplay-info-$ver" | zstd -19 -q -o "dist/$name.tar.zst"
+          (cd dist && sha256sum "$name.tar.zst" >"$name.tar.zst.sha256")
+          cp "build/hdr-out/artifact/libdisplay-info-$ver/BUILD-INFO" "dist/BUILD-INFO-$name"
+          cat "dist/BUILD-INFO-$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hdr-libdisplay-info
+          path: dist/*
+          if-no-files-found: error
+
   release:
-    needs: build
+    needs: [build, hdr]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:

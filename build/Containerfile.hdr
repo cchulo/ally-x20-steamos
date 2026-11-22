@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# build/Containerfile.hdr — the module build image (build/Containerfile) plus
+# the few packages build/build-hdr.sh needs for libdisplay-info (the
+# "libdisplay-info" section of build/hdr-deps.txt, and meson/ninja). Used by
+# CI (.github/workflows/build-modules.yml, job "hdr") and by
+# `ally-x20-steamos hdr build` on the device:
+#   podman build -t localhost/ally-x20-steamos-build -f build/Containerfile build
+#   podman build -t localhost/ally-x20-steamos-build-hdr -f build/Containerfile.hdr build
+# The base image pins the Arch repositories to one archive date, so syncing
+# the package database here installs from that same snapshot.
+ARG BASE_IMAGE=localhost/ally-x20-steamos-build:latest
+FROM ${BASE_IMAGE}
+
+USER root
+RUN pacman -Sy --noconfirm --needed meson ninja hwdata python binutils \
+    && pacman -Scc --noconfirm
+
+USER builder
+WORKDIR /home/builder
+# The checkout is bind-mounted read-only at /src; outputs go to /out.
+ENTRYPOINT ["/src/build/build-hdr.sh"]

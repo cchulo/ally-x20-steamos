@@ -1,7 +1,15 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Arch packages build/build-hdr.sh needs inside the build container, on top of
-# an archlinux base with base-devel, git, meson and ninja. One per line;
-# '#' starts a comment. Derived from Valve's gamescope 3.16.30.1-2 package
+# build/Containerfile (base-devel, git, python) plus meson and ninja, which
+# that image does NOT have. One per line; '#' starts a comment.
+#
+# For the library alone (--only libdisplay-info, what CI and
+# `ally-x20-steamos hdr build` run) use build/Containerfile.hdr: it adds
+# meson, ninja and the three packages of the "libdisplay-info" section below
+# and nothing else. Everything after that section (about 110 MB of packages)
+# is only needed to build gamescope, which no automatic path does.
+#
+# Derived from Valve's gamescope 3.16.30.1-2 package
 # (jupiter-3.9 .PKGINFO depends/makedepends) and the bundled wlroots,
 # libliftoff, vkroots and libdisplay-info subprojects.
 

@@ -18,9 +18,15 @@
 #
 # Usage: build/build-hdr.sh [--destdir DIR] [--workdir DIR]
 #                           [--only libdisplay-info|gamescope]
+#                           [--artifact-dir DIR]
 #                           [--gamescope-mode cherry-pick|upstream]
 #                           [--gamescope-libdisplay-info bundled|shared]
 #                           [--verify-edid FILE] [--jobs N]
+#
+# --artifact-dir DIR also collects the libdisplay-info build into
+# DIR/libdisplay-info-<version>/ (the library, di-edid-decode, BUILD-INFO,
+# LICENSE): the directory CI packs into the release asset
+# hdr-libdisplay-info-<version>.tar.zst and lib/hdr.sh installs on the device.
 #
 # The non-build logic (pins, prefix layout, meson arguments, accepted flag
 # extraction, BUILD-INFO) is in functions that tests/build/build-hdr.bats
@@ -70,6 +76,12 @@ hdr_gamescope_pin() {
 hdr_ldi_libdir() { printf '%s/lib\n' "$HDR_LDI_PREFIX"; }
 hdr_ldi_bindir() { printf '%s/libdisplay-info/bin\n' "$HDR_LDI_PREFIX"; }
 hdr_ldi_build_info() { printf '%s/libdisplay-info/BUILD-INFO\n' "$HDR_LDI_PREFIX"; }
+# The release asset for Desktop Mode (lib/hdr.sh, the "hdr" CI job). The name
+# carries the libdisplay-info version it replaces, not a kernel version: the
+# library only depends on what SteamOS ships as libdisplay-info.
+hdr_ldi_real_name() { printf 'libdisplay-info.so.%s\n' "$(hdr_lock_get LDI_VERSION)"; }
+hdr_ldi_artifact_top() { printf 'libdisplay-info-%s\n' "$(hdr_lock_get LDI_VERSION)"; }
+hdr_ldi_artifact_name() { printf 'hdr-libdisplay-info-%s.tar.zst\n' "$(hdr_lock_get LDI_VERSION)"; }
 hdr_gamescope_bin() { printf '%s/bin/gamescope\n' "$HDR_GAMESCOPE_PREFIX"; }
 hdr_gamescope_build_info() { printf '%s/BUILD-INFO\n' "$HDR_GAMESCOPE_PREFIX"; }
 hdr_gamescope_flags_file() { printf '%s/share/%s/accepted-flags\n' "$HDR_GAMESCOPE_PREFIX" "$AX20_NAME"; }
@@ -284,6 +296,28 @@ hdr_build_libdisplay_info() {
     log_info "libdisplay-info: installed $soname into $libdir"
 }
 
+# hdr_ldi_collect_artifact <destdir> <artifact-dir> : copy what the device
+# installs out of the staged tree into <artifact-dir>/libdisplay-info-<ver>/.
+hdr_ldi_collect_artifact() {
+    local destdir=$1 out f
+    out="$2/$(hdr_ldi_artifact_top)"
+    rm -rf -- "${out:?}"
+    mkdir -p "$out" || return 1
+    for f in "$destdir$(hdr_ldi_libdir)/$(hdr_ldi_real_name)" \
+        "$destdir$(hdr_ldi_bindir)/di-edid-decode" \
+        "$destdir$(hdr_ldi_build_info)" \
+        "$HDR_PATCH_DIR/libdisplay-info/LICENSE"; do
+        [ -f "$f" ] || {
+            log_error "cannot collect the artifact: $f is missing"
+            return 1
+        }
+        cp "$f" "$out/" || return 1
+    done
+    chmod 0755 "$out/$(hdr_ldi_real_name)" "$out/di-edid-decode"
+    chmod 0644 "$out/BUILD-INFO" "$out/LICENSE"
+    log_info "libdisplay-info: artifact directory $out"
+}
+
 hdr_build_gamescope() {
     local destdir=$1 work=$2 mode=$3 ldi=$4 src commit tag version bin args
     src="$work/gamescope"
@@ -333,11 +367,13 @@ hdr_build_gamescope() {
 
 hdr_build_main() {
     local destdir=/out work=/tmp/ally-x20-steamos-hdr-build only="" mode=cherry-pick ldi=bundled
+    local artifact_dir="" t
     while [ $# -gt 0 ]; do
         case "$1" in
             --destdir) destdir=$2 && shift ;;
             --workdir) work=$2 && shift ;;
             --only) only=$2 && shift ;;
+            --artifact-dir) artifact_dir=$2 && shift ;;
             --gamescope-mode) mode=$2 && shift ;;
             --gamescope-libdisplay-info) ldi=$2 && shift ;;
             --verify-edid) HDR_VERIFY_EDID=$2 && shift ;;
@@ -353,12 +389,18 @@ hdr_build_main() {
     case "$mode" in cherry-pick | upstream) ;; *) die "--gamescope-mode must be cherry-pick or upstream" ;; esac
     case "$ldi" in bundled | shared) ;; *) die "--gamescope-libdisplay-info must be bundled or shared" ;; esac
     case "$only" in '' | libdisplay-info | gamescope) ;; *) die "--only must be libdisplay-info or gamescope" ;; esac
+    if [ -n "$artifact_dir" ] && [ "$only" = gamescope ]; then
+        die "--artifact-dir collects the libdisplay-info build; it cannot be combined with --only gamescope"
+    fi
     for t in git meson ninja readelf nm; do
         ax20_have "$t" || die "$t not found: run this inside the build container (build/hdr-deps.txt)"
     done
     mkdir -p "$destdir" "$work" || die "cannot create $destdir or $work"
     if [ -z "$only" ] || [ "$only" = libdisplay-info ]; then
         hdr_build_libdisplay_info "$destdir" "$work"
+        if [ -n "$artifact_dir" ]; then
+            hdr_ldi_collect_artifact "$destdir" "$artifact_dir" || die "cannot collect the libdisplay-info artifact"
+        fi
     fi
     if [ -z "$only" ] || [ "$only" = gamescope ]; then
         hdr_build_gamescope "$destdir" "$work" "$mode" "$ldi"

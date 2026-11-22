@@ -17,5 +17,5 @@ while IFS= read -r f; do
         echo "missing SPDX header: $f" >&2
         rc=1
     fi
-done < <(git ls-files --cached --others --exclude-standard -- '*.sh' '*.bash' '*.bats' '*.py' '*.lua' '*.c' '*.h' 'Makefile' 'cmd/*' 'lib/*' 'components/*' 'overlay/bin/*' 'overlay/rauc/*' 'overlay/systemd/*.service' '.github/workflows/*.yml' 'build/Containerfile' | sort -u)
+done < <(git ls-files --cached --others --exclude-standard -- '*.sh' '*.bash' '*.bats' '*.py' '*.lua' '*.c' '*.h' 'Makefile' 'cmd/*' 'lib/*' 'components/*' 'overlay/bin/*' 'overlay/rauc/*' 'overlay/systemd/*.service' '.github/workflows/*.yml' 'build/Containerfile' 'build/Containerfile.hdr' | sort -u)
 exit $rc

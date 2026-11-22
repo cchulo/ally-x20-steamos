@@ -3,10 +3,11 @@
 #
 # Three independent pieces, all drop-ins (docs/hdr.md):
 #   1. /etc/ld.so.conf.d/00-ally-x20-steamos.conf selects our
-#      libdisplay-info.so.3 (0.3.0 + DisplayID 2 CTA backport, built by
-#      build/build-hdr.sh into /var/lib/ally-x20-steamos/lib). Fixes Desktop
-#      Mode (KWin). Stock gamescope links libdisplay-info statically and is
-#      not affected.
+#      libdisplay-info.so.3 (0.3.0 + DisplayID 2 CTA backport) in
+#      /var/lib/ally-x20-steamos/lib. Fixes Desktop Mode (KWin). Stock
+#      gamescope links libdisplay-info statically and is not affected. The
+#      library is built by CI and downloaded from the release by apply, or
+#      by `ally-x20-steamos hdr fetch|build` (lib/hdr.sh, cmd/hdr.sh).
 #   2. /etc/gamescope/scripts/90-ally-x20-steamos-rogallyx20-oled.lua, the
 #      upstream X20 display profile from gamescope PR #2493. Stock gamescope
 #      (3.16.30.1) loads it and gets HDR, the 30-120 Hz range and the
@@ -35,6 +36,10 @@ HDR_WRAPPER="$AX20_STATE_REL/bin/gamescope"
 HDR_SESSION_DROPIN=/etc/systemd/user/gamescope-session.service.d/50-ally-x20-steamos.conf
 HDR_STATUS_FILE="$AX20_STATE_REL/state/gamescope-status.txt"
 HDR_FLAGS_CACHE="$AX20_STATE_REL/state/gamescope-flags.cache"
+
+# The Desktop Mode library: fetching, checking, installing, removing.
+# shellcheck source=lib/hdr.sh
+. "$AX20_SRC/lib/hdr.sh"
 
 # ---------------------------------------------------------------- helpers --
 
@@ -203,33 +208,105 @@ hdr_apply() {
                 || log_warn "hdr: our gamescope build does not run '--help'; the wrapper will use stock gamescope"
         fi
     fi
-    if ! hdr_lib_present; then
-        log_warn "hdr: $HDR_LIB_DIR/$HDR_LDI_SONAME is not built yet; run build/build-hdr.sh (Desktop Mode HDR stays off until then)"
+    hdr_apply_desktop_lib
+    hdr_ldconfig
+    return 0
+}
+
+# hdr_game_mode_ready : the Game Mode half is in place (our profile, or
+# SteamOS ships its own).
+hdr_game_mode_ready() {
+    hdr_stock_has_profile || [ -f "$(ax20_path "$HDR_LUA")" ]
+}
+
+# hdr_missing_lib_notice <tried:0|1> : the one message a user sees when the
+# Desktop Mode library is not there after apply.
+hdr_missing_lib_notice() {
+    local lead="" what
+    if hdr_game_mode_ready; then
+        lead="Game Mode HDR already works; this is only about Desktop Mode. "
     fi
-    if [ -n "$AX20_ROOT" ]; then
-        log_debug "hdr: fixture/slot root, ldconfig deferred to the boot service on that system"
+    if [ "$1" = 1 ]; then
+        what="could not be downloaded now (offline, or this release has no prebuilt copy yet)"
+    else
+        what="has not been downloaded yet"
+    fi
+    log_warn "hdr: ${lead}The Desktop Mode library ($HDR_LDI_SONAME) $what. Get it with 'sudo $AX20_NAME hdr fetch', or build it on the device with 'sudo $AX20_NAME hdr build'. Desktop Mode HDR stays off until then"
+}
+
+# hdr_apply_desktop_lib : make sure our libdisplay-info is installed and
+# current, from the cache or the release (lib/hdr.sh). Never fails apply:
+# without the library Desktop Mode HDR stays off and nothing else changes.
+# AX20_HDR_AUTO_FETCH: 1 = fetch, 0 = do not (the boot service starts a
+# detached `hdr fetch --auto` instead, so boot never waits for the network);
+# unset = fetch on a live system, not on a fixture or slot root.
+hdr_apply_desktop_lib() {
+    local why rc=0 tried=0
+    why=$(hdr_lib_stock_check) || rc=$?
+    case "$rc" in
+        0) ;;
+        1)
+            if hdr_lib_present; then
+                log_info "hdr: $why (remove ours with: $AX20_NAME hdr remove)"
+            else
+                log_debug "hdr: $why"
+            fi
+            return 0
+            ;;
+        *)
+            log_info "hdr: Desktop Mode library not installed: $why"
+            return 0
+            ;;
+    esac
+    if hdr_lib_disabled; then
+        log_info "hdr: the Desktop Mode library was removed with '$AX20_NAME hdr remove' and stays out; '$AX20_NAME hdr fetch' brings it back"
         return 0
     fi
-    if ax20_have ldconfig; then
-        ax20_run ldconfig || log_warn "hdr: ldconfig failed; libdisplay-info override not active until it succeeds"
-    else
-        log_warn "hdr: ldconfig not found; libdisplay-info override not active"
+    if hdr_lib_current; then
+        # A matching build copied in by hand: record it in the manifest.
+        hdr_lib_recorded || hdr_lib_adopt 2>/dev/null \
+            || log_debug "hdr: the Desktop Mode library is not recorded in the manifest and could not be adopted"
+        return 0
     fi
+    case "${AX20_HDR_AUTO_FETCH:-}" in
+        0) return 0 ;;
+        1) tried=1 ;;
+        *) [ -n "$AX20_ROOT" ] || tried=1 ;;
+    esac
+    if [ "$tried" = 1 ]; then
+        if [ "$AX20_DRY_RUN" = 1 ]; then
+            printf '[dry-run] fetch the Desktop Mode library (%s)\n' "$(hdr_ldi_artifact_name)" >&2
+            return 0
+        fi
+        hdr_lib_resolve >/dev/null || true
+        hdr_lib_current && return 0
+    fi
+    if hdr_lib_present; then
+        log_info "hdr: keeping the installed Desktop Mode library; it is from another build than this version asks for and no matching prebuilt copy was found ($AX20_NAME hdr status)"
+        return 0
+    fi
+    hdr_missing_lib_notice "$tried"
     return 0
 }
 
 # hdr_status : active | stock | superseded | n/a. Notes about the gamescope
 # selection go to stderr so the word on stdout stays machine-readable.
 hdr_status() {
-    local word sel reason cache_rc=0
+    local word sel reason cache_rc=0 stock_rc=0
     word=$(component_default_status hdr)
     if [ "$word" = active ]; then
         hdr_ldcache_ok || cache_rc=$?
-        if ! hdr_lib_present; then
-            log_warn "hdr: libdisplay-info backport not built ($HDR_LIB_DIR/$HDR_LDI_SONAME missing)"
-            word=stock
-        elif [ "$cache_rc" = 1 ]; then
-            log_warn "hdr: ld.so.cache does not list $HDR_LIB_DIR/$HDR_LDI_SONAME (run ldconfig)"
+        hdr_lib_stock_check >/dev/null || stock_rc=$?
+        if hdr_lib_present; then
+            if [ "$cache_rc" = 1 ]; then
+                log_warn "hdr: ld.so.cache does not list $HDR_LIB_DIR/$HDR_LDI_SONAME (run ldconfig)"
+                word=stock
+            fi
+        elif hdr_lib_disabled; then
+            # Taken out on purpose with `hdr remove`: Game Mode only.
+            log_debug "hdr: Desktop Mode library removed by the user"
+        elif [ "$stock_rc" = 0 ] || [ "$stock_rc" = 3 ]; then
+            log_warn "hdr: Desktop Mode library not installed ($HDR_LIB_DIR/$HDR_LDI_SONAME missing; Game Mode HDR is not affected). Run: $AX20_NAME hdr fetch"
             word=stock
         fi
     fi
@@ -241,11 +318,12 @@ hdr_status() {
     printf '%s\n' "$word"
 }
 
-# hdr_remove : runtime files the wrapper writes (not in the manifest).
-# ldconfig runs in the uninstall flow after the drop-in is removed.
+# hdr_remove : runtime files the wrapper writes and the `hdr remove` marker
+# (not in the manifest). The library itself is in the manifest. ldconfig
+# runs in the uninstall flow after the drop-in is removed.
 hdr_remove() {
     local f
-    for f in "$HDR_STATUS_FILE" "$HDR_FLAGS_CACHE"; do
+    for f in "$HDR_STATUS_FILE" "$HDR_FLAGS_CACHE" "$HDR_LIB_DISABLED_FILE"; do
         f=$(ax20_path "$f")
         [ -e "$f" ] || continue
         ax20_run rm -f "$f"

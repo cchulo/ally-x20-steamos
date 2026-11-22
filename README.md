@@ -83,7 +83,7 @@ SteamOS updates and troubleshooting: [user guide](docs/user-guide.md),
 | **Controller not matched** by the bundled InputPlumber 0.78; top-right (action) button dead; rumble weak at 100 % and strong rumble makes the speakers hiss. | Upstream X20 profile as a `devices.d` drop-in (adapted to the stock daemon's schema) with an X20 button map (action button → Quick Access, Armoury Crate and Xbox → Steam button; `buttons layout legacy` brings back the earlier layout) + hwdb autostart + the controller's mode settings re-sent after every resume; `0xa0` → `KEY_PROG2` in the rebuilt `hid-asus-ally`, which also scales rumble to the MCU's 0-100 range | `inputplumber`, `modules` · [docs/inputplumber.md](docs/inputplumber.md) |
 | **Joystick ring RGB** missing from Steam's Customization menu. | `hid-asus-ally` registers the LED under a name Steam knows, with a fixed R/G/B channel layout and effect/speed attributes | `modules` · [docs/rgb.md](docs/rgb.md) |
 | **Xbox button light** dark on Linux. | `xbox-led on\|off\|brightness\|breathe` sends the controller the reports Armoury Crate uses (captured on Windows, verified on the X20); the driver keeps on/off; a udev rule re-sends brightness/breathe at boot and a systemd unit after resume; no Steam menu for it | `xboxled`, `modules` · [docs/rgb.md](docs/rgb.md#xbox-button-light) |
-| **HDR not detected** (panel metadata lives in a DisplayID 2 block). | libdisplay-info 0.3.0 + DisplayID 2 backport via `ld.so.conf.d` (Desktop Mode); gamescope Lua display profile for the panel, loaded by stock gamescope (Game Mode); optional custom gamescope behind a stock-fallback wrapper | `hdr` · [docs/hdr.md](docs/hdr.md) |
+| **HDR not detected** (panel metadata lives in a DisplayID 2 block). | libdisplay-info 0.3.0 + DisplayID 2 backport via `ld.so.conf.d` (Desktop Mode; built by CI, downloaded at install, `hdr status\|fetch\|build\|remove`); gamescope Lua display profile for the panel, loaded by stock gamescope (Game Mode); optional custom gamescope behind a stock-fallback wrapper | `hdr` · [docs/hdr.md](docs/hdr.md) |
 | **No power profiles in Steam's Performance menu.** steamos-manager 26.4.1 has no X20 device file. | The upstream steamos-manager RC74XA entry, merged into `/usr/share/steamos-manager/devices` by a boot-time bind mount of a copy in `/run` (nothing written to `/usr`, steps aside once SteamOS ships it): Low power / Balanced / Performance hold the APU at about 12 / 16-21 / 25-30 W on battery. No TDP slider on purpose: BIOS `RC74XA.303` ignores PPT writes (`power tdp-slider on` to re-test; the mainline `asus-armoury` RC74XA table is still built) | `power`, `modules` · [docs/power.md](docs/power.md) |
 | **Battery stops charging at 80 %** with no limit shown in Steam. With its charge limit off, Steam writes `0` ("no limit" on a Steam Deck) to `charge_control_end_threshold`; this firmware takes only `100` as "no limit" and stops at about 80 % with `0`. | A unit writes the recorded limit (100 % when none) before Steam starts, then replaces every `0` by `100` and records a real limit set in Steam, which is left alone; a second unit writes it again after resume; `charge-limit follow\|off\|<20-100>` picks the behaviour | `chargelimit` · [docs/power.md](docs/power.md#10-battery-charge-limit-component-chargelimit) |
 | **Built-in headphones and speakers are stereo only**, so games send a stereo mix. | A user service puts an 8-channel PipeWire sink in front of the built-in output in use and convolves it with a head-related impulse response set; it becomes the default by priority, no default is forced. Four heads, each as `-dry` (fronts unfiltered) and `-full`; `-dry` is recommended on both outputs (by the owner's ear, `-full` makes the fronts sound quieter on the speakers and may suit headphones for sharper positioning). Each output has its own profile: headphones default to `sadie-d2-dry`, speakers to `sadie-d2-dry` with crosstalk cancellation (60 µs, 50 %), which is generated on the device and applies to the speakers only. `surround set <headphones\|speakers> <profile>` switches on the fly, the new filter starting before the old one stops, and `user` takes your own HeSuVi file | `surround` · [docs/surround.md](docs/surround.md) |
@@ -160,7 +160,7 @@ ally-x20-steamos.sh   CLI dispatcher            lib/          common, manifest, 
 cmd/                  one file per command      components/   audio, chargelimit, hdr, inputplumber, modules, power, sdexpress, surround, update, xboxled
 overlay/              files installed on the device (manifest-tracked)   uninstall/   standalone POSIX uninstaller
 patches/kernel/       0001-0008 ASoC (audio), 0010-0015 hid-asus-ally, 0020 asus-armoury   patches/{gamescope,libdisplay-info}/
-build/                Containerfile, build-modules.sh, build-hdr.sh, build-inputplumber.sh, kernel-sources.md
+build/                Containerfile, Containerfile.hdr, build-modules.sh, build-hdr.sh, build-inputplumber.sh, kernel-sources.md
 acpi/                 patch-acp-flag.py (DSDT flag patch + early initrd), dump-dsdt.md, fixtures/, tests/
 firmware/             tas2783.lock, fetch-tas2783.sh, speaker-id.map       keys/        release signing key (OpenPGP)   
 vm/                   run-steamos-vm.sh, setup-fedora-host.sh, guest/ scripts, test LED module, ci/
@@ -324,10 +324,20 @@ you still see it, update, or try the other strategies through the
 `rgb_static_mode` module parameter
 ([docs/rgb.md](docs/rgb.md#solid-colour-if-one-ring-goes-dark)).
 
-**`apply` warns that `libdisplay-info.so.3` is not built yet.**
-Desktop Mode HDR needs a build step the installer does not run for you
-(`build/build-hdr.sh`, [docs/hdr.md](docs/hdr.md)). Game Mode HDR works
-without it. Everything else is unaffected.
+**How do I get HDR?**
+Game Mode: it works after the install. Enable it in Steam → Settings →
+Display → Enable HDR, then in the game. Desktop Mode needs one more library,
+which the installer downloads from the release. If `apply` says the Desktop
+Mode library could not be downloaded (offline, or the release has none yet),
+run `sudo ./ally-x20-steamos.sh hdr fetch` later, or `hdr build` to build it
+on the device; `hdr status` shows what is installed. Everything else is
+unaffected ([docs/hdr.md](docs/hdr.md)).
+
+**Desktop Mode does not start after the HDR library was installed.**
+Press Ctrl+Alt+F3, log in, and run
+`sudo /var/lib/ally-x20-steamos/src/ally-x20-steamos.sh hdr remove`. That
+takes our library out and keeps it out until you run `hdr fetch` again
+([docs/hdr.md](docs/hdr.md#if-desktop-mode-does-not-start-hdr-remove)).
 
 **Steam's Performance tab has no TDP slider, and Manual GPU Clock fails.**
 Both on purpose or unfixable for now: BIOS `RC74XA.303` ignores every power

@@ -42,8 +42,12 @@ override, so read what you run and use it at your own risk.
   update: [power.md](power.md).
 - **The Xbox button light has no menu.** It is switched from the command
   line only ([rgb.md](rgb.md#xbox-button-light)).
-- **HDR in Desktop Mode** needs an extra build step that the installer does
-  not run for you ([hdr.md](hdr.md)). Game Mode HDR works without it.
+- **HDR in Desktop Mode** needs one more library than Game Mode. The
+  installer downloads it from the release; if it could not (offline, or the
+  release has none yet), `sudo ./ally-x20-steamos.sh hdr fetch` gets it
+  later. The library itself is confirmed to give Desktop Mode HDR on the
+  X20; the automatic download is new and has not been run on the device
+  yet. Game Mode HDR works without it. See [HDR](#hdr).
 - **Bluetooth and USB headsets** are left as SteamOS sets them up: their
   volume levels and sound are not changed.
 - **Manual GPU clock** in the Performance tab fails on this processor.
@@ -181,7 +185,7 @@ Then, in Game Mode:
 - **Lights:** Settings → Customization has the joystick-ring lighting.
 - **Power:** Quick Access → Performance (the battery icon) has the power
   profile switch (Low power, Balanced, Performance) and no TDP slider.
-- **HDR:** Settings → Display offers HDR.
+- **HDR:** Settings → Display offers HDR (more under [HDR](#hdr)).
 
 ### Changing what the top buttons do
 
@@ -298,6 +302,33 @@ The owner's Atmos file came from the HRIR collection at
    the file.
 
 More, including how it works: [surround.md](surround.md).
+
+### HDR
+
+**Game Mode.** Works after the install. Turn it on in Steam → Settings →
+Display → **Enable HDR**, then in the game's own settings.
+
+**Desktop Mode.** Needs one more library, which the installer downloads.
+Check it, and get it if it is missing:
+
+```sh
+./ally-x20-steamos.sh hdr status        # what is installed for both modes
+sudo ./ally-x20-steamos.sh hdr fetch    # download the library now
+```
+
+Then log out of Desktop Mode and back in (or reboot) and switch HDR on in
+System Settings → Display & Monitor.
+
+**If Desktop Mode does not start afterwards**, press Ctrl+Alt+F3, log in,
+and run:
+
+```sh
+sudo /var/lib/ally-x20-steamos/src/ally-x20-steamos.sh hdr remove
+```
+
+That takes the library out again (Desktop Mode is then as on stock SteamOS,
+without HDR) and it stays out until you run `hdr fetch` again. Game Mode is
+not affected either way. More: [hdr.md](hdr.md).
 
 ### Power and battery
 

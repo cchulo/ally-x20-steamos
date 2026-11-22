@@ -188,6 +188,29 @@ last_line() { printf '%s\n' "${lines[${#lines[@]} - 1]}"; }
     manifest_verify "$HDR_STATE/libdisplay-info/BUILD-INFO"
 }
 
+@test "apply adopts a matching hand-built copy into the manifest without downloading" {
+    hdr_stock 0.3.0
+    hdr_fake_build "$BATS_TEST_TMPDIR/b" "ELF manual build"
+    mkdir -p "$LIB" "$AX20_ROOT$HDR_STATE/libdisplay-info/bin"
+    cp "$BATS_TEST_TMPDIR/b/$HDR_REAL" "$LIB/"
+    ln -s "$HDR_REAL" "$LIB/libdisplay-info.so.3"
+    ln -s libdisplay-info.so.3 "$LIB/libdisplay-info.so"
+    cp "$BATS_TEST_TMPDIR/b/di-edid-decode" "$AX20_ROOT$HDR_STATE/libdisplay-info/bin/"
+    cp "$BATS_TEST_TMPDIR/b/BUILD-INFO" "$AX20_ROOT$HDR_STATE/libdisplay-info/"
+    hdr_lib_current
+    ! hdr_lib_recorded
+    AX20_HDR_AUTO_FETCH=1 run component_apply hdr
+    assert_success
+    [ ! -e "$SRV/fetch.log" ]
+    hdr_lib_recorded
+    [ "$(cat "$LIB/$HDR_REAL")" = "ELF manual build" ]
+    manifest_verify "$HDR_STATE/lib/$HDR_REAL"
+    manifest_verify "$HDR_STATE/lib/libdisplay-info.so.3"
+    assert_equal "$(hdr_lib_source_get source)" manual
+    [ ! -L "$LIB/libdisplay-info.so" ]
+    [ "$(hdr_status 2>/dev/null)" = active ]
+}
+
 @test "stage replaces an older recorded build in place" {
     hdr_stock 0.3.0
     hdr_fake_build "$BATS_TEST_TMPDIR/b1" "ELF build one"

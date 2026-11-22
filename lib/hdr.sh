@@ -145,6 +145,11 @@ hdr_lib_current() {
     [ -n "$want" ] && [ "$(ax20_sha256 "$real")" = "$want" ]
 }
 
+# hdr_lib_recorded : the installed library is in the manifest.
+hdr_lib_recorded() {
+    manifest_has "$(hdr_lib_real_rel)" && manifest_has "$HDR_LIB_BUILD_INFO"
+}
+
 # hdr_lib_fetch_due : an automatic fetch makes sense now.
 hdr_lib_fetch_due() {
     hdr_lib_stock_check >/dev/null || return 1
@@ -344,6 +349,24 @@ hdr_lib_stage() {
         return 1
     fi
     [ "$AX20_DRY_RUN" = 1 ] || log_info "hdr: installed the Desktop Mode library (build $(modules_build_info_get "$src/BUILD-INFO" build_id), from $how)"
+}
+
+# hdr_lib_adopt : a current library that was copied in by hand (never
+# recorded) is installed again from its own files, through the same checks,
+# so the manifest knows it. Returns 1 when it cannot be done; the copy then
+# stays as it is.
+hdr_lib_adopt() {
+    local tmp rc=0
+    [ "$AX20_DRY_RUN" = 1 ] && return 0
+    [ -f "$(ax20_path "$HDR_LIB_TOOL")" ] || return 1
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/ax20-hdr-adopt.XXXXXX") || return 1
+    cp "$(ax20_path "$(hdr_lib_real_rel)")" "$(ax20_path "$HDR_LIB_TOOL")" \
+        "$(ax20_path "$HDR_LIB_BUILD_INFO")" "$HDR_PATCH_DIR/libdisplay-info/LICENSE" "$tmp/" || rc=1
+    if [ "$rc" = 0 ]; then
+        hdr_lib_stage "$tmp" manual "a build copied in by hand, adopted" || rc=1
+    fi
+    rm -rf "$tmp"
+    return "$rc"
 }
 
 # hdr_lib_unstage : take our library out again. Files first, the manifest

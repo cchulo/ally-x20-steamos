@@ -262,7 +262,12 @@ hdr_apply_desktop_lib() {
         log_info "hdr: the Desktop Mode library was removed with '$AX20_NAME hdr remove' and stays out; '$AX20_NAME hdr fetch' brings it back"
         return 0
     fi
-    hdr_lib_current && return 0
+    if hdr_lib_current; then
+        # A matching build copied in by hand: record it in the manifest.
+        hdr_lib_recorded || hdr_lib_adopt 2>/dev/null \
+            || log_debug "hdr: the Desktop Mode library is not recorded in the manifest and could not be adopted"
+        return 0
+    fi
     case "${AX20_HDR_AUTO_FETCH:-}" in
         0) return 0 ;;
         1) tried=1 ;;

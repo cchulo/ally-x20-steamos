@@ -41,6 +41,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 HELPER = os.path.join(HERE, os.pardir, os.pardir, "overlay", "bin", "x20-surround.py")
 SPEAKERS = "alsa_output.pci-0000_64_00.5-platform-amd_sdw.HiFi__Speaker__sink"
 OURS = "ally_x20_surround_speakers_"
+ID_PROP = "ally-x20-steamos.surround.id"
 STREAM = "x20-headless-71"
 
 
@@ -67,22 +68,30 @@ def main():
         except ValueError:
             return []
 
+    def key(props):
+        """How this check names a node: a surround sink by the helper's id
+        (its node.name is the text Steam shows), anything else by node.name."""
+        return props.get(ID_PROP) or props.get("node.name")
+
     def sinks(objects=None):
         found = {}
         for o in dump() if objects is None else objects:
             props = (o.get("info") or {}).get("props") or {}
             if props.get("media.class") == "Audio/Sink":
-                found[props.get("node.name")] = props
+                found[key(props)] = props
         return found
 
     def ours(objects=None):
         return sorted(n for n in sinks(objects) if n and n.startswith(OURS))
 
     def default_sink(objects=None):
-        for o in dump() if objects is None else objects:
+        objects = dump() if objects is None else objects
+        by_name = {p.get("node.name"): k for k, p in sinks(objects).items()}
+        for o in objects:
             for m in o.get("metadata") or ():
                 if m.get("key") == "default.audio.sink":
-                    return (m.get("value") or {}).get("name")
+                    name = (m.get("value") or {}).get("name")
+                    return by_name.get(name, name)
         return None
 
     def stream_sinks(objects):
@@ -91,7 +100,7 @@ def main():
         for o in objects:
             props = (o.get("info") or {}).get("props") or {}
             if str(o.get("type", "")).endswith(":Node"):
-                names[o.get("id")] = props.get("node.name")
+                names[o.get("id")] = key(props)
                 if props.get("node.name") == STREAM:
                     stream = o.get("id")
         linked = set()
@@ -121,7 +130,7 @@ def main():
 
     def node_id(name):
         for o in dump():
-            if ((o.get("info") or {}).get("props") or {}).get("node.name") == name:
+            if key((o.get("info") or {}).get("props") or {}) == name:
                 return o.get("id")
         return None
 
@@ -224,9 +233,10 @@ def main():
         wait(lambda: ours() == [OURS + "a"], "the surround sink appears as ..._a")
         wait(lambda: volume(OURS + "a") == 0.50 and volume(SPEAKERS) == 1.00,
              "the surround sink took the volume (0.50) and the speaker sink is held at 1.00")
-        check((sinks().get(OURS + "a") or {}).get("node.description")
-              == "Speakers (Surround - SADIE D2 Dry)",
-              "the sink is called 'Speakers (Surround - SADIE D2 Dry)'")
+        first = sinks().get(OURS + "a") or {}
+        check(first.get("node.name") == "Speakers (Surround - SADIE D2 Dry)"
+              and first.get("node.description") == "Speakers (Surround - SADIE D2 Dry)",
+              "its node.name, which Steam shows, is 'Speakers (Surround - SADIE D2 Dry)'")
         props = sinks().get(OURS + "a") or {}
         check(str(props.get("audio.channels")) == "8" and
               int(props.get("priority.session") or 0) == 713,
@@ -254,8 +264,10 @@ def main():
         wait(lambda: volume(now) == 0.40 and volume(SPEAKERS) == 1.00,
              "the volume (0.40) went along to the new sink; the speaker sink is still at 1.00",
              timeout=5)
-        check((sinks().get(now) or {}).get("node.description")
-              == "Speakers (Surround - HUTUBS PP1 Dry)", "and it shows the new profile's name")
+        second = sinks().get(now) or {}
+        check(second.get("node.name") == "Speakers (Surround - HUTUBS PP1 Dry) "
+              and second.get("node.description") == "Speakers (Surround - HUTUBS PP1 Dry)",
+              "and it shows the new profile's name (the second slot with a trailing space)")
         check((sinks().get(now) or {}).get("priority.session") == 714,
               "the second slot has priority 714")
         now = hand_over("profile b->a", "profile: mit-kemar-dry\n", "set", "speakers",
@@ -271,12 +283,46 @@ def main():
               "status explains the fall-back to the profile without xtc")
         hand_over("xtc 80/50", "d080-s50.wav", "xtc", "80", "50")
 
+        # Another program (a copy of pw-dump under another name, so that it
+        # does not count as one of PipeWire's tools) watches the graph, as
+        # Steam does. The plain speaker sink is taken out of its view.
+        other = os.path.join(tmp, "other-program")
+        shutil.copy(shutil.which("pw-dump"), other)
+        seen_by_other = os.path.join(tmp, "other-program.out")
+        with open(seen_by_other, "w") as out:
+            procs.append(subprocess.Popen(["stdbuf", "-oL", other, "-m"], env=env, stdout=out,
+                                          stderr=subprocess.DEVNULL))
+        speaker_id = node_id(SPEAKERS)
+
+        def told_gone():
+            text = open(seen_by_other).read()
+            return re.search(r'"id":\s*%d,\s*"info":\s*null' % speaker_id, text) is not None
+        wait(told_gone, "another program is told the plain speaker sink is gone (hidden)",
+             timeout=10)
+        check(SPEAKERS in sinks(), "a new client, like this check and the pw-* tools, still sees it")
+
+        # with the plain outputs hidden, stereo is a sink of its own
         helper("set", "speakers", "stereo")
-        wait(lambda: not ours(), "stereo removes the surround sink")
+        wait(lambda: len(ours()) == 1
+             and (sinks().get(ours()[0]) or {}).get("node.name", "").strip()
+             == "Speakers (Stereo)",
+             "stereo is the pass-through sink 'Speakers (Stereo)'")
+        stereo = ours()[0]
+        check(str((sinks().get(stereo) or {}).get("audio.channels")) == "2",
+              "it has 2 channels, so a game sends stereo")
+        wait(lambda: default_sink() == stereo, "and it is the default", timeout=5)
+        wait(lambda: volume(stereo) == 0.40 and volume(SPEAKERS) == 1.00,
+             "it carries the volume (0.40); the speaker sink stays at 1.00", timeout=5)
+        check(len(filters()) == 1, "one filter process runs it")
+
+        # plain outputs shown: stereo runs no filter and the volume goes back
+        helper("plain", "shown")
+        wait(lambda: not ours(), "with 'plain shown', stereo runs no filter")
         wait(lambda: default_sink() == SPEAKERS, "the speaker sink is the default again")
         wait(lambda: not filters(), "no filter process is left")
         wait(lambda: volume(SPEAKERS) == 0.40,
              "the speaker sink got the volume back (0.40), not left at 1.00", timeout=5)
+        helper("plain", "hidden")
 
         helper("set", "speakers", "user")
         wait(lambda: len(ours()) == 1 and "sadie-d2-dry.wav" not in conf_of(ours()[0])

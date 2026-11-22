@@ -247,11 +247,50 @@ choosing the plain built-in output there is a way to bypass the filter.
 The surround output is called after its output and profile, for example
 `Speakers (Surround - SADIE D2 Dry)` or
 `Headphones (Surround - MIT KEMAR Large Full)`; with your own file,
-`… (Surround - User)`. The plain outputs stay in the list next to it.
-Hiding them is not done: WirePlumber can hide a hardware output behind a
-filter it creates itself (its "software DSP" policy with `hide-parent`),
-but not behind a filter that runs as its own process, as this one does.
-That would be a different design and is not attempted here.
+`… (Surround - User)`. With Steam's output on "Default" the list's first
+line reads `Default (Speakers (Surround - SADIE D2 Dry))`.
+
+Steam shows a virtual output under its `node.name` and ignores
+`node.description` and `node.nick`. Seen on the X20 on 2026-11-21: with
+only the description and nick set, the list showed
+`ally_x20_surround_speakers_a`; and a null sink carrying a different word
+in each field showed up under its name. So the readable text is the
+`node.name` (and also the description and nick). The id the helper uses to
+tell its sinks apart, `ally_x20_surround_<output>_a` or `_b`, rides in the
+property `ally-x20-steamos.surround.id`. The second of an output's two
+sinks has a trailing space in its name, so that two sinks never share a
+name while both exist during a switch; no list shows the space.
+
+### The plain outputs are hidden
+
+By default other programs no longer list the plain "Speakers" and
+"Headphones": only the surround output is there, so there is one entry to
+pick. Plain stereo is still available as a profile:
+
+```sh
+ally-x20-steamos surround set speakers stereo     # shows up as "Speakers (Stereo)"
+ally-x20-steamos surround plain shown             # list the plain outputs again
+ally-x20-steamos surround plain hidden            # the default
+```
+
+- With the plain outputs hidden, `stereo` is a pass-through output of its
+  own, `Speakers (Stereo)` or `Headphones (Stereo)`, with 2 channels, so a
+  game sends stereo. It carries the volume like any other profile.
+- With `plain shown`, the plain outputs stay listed and `stereo` runs no
+  filter, as before.
+
+How: PipeWire lets one client's view of one object be taken away
+(`pw-cli permissions <client> <object> -`), which is what WirePlumber's
+software-DSP policy does with `hide-parent`. The helper does this for the
+two built-in hardware sinks and every program except WirePlumber,
+PipeWire's own processes (the filter is one) and the `pw-*` tools. A
+program that starts later is dealt with at the next look, within 2 s, so
+it can list the plain output for a moment. When the service stops, or with
+`plain shown`, the permission is given back.
+
+Checked on a private PipeWire 1.6.11: another program watching the graph
+is told the plain sink is gone, while a new client and the helper's own
+tools still see it.
 
 ### Volume
 
@@ -376,11 +415,20 @@ Nothing below has run on the X20 as part of this component.
   PipeWire restarts.
 - The jack: plugging and unplugging headphones moves the filter between the
   outputs within a few seconds, and the default output follows.
-- What Steam's output list shows: the surround output under its name
-  (`Speakers (Surround - SADIE D2 Dry)`) next to the plain outputs. Seen on
-  the X20 on 2026-11-21 with the earlier name: the surround sink was the
-  default without any default being forced. During a switch two surround
-  entries exist for about a second.
+- What Steam's output list shows with the readable `node.name`: the entry
+  `Speakers (Surround - SADIE D2 Dry)` next to the plain outputs, and
+  `Default (…)` with it. Seen on the X20 on 2026-11-21 with the earlier
+  internal name: the surround sink was the default without any default
+  being forced. During a switch two surround entries exist for about a
+  second.
+- Hiding the plain outputs on the device: that Steam's list drops
+  "Speakers" (and "Headphones"), that a program which starts later loses
+  them too, that `plain shown` or stopping the service brings them back
+  without the program reconnecting (not known; it may need Steam or the
+  session to restart), and that SteamOS's access rules
+  (`/etc/wireplumber/wireplumber.conf.d/access.conf`) allow the permission
+  change at all.
+- `stereo` as `Speakers (Stereo)`: that a game then sends stereo.
 - A game opens an 8-channel stream on the surround sink.
 - Volume on the device: the level is the same before and after the filter
   starts, the volume keys and Steam's slider reach full volume, the level

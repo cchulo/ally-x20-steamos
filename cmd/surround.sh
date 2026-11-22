@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# summary: virtual 7.1 surround for the built-in outputs: status | list | set <headphones|speakers> <profile> | xtc off|<delay_us> <strength_pct> | prepare
+# summary: virtual 7.1 surround for the built-in outputs: status | list | set <headphones|speakers> <profile> | xtc off|<delay_us> <strength_pct> | plain hidden|shown | prepare
 #
 # A thin wrapper around the helper of component surround
 # (/etc/ally-x20-steamos/surround/x20-surround, overlay/bin/x20-surround.py).
@@ -25,12 +25,16 @@ usage: $AX20_NAME surround <command>
               crosstalk cancellation for the speakers (never the
               headphones): delay 20 to 300 microseconds, strength 5 to 95
               percent. Default: 60 50
+  plain hidden|shown
+              whether the plain "Speakers" and "Headphones" stay in other
+              programs' output lists. Default: hidden; "stereo" then shows
+              up as its own entry, for example "Speakers (Stereo)"
   prepare     generate the twelve tested crosstalk settings (60/80/100/120
               microseconds, 30/50/70 percent) for the speakers' profile and
               print each one's level trim and whether it is usable. Do this
               after you put your own .wav in place
 
-Profiles: stereo (no filter); sadie-d2, hutubs-pp1, mit-kemar and
+Profiles: stereo (no surround); sadie-d2, hutubs-pp1, mit-kemar and
 mit-kemar-large, each as -dry (fronts unfiltered; sadie-d2-dry is the
 default for the headphones and for the speakers) and -full (every channel filtered); and user: the
 first .wav file, in lexical order, in ~/.config/$AX20_NAME/surround-user/
@@ -91,7 +95,7 @@ cmd_surround() {
             _surround_usage >&2
             return 2
             ;;
-        status | list | set | xtc | prepare) ;;
+        status | list | set | xtc | prepare | plain) ;;
         *)
             log_error "unknown surround command: $1"
             _surround_usage >&2
@@ -102,7 +106,7 @@ cmd_surround() {
         log_error "surround: python3 not found"
         return 1
     fi
-    if { [ "$1" = set ] || [ "$1" = xtc ]; } && ! _surround_installed; then
+    if { [ "$1" = set ] || [ "$1" = xtc ] || [ "$1" = plain ]; } && ! _surround_installed; then
         log_error "surround is not installed; run 'sudo $AX20_NAME apply --only surround' first"
         return 1
     fi

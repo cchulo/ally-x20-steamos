@@ -2,10 +2,30 @@
 name: test
 # Linux only: macOS runners cost 10x per minute and the target (SteamOS) runs
 # bash 5. bash 3.2 compatibility is checked by developers locally (make check).
+# Not run for changes that touch only documentation or the version number:
+# Markdown files and VERSION. The exceptions are Markdown files that are
+# installed on the device or read by tests (overlay/, patches/, vm/); a
+# change there runs everything. The release notes of the version in VERSION
+# are checked by the release-notes workflow, which takes seconds.
+# Later patterns win, so the re-includes come last.
 on:
   push:
     branches: [main]
+    paths:
+      - '**'
+      - '!**.md'
+      - '!VERSION'
+      - 'overlay/**'
+      - 'patches/**'
+      - 'vm/**'
   pull_request:
+    paths:
+      - '**'
+      - '!**.md'
+      - '!VERSION'
+      - 'overlay/**'
+      - 'patches/**'
+      - 'vm/**'
 jobs:
   lint-and-unit:
     runs-on: ubuntu-latest

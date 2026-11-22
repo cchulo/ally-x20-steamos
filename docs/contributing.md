@@ -66,17 +66,18 @@ scripts/release-notes.sh "$(cat VERSION)"
    git push origin vX.Y.Z
    ```
 
-3. The `build-modules` workflow builds the kernel modules for the tag and
-   creates the release with the notes and the module artifacts.
+3. The `build-modules` workflow builds the kernel modules and the Desktop
+   Mode HDR library for the tag and creates the release with the notes, the
+   module artifacts and `hdr-libdisplay-info-<version>.tar.zst`.
 
 ## What CI runs
 
 | Change | `test` (lint and all tests) | `release-notes` | `build-modules` |
 |---|---|---|---|
-| Code, tests, workflows | yes | only with `VERSION`, `CHANGELOG.md` or the script | only with `build/`, `patches/kernel/` |
+| Code, tests, workflows | yes | only with `VERSION`, `CHANGELOG.md` or the script | only with `build/`, `patches/kernel/`, `patches/libdisplay-info/` |
 | Only Markdown under `docs/` or at the top level | no | only `CHANGELOG.md` | no |
 | Only `VERSION` (a version bump) | no | yes | no |
-| Markdown under `overlay/`, `patches/`, `vm/` | yes: it is installed on the device or read by tests | no | `patches/kernel/` only |
+| Markdown under `overlay/`, `patches/`, `vm/` | yes: it is installed on the device or read by tests | no | `patches/kernel/` and `patches/libdisplay-info/` only |
 | A `v*` tag | no | no | yes, and it publishes the release |
 
 ## Dev host setup

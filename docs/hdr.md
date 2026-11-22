@@ -21,12 +21,139 @@ frame average) and its BT.2020 colorimetry in a CTA-861 data block inside a
 | Piece | Path | Fixes | When |
 |---|---|---|---|
 | ld.so.conf.d drop-in | `/etc/ld.so.conf.d/00-ally-x20-steamos.conf` → `/var/lib/ally-x20-steamos/lib` | Desktop Mode | always |
-| libdisplay-info 0.3.0 + DisplayID 2 backport (build output, soname `libdisplay-info.so.3`) | `/var/lib/ally-x20-steamos/lib/` | Desktop Mode | after `build/build-hdr.sh` |
+| libdisplay-info 0.3.0 + DisplayID 2 backport (soname `libdisplay-info.so.3`), with its `BUILD-INFO`, `di-edid-decode` and license | `/var/lib/ally-x20-steamos/lib/`, `/var/lib/ally-x20-steamos/libdisplay-info/` | Desktop Mode | downloaded from the release by `apply`; see [The Desktop Mode library](#the-desktop-mode-library) |
 | gamescope X20 display profile (Lua, from PR #2493) | `/etc/gamescope/scripts/90-ally-x20-steamos-rogallyx20-oled.lua` | Game Mode: HDR, 30–120 Hz, software backlight | stock gamescope lacks the profile and has the Lua helpers it calls |
 | gamescope wrapper | `/var/lib/ally-x20-steamos/bin/gamescope` | runs our gamescope build, falls back to stock | only when our build exists in `/opt/ally-x20-steamos/gamescope` |
 | gamescope-session user unit drop-in | `/etc/systemd/user/gamescope-session.service.d/50-ally-x20-steamos.conf` | puts the wrapper first on `PATH` for that unit only | with the wrapper |
 
 All of these are recorded in the manifest. Nothing under `/usr` is touched.
+
+In short: **Game Mode HDR works after a normal install** and needs nothing
+else (Steam → Settings → Display → Enable HDR, then in the game). **Desktop
+Mode HDR** needs the library in the second row, which the installer now
+downloads for you.
+
+Desktop Mode HDR with this library is confirmed on the owner's X20 (SteamOS
+3.9.5, 2026-11-22), built by hand in the container: with the library in
+place the desktop starts normally and HDR can be switched on; with it moved
+aside HDR is unavailable again. `TODO(hw)`: the copy CI builds, the
+automatic download and install, and the `hdr` command have not been run on
+the device yet.
+
+## The Desktop Mode library
+
+### How it gets onto the device
+
+It works like the kernel modules ([kernel-modules.md](kernel-modules.md)),
+except that it does not depend on the kernel. It depends on the
+libdisplay-info version SteamOS ships and that it replaces: 0.3.0, soname
+`libdisplay-info.so.3`, pinned in [`build/hdr.lock`](../build/hdr.lock).
+
+1. **CI builds it.** The `hdr` job of the `build-modules` workflow runs
+   `build/build-hdr.sh --only libdisplay-info` in the Arch build container
+   and uploads `hdr-libdisplay-info-0.3.0.tar.zst` and its `.sha256`. On a
+   `v*` tag the release job attaches both to the GitHub release, next to
+   the module artifacts. The tarball holds one directory,
+   `libdisplay-info-0.3.0/`, with `libdisplay-info.so.0.3.0`,
+   `di-edid-decode`, `BUILD-INFO` and `LICENSE`.
+2. **The device fetches it.** `apply` (and so `install` and `self-update`)
+   installs it when it is missing or was built from other pins or patches
+   than the checkout has. Order:
+   1. **cache**: the installed copy is current, or a tarball downloaded
+      earlier is in `/var/lib/ally-x20-steamos/cache/artifacts/`;
+   2. **release**: the release of this checkout's `VERSION`, then the
+      latest release.
+   The boot service does not download during boot. When the library is
+   missing or from another build it starts `hdr fetch --auto` in the
+   background (`systemd-run`), so a device that was offline at install
+   time gets the library on a later boot.
+3. **A local build is never started for you.** It downloads a build image of
+   about 1 GB. Ask for it with `hdr build`.
+
+Offline, or when the release has no such asset (every release up to v0.2.0),
+nothing fails: `apply` prints one notice, Desktop Mode HDR stays off, and
+everything else works.
+
+```
+ally-x20-steamos: warning: hdr: Game Mode HDR already works; this is only about Desktop Mode. The Desktop Mode library (libdisplay-info.so.3) could not be downloaded now (offline, or this release has no prebuilt copy yet). Get it with 'sudo ally-x20-steamos hdr fetch', or build it on the device with 'sudo ally-x20-steamos hdr build'. Desktop Mode HDR stays off until then
+```
+
+### The `hdr` command
+
+```sh
+ally-x20-steamos hdr status        # both modes, the library's build id and origin, what SteamOS ships
+sudo ally-x20-steamos hdr fetch    # get the prebuilt library now (cache, then release)
+sudo ally-x20-steamos hdr build    # build it here in a container (podman), then install it
+sudo ally-x20-steamos hdr remove   # take our library out again
+```
+
+- `fetch --force` installs again even when the installed copy is current.
+- `build` needs the network (the build image and the libdisplay-info
+  sources) and a few minutes the first time. When run with `sudo`, podman's
+  storage is put under `/var/lib/ally-x20-steamos/cache/podman`, which is on
+  `/home`. Podman's default for root, `/var/lib/containers`, is on SteamOS's
+  per-slot `/var` partition (about 230 MB); measured on the X20, pulling the
+  Arch image there fails with "no space left on device".
+  `rebuild --source container` for the kernel modules still uses podman's
+  default storage and can fail the same way; it was not changed here.
+- After `fetch` or `build`, log out of Desktop Mode and back in (or reboot):
+  KWin loads the library when it starts.
+
+### If Desktop Mode does not start: `hdr remove`
+
+The library is selected system-wide, so a broken copy could keep KWin from
+starting. Recovery:
+
+1. Press **Ctrl+Alt+F3** for a text console and log in (or connect over
+   SSH). Game Mode is not affected, so you can also switch back to it.
+2. Run:
+
+   ```sh
+   sudo /var/lib/ally-x20-steamos/src/ally-x20-steamos.sh hdr remove
+   ```
+
+3. Switch back with Ctrl+Alt+F1 (or reboot) and start Desktop Mode.
+
+`hdr remove` deletes our library files, runs `ldconfig`, and records the
+choice: `apply`, `self-update` and the boot service leave the library out
+until you run `hdr fetch` or `hdr build` again. The Game Mode profile and
+the `ld.so.conf.d` drop-in stay; the drop-in then points at a directory
+without libraries, which the loader ignores.
+
+If the command itself cannot run, the same by hand:
+
+```sh
+sudo rm /etc/ld.so.conf.d/00-ally-x20-steamos.conf && sudo ldconfig
+```
+
+### What is checked before a library is installed
+
+A file is installed only when all of this holds; otherwise the system stays
+as it was:
+
+- SteamOS ships exactly the libdisplay-info version the build replaces
+  (0.3.0 with `libdisplay-info.so.3`). On another version nothing is
+  installed. On 0.4.0 or later, which reads DisplayID 2 itself, nothing is
+  installed either: our library is not needed.
+- A downloaded tarball matches its `.sha256` and contains nothing outside
+  `libdisplay-info-0.3.0/`.
+- `BUILD-INFO` in it names this checkout's version, soname, commit, patch
+  hashes and `build_id`. A build for another libdisplay-info version, or
+  from other patches, is refused.
+- The library file has the sha256 recorded in `BUILD-INFO`.
+- The running system's loader can load the file, and the build's
+  `di-edid-decode`, linked against it, reads the panel's EDID without
+  crashing or missing a symbol.
+- At build time (CI and `hdr build`): the tag still resolves to the pinned
+  commit, every patch applies, the soname is `libdisplay-info.so.3`, and no
+  symbol exported by an unpatched 0.3.0 is missing. A build that fails any
+  of these produces no artifact.
+
+The files are installed through the manifest (component `hdr`), so
+`uninstall` removes them and `status` verifies them. A copy installed by
+hand earlier (a `build-hdr.sh --destdir` run onto the state directory) is
+replaced by the checked one, and its headers and pkg-config file are
+removed.
 
 ### Why two Game Mode paths
 
@@ -91,14 +218,36 @@ It is system-wide: every dynamically linked process that loads
 helpers and anything else from the Plasma stack; it is **not** stock gamescope
 (static). An ABI break would show up as KWin failing to start in Desktop Mode.
 Mitigations: same soname and exported-symbol superset checked at build time,
-patches are upstream commits only, and recovery is one file:
-`sudo rm /etc/ld.so.conf.d/00-ally-x20-steamos.conf && sudo ldconfig` from a
-TTY (Ctrl+Alt+F3) or over SSH.
+patches are upstream commits only, the checks listed under
+[What is checked before a library is installed](#what-is-checked-before-a-library-is-installed),
+and recovery is one command from a TTY (Ctrl+Alt+F3) or over SSH:
+`sudo ally-x20-steamos hdr remove`
+([details](#if-desktop-mode-does-not-start-hdr-remove)).
 
 ## Building
 
-Inside the Arch build container (packages in
-[`build/hdr-deps.txt`](../build/hdr-deps.txt)):
+You do not need this for the library: CI builds it, and `hdr build` runs
+the same build on the device. For reference, and for the gamescope build:
+
+`build/build-hdr.sh` runs inside the Arch build container, never on the
+SteamOS host. The image from [`build/Containerfile`](../build/Containerfile)
+has no meson or ninja. For the library,
+[`build/Containerfile.hdr`](../build/Containerfile.hdr) adds them and
+`hwdata` on top of that image and makes `build-hdr.sh` the entrypoint; this
+is what CI and `hdr build` use:
+
+```sh
+podman build -t localhost/ally-x20-steamos-build -f build/Containerfile build
+podman build -t localhost/ally-x20-steamos-build-hdr -f build/Containerfile.hdr build
+podman run --rm --userns=keep-id -v "$PWD:/src:ro" -v "$PWD/build/hdr-out:/out" -e HOME=/tmp \
+    localhost/ally-x20-steamos-build-hdr \
+    --only libdisplay-info --destdir /out/stage --artifact-dir /out/artifact
+```
+
+`--artifact-dir` collects what the device installs into
+`artifact/libdisplay-info-0.3.0/`. The gamescope build needs the full
+package list in [`build/hdr-deps.txt`](../build/hdr-deps.txt) (about 110 MB)
+installed in the container as well.
 
 ```sh
 build/build-hdr.sh --destdir /out                    # both, gamescope 3.16.30.1 + PR #2493
@@ -120,10 +269,12 @@ opt/ally-x20-steamos/gamescope/share/ally-x20-steamos/accepted-flags
 ```
 
 `BUILD-INFO` records pins, patch sha256s, a `build_id` derived from all
-inputs, the output sha256 and the container image. Bind-mount the host's
-`/var/lib/ally-x20-steamos` and `/opt/ally-x20-steamos` under `/out`, or copy
-the staged tree, then run `ally-x20-steamos.sh apply` (which runs `ldconfig`
-and, if the gamescope build is present, installs the wrapper).
+inputs, the output sha256 and the container image. For the gamescope build,
+bind-mount the host's `/opt/ally-x20-steamos` under `/out`, or copy the
+staged tree, then run `ally-x20-steamos.sh apply` (which installs the
+wrapper when the gamescope build is present). Do not copy the library in by
+hand any more: `hdr build` installs it through the manifest and checks it
+first.
 
 `TODO(vm)`: confirm `/opt` is writable and survives an A/B update on SteamOS;
 otherwise set `HDR_GAMESCOPE_PREFIX` (build script and component) and
@@ -168,6 +319,7 @@ the user manager starts (reboot or re-login).
 Desktop Mode:
 
 ```sh
+ally-x20-steamos hdr status                     # "our library: installed", build id, "ld.so.cache lists our copy"
 ldconfig -p | grep 'libdisplay-info.so.3 '      # our /var/lib/ally-x20-steamos/lib copy listed first (TODO(vm))
 /var/lib/ally-x20-steamos/libdisplay-info/bin/di-edid-decode < /sys/class/drm/card*-eDP-1/edid \
     | grep -A6 'HDR Static Metadata'            # block found inside the DisplayID 2 extension
@@ -197,8 +349,12 @@ match on a real panel.
 
 ## Removing it
 
+Only the Desktop Mode library: `sudo ally-x20-steamos hdr remove`
+([above](#if-desktop-mode-does-not-start-hdr-remove)).
+
 `ally-x20-steamos.sh uninstall` removes every file above (manifest-driven),
-the wrapper's status/cache files, and runs `ldconfig`. By hand:
+the library included, the wrapper's status/cache files, and runs
+`ldconfig`. By hand:
 
 ```sh
 sudo rm /etc/ld.so.conf.d/00-ally-x20-steamos.conf && sudo ldconfig
@@ -206,9 +362,9 @@ sudo rm /etc/gamescope/scripts/90-ally-x20-steamos-rogallyx20-oled.lua
 sudo rm /etc/systemd/user/gamescope-session.service.d/50-ally-x20-steamos.conf
 ```
 
-Build outputs in `/var/lib/ally-x20-steamos/lib`,
+What is left in `/var/lib/ally-x20-steamos/lib`,
 `/var/lib/ally-x20-steamos/libdisplay-info` and `/opt/ally-x20-steamos/gamescope`
-are inert once those files are gone.
+is inert once those files are gone.
 
 `status` reports `superseded` once stock SteamOS has libdisplay-info ≥ 0.4.0
 **and** a gamescope with the X20 profile (`jupiter-main` already has the

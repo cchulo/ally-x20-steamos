@@ -53,6 +53,14 @@ For a kernel version, the sources are tried in this order:
 3. **container**: a local build in the Arch container with podman
    (needs a network connection; takes a few minutes).
 
+Known limit of the container build: run as root, podman keeps its images
+in `/var/lib/containers`, which is on SteamOS's per-slot `/var` partition
+(about 230 MB). A hand-run build of the HDR library on the X20 ran out of
+space there while pulling the Arch image, so this build can fail the same
+way. `hdr build` now keeps podman's storage on `/home`
+([hdr.md](hdr.md#the-hdr-command)); the module build still uses podman's
+default.
+
 This runs from the RAUC post-install hook for the new slot's kernel, and
 from the boot service when the running kernel has no build. Failures are
 logged and never block an update or a boot.

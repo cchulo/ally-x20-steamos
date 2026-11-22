@@ -310,3 +310,19 @@ systemctl --user -M $me@ restart ally-x20-steamos-surround.service" ]
     assert_failure
     assert_output_contains 'surround is not installed'
 }
+
+@test "surround plain: recorded in the user's settings; stereo keeps working either way" {
+    "$CLI" --root "$AX20_ROOT" apply --only surround 2>/dev/null
+    run "$CLI" --root "$AX20_ROOT" surround status
+    assert_output_contains "plain      hidden from other programs' output lists"
+    run "$CLI" --root "$AX20_ROOT" surround plain shown
+    assert_success
+    grep -qx 'plain_outputs=shown' "$HOME/.config/ally-x20-steamos/surround.conf"
+    run "$CLI" --root "$AX20_ROOT" surround plain hidden
+    assert_success
+    grep -qx 'plain_outputs=hidden' "$HOME/.config/ally-x20-steamos/surround.conf"
+    run "$CLI" --root "$AX20_ROOT" surround plain sometimes
+    assert_failure
+    run "$CLI" --root "$AX20_ROOT" surround set speakers stereo
+    assert_success
+}

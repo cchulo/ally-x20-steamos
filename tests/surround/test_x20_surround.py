@@ -66,8 +66,11 @@ def fresh_memo():
     sur._MEMO.clear()
 
 
-def settings(headphones="sadie-d2-dry", speakers="sadie-d2-dry", xtc=(60, 50)):
-    return {"headphones": headphones, "speakers": speakers, "xtc": xtc}
+def settings(headphones="sadie-d2-dry", speakers="sadie-d2-dry", xtc=(60, 50), plain="shown"):
+    """Settings as read_settings returns them. Most tests keep the plain
+    outputs shown, where "stereo" means no filter at all; the default,
+    "hidden", has tests of its own."""
+    return {"headphones": headphones, "speakers": speakers, "xtc": xtc, "plain": plain}
 
 
 def shipped(name):
@@ -148,7 +151,7 @@ def test_every_builtin_profile_ships_a_valid_file_and_is_selectable(paths):
 def test_defaults_one_profile_for_both_outputs_and_xtc_on_the_speakers(paths):
     assert sur.DEFAULT == {"headphones": "sadie-d2-dry", "speakers": "sadie-d2-dry"}
     assert sur.DEFAULT_XTC == (60, 50) and sur.DEFAULT_XTC in sur.XTC_GRID
-    assert sur.read_settings(paths.settings) == settings()
+    assert sur.read_settings(paths.settings) == settings(plain="hidden")
     assert sur.XTC_GRID == tuple((d, s) for d in (60, 80, 100, 120) for s in (30, 50, 70))
     assert [(d, round(s * 100)) for d, s in x.xtc.sweep()] == list(sur.XTC_GRID)
 
@@ -179,12 +182,13 @@ def test_settings_default_bad_values_and_round_trip(paths):
     with open(paths.settings, "w") as f:
         f.write("# x\nheadphones = hutubs-pp1-dry\nspeakers=nonsense\nother=stereo\n"
                 "speakers_xtc = 500/50\n")
-    assert sur.read_settings(paths.settings) == settings(headphones="hutubs-pp1-dry")
+    assert sur.read_settings(paths.settings) == settings(headphones="hutubs-pp1-dry", plain="hidden")
     with open(paths.settings, "w") as f:
         f.write("speakers_xtc=off\n")
-    assert sur.read_settings(paths.settings) == settings(xtc=None)
+    assert sur.read_settings(paths.settings) == settings(xtc=None, plain="hidden")
     sur.write_settings(paths.settings, settings("user", "mit-kemar-dry", (120, 30)))
     assert sur.read_settings(paths.settings) == settings("user", "mit-kemar-dry", (120, 30))
+    assert "plain_outputs=shown\n" in open(paths.settings).read()
     assert "speakers_xtc=120/30\n" in open(paths.settings).read()
     sur.write_settings(paths.settings, settings(xtc=None))
     assert "speakers_xtc=off\n" in open(paths.settings).read()
@@ -517,7 +521,7 @@ def test_look_finds_the_internal_sinks_and_the_jack():
     # another card's "Headphones" route and a Bluetooth sink do not count
     assert not sur.look(state(plugged=False))["headphones_plugged"]
     assert sur.look([]) == {"sinks": {}, "headphones_plugged": False, "running": set(),
-                            "ids": {}, "default": None, "shown": {}}
+                            "ids": {}, "default": None, "shown": {}, "clients": {}}
 
 
 def test_look_knows_our_sinks_by_their_id_property_and_translates_the_default():
@@ -1016,6 +1020,151 @@ def test_wpctl_output_is_parsed(monkeypatch):
     assert sur.Volumes().set(56, 2.0) is False   # the stub knows no set-volume
 
 
+# -- the plain outputs are hidden; stereo is a sink of its own ----------------
+class FakePerms:
+    def __init__(self):
+        self.calls = []
+
+    def set(self, client, node, perms):
+        self.calls.append((client, node, perms))
+        return True
+
+
+def clients_world(plugged=False):
+    """A world with other programs connected: Steam (through the pulse
+    server), a game, WirePlumber and one of PipeWire's own processes."""
+    world = volume_world(plugged=plugged)
+    world.clients = {
+        31: {"application.name": "WirePlumber", "wireplumber.daemon": True,
+             "application.process.binary": "wireplumber"},
+        99: {"application.name": "pipewire", "application.process.binary": "pipewire"},
+        135: {"application.name": "Steam", "application.process.binary": "steam",
+              "client.api": "pipewire-pulse"},
+        140: {"application.name": "Some Game", "application.process.binary": "game.exe"},
+        150: {"application.name": "pw-dump", "application.process.binary": "pw-dump"},
+    }
+    real = world.dump
+
+    def dump():
+        objects = real()
+        if objects is not None:
+            objects = objects + [{"id": ident, "type": "PipeWire:Interface:Client",
+                                  "info": {"props": props}}
+                                 for ident, props in world.clients.items()]
+        return objects
+    world.perms = FakePerms()
+    world.runner = lambda paths: sur.Runner(paths, spawn=world.spawn, dump=dump,
+                                            sleep=world.sleep, vol=world, perms=world.perms)
+    return world
+
+
+def test_the_plain_outputs_are_hidden_from_other_programs_only(paths):
+    world = clients_world()                      # the default: plain outputs hidden
+    runner = world.runner(paths)
+    with redirect_stderr(io.StringIO()):
+        runner.step(now=0)
+        assert world.perms.calls == []           # our sink is not there yet: nothing to list
+        runner.step(now=2)
+    spk, hp = node_id(SPK), node_id(HP)
+    # Steam and the game lose both plain sinks; WirePlumber, PipeWire's own
+    # processes (our filter) and the pw-* tools keep them
+    assert sorted(world.perms.calls) == sorted(
+        [(135, spk, "-"), (135, hp, "-"), (140, spk, "-"), (140, hp, "-")])
+    with redirect_stderr(io.StringIO()):
+        runner.step(now=4)
+        assert len(world.perms.calls) == 4       # once per program, not on every look
+        world.clients[160] = {"application.name": "Late", "application.process.binary": "late"}
+        runner.step(now=6)                       # a program that starts later
+    assert sorted(world.perms.calls[4:]) == [(160, hp, "-"), (160, spk, "-")]
+
+
+def test_stopping_gives_the_plain_outputs_back(paths):
+    world = clients_world()
+    runner = world.runner(paths)
+    with redirect_stderr(io.StringIO()):
+        runner.step(now=0)
+        runner.step(now=2)
+        runner.stop()
+    spk, hp = node_id(SPK), node_id(HP)
+    assert sorted(world.perms.calls[4:]) == sorted(
+        [(135, spk, "rwxm"), (135, hp, "rwxm"), (140, spk, "rwxm"), (140, hp, "rwxm")])
+    assert runner.hidden == set()
+
+
+def test_plain_shown_hides_nothing_and_gives_back_what_was_hidden(paths):
+    world = clients_world()
+    sur.write_settings(paths.settings, settings(plain="shown"))
+    runner = world.runner(paths)
+    with redirect_stderr(io.StringIO()):
+        runner.step(now=0)
+        runner.step(now=2)
+        assert world.perms.calls == []
+        sur.write_settings(paths.settings, settings(plain="hidden"))
+        runner.step(now=4)
+        assert len(world.perms.calls) == 4
+        sur.write_settings(paths.settings, settings(plain="shown"))
+        runner.step(now=6)
+    assert [c[2] for c in world.perms.calls[4:]] == ["rwxm"] * 4
+
+
+def test_stereo_is_a_pass_through_sink_while_the_plain_outputs_are_hidden(paths):
+    world = clients_world()
+    sur.write_settings(paths.settings, settings(speakers="stereo", plain="hidden"))
+    runner = world.runner(paths)
+    with redirect_stderr(io.StringIO()) as log:
+        want = runner.step(now=0)
+        runner.step(now=2)
+    assert want[:3] == ("speakers", "stereo", None)
+    text = world.spawned[0][0]
+    assert 'node.name        = "Speakers (Stereo)"' in text
+    assert "audio.channels   = 2" in text and "label = convolver" not in text
+    assert text.count("label = copy") == 2
+    assert 'target.object      = "%s"' % SPK in text and "priority.session = 713" in text
+    assert "stereo (pass-through)" in log.getvalue()
+    # it takes the volume and hides the plain sink like any other profile
+    assert world.vol(SA) == 0.55 and world.vol(SPK) == 1.0
+    assert (135, node_id(SPK), "-") in world.perms.calls
+    # and a switch to a surround profile hands over as usual
+    sur.write_settings(paths.settings, settings(speakers="sadie-d2-dry", xtc=None,
+                                                plain="hidden"))
+    with redirect_stderr(io.StringIO()):
+        runner.step(now=4)
+    assert world.alive() == [SB] and "audio.channels   = 8" in world.spawned[1][0]
+
+
+def test_stereo_runs_no_filter_while_the_plain_outputs_are_shown(paths):
+    world = clients_world()
+    sur.write_settings(paths.settings, settings(speakers="stereo", plain="shown"))
+    runner = world.runner(paths)
+    with redirect_stderr(io.StringIO()):
+        assert runner.step(now=0) is None
+    assert world.spawned == [] and world.perms.calls == []
+
+
+def test_plain_command_and_status(paths, as_user, monkeypatch):
+    monkeypatch.setattr(sur, "pw_dump", lambda: None)
+    rc, out, _ = run(["status"], paths)
+    assert "plain      hidden from other programs' output lists" in out
+    rc, out, _ = run(["plain", "shown"], paths)
+    assert rc == 0 and "plain outputs: shown" in out
+    assert sur.read_settings(paths.settings)["plain"] == "shown"
+    rc, out, _ = run(["status"], paths)
+    assert "plain      shown next to the surround output" in out
+    rc, out, _ = run(["plain", "hidden"], paths)
+    assert rc == 0 and "'Speakers (Stereo)'" in out
+    assert sur.read_settings(paths.settings)["plain"] == "hidden"
+    assert sur.description("speakers", "stereo") == "Speakers (Stereo)"
+    assert sur.description("headphones", "stereo") == "Headphones (Stereo)"
+
+
+def test_which_clients_keep_the_plain_outputs():
+    assert sur.sees_plain({"wireplumber.daemon": True})
+    for binary in ("pipewire", "pipewire-pulse", "pw-dump", "wpctl", "pw-cli"):
+        assert sur.sees_plain({"application.process.binary": binary})
+    assert not sur.sees_plain({"application.process.binary": "steam"})
+    assert not sur.sees_plain({})
+
+
 # -- the name the output shows ------------------------------------------------
 def test_output_names_are_readable(paths):
     assert sur.profile_label("sadie-d2-dry") == "SADIE D2 Dry"
@@ -1081,14 +1230,14 @@ def test_set_names_the_output_and_changes_only_that_one(paths, as_user):
     rc, out, _ = run(["set", "speakers", "mit-kemar-dry"], paths)
     assert rc == 0 and "speakers: mit-kemar-dry + xtc 60 us / 50 %  (trim -5.23 dB)\n" in out
     assert "headphones" not in out
-    assert sur.read_settings(paths.settings) == settings(speakers="mit-kemar-dry")
+    assert sur.read_settings(paths.settings) == settings(speakers="mit-kemar-dry", plain="hidden")
     rc, out, _ = run(["set", "headphones", "user"], paths)
     assert rc == 0 and "headphones: user -> sadie-d2-dry" in out and "no .wav file" in out
     assert "speakers" not in out and "xtc" not in out
-    assert sur.read_settings(paths.settings) == settings("user", "mit-kemar-dry")
+    assert sur.read_settings(paths.settings) == settings("user", "mit-kemar-dry", plain="hidden")
     rc, out, _ = run(["set", "hutubs-pp1-dry", "--device", "headphones"], paths)   # the old form
     assert rc == 0 and "headphones: hutubs-pp1-dry\n" in out
-    assert sur.read_settings(paths.settings) == settings("hutubs-pp1-dry", "mit-kemar-dry")
+    assert sur.read_settings(paths.settings) == settings("hutubs-pp1-dry", "mit-kemar-dry", plain="hidden")
 
 
 @pytest.mark.parametrize("argv,word", [
@@ -1116,17 +1265,17 @@ def test_xtc_command_sets_validates_and_reports(paths, as_user):
     rc, out, _ = run(["xtc", "100", "30"], paths)
     assert rc == 0 and "xtc: 100 us / 30 %  (speakers only)" in out
     assert "speakers: sadie-d2-dry + xtc 100 us / 30 %  (trim -1.29 dB)" in out
-    assert sur.read_settings(paths.settings) == settings(xtc=(100, 30))
+    assert sur.read_settings(paths.settings) == settings(xtc=(100, 30), plain="hidden")
     rc, out, _ = run(["xtc", "off"], paths)
     assert rc == 0 and "xtc: off" in out and "speakers: sadie-d2-dry\n" in out
-    assert sur.read_settings(paths.settings) == settings(xtc=None)
+    assert sur.read_settings(paths.settings) == settings(xtc=None, plain="hidden")
     for bad, word in ((["10", "50"], "delay 10 is out of range: 20 to 300"),
                       (["60", "99"], "strength 99 is out of range: 5 to 95"),
                       (["60"], "xtc takes"), (["60", "50", "3"], "xtc takes"),
                       (["loud", "50"], "whole numbers")):
         rc, _, err = run(["xtc"] + bad, paths)
         assert rc == 1 and word in err
-    assert sur.read_settings(paths.settings) == settings(xtc=None)   # nothing bad was stored
+    assert sur.read_settings(paths.settings) == settings(xtc=None, plain="hidden")   # nothing bad was stored
     # the headphones' profile is untouched by it, and an unusable setting is
     # stored but explained
     sur.write_settings(paths.settings, settings("hutubs-pp1-dry", "mit-kemar-dry", None))

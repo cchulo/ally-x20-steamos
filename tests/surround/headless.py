@@ -283,12 +283,46 @@ def main():
               "status explains the fall-back to the profile without xtc")
         hand_over("xtc 80/50", "d080-s50.wav", "xtc", "80", "50")
 
+        # Another program (a copy of pw-dump under another name, so that it
+        # does not count as one of PipeWire's tools) watches the graph, as
+        # Steam does. The plain speaker sink is taken out of its view.
+        other = os.path.join(tmp, "other-program")
+        shutil.copy(shutil.which("pw-dump"), other)
+        seen_by_other = os.path.join(tmp, "other-program.out")
+        with open(seen_by_other, "w") as out:
+            procs.append(subprocess.Popen(["stdbuf", "-oL", other, "-m"], env=env, stdout=out,
+                                          stderr=subprocess.DEVNULL))
+        speaker_id = node_id(SPEAKERS)
+
+        def told_gone():
+            text = open(seen_by_other).read()
+            return re.search(r'"id":\s*%d,\s*"info":\s*null' % speaker_id, text) is not None
+        wait(told_gone, "another program is told the plain speaker sink is gone (hidden)",
+             timeout=10)
+        check(SPEAKERS in sinks(), "a new client, like this check and the pw-* tools, still sees it")
+
+        # with the plain outputs hidden, stereo is a sink of its own
         helper("set", "speakers", "stereo")
-        wait(lambda: not ours(), "stereo removes the surround sink")
+        wait(lambda: len(ours()) == 1
+             and (sinks().get(ours()[0]) or {}).get("node.name", "").strip()
+             == "Speakers (Stereo)",
+             "stereo is the pass-through sink 'Speakers (Stereo)'")
+        stereo = ours()[0]
+        check(str((sinks().get(stereo) or {}).get("audio.channels")) == "2",
+              "it has 2 channels, so a game sends stereo")
+        wait(lambda: default_sink() == stereo, "and it is the default", timeout=5)
+        wait(lambda: volume(stereo) == 0.40 and volume(SPEAKERS) == 1.00,
+             "it carries the volume (0.40); the speaker sink stays at 1.00", timeout=5)
+        check(len(filters()) == 1, "one filter process runs it")
+
+        # plain outputs shown: stereo runs no filter and the volume goes back
+        helper("plain", "shown")
+        wait(lambda: not ours(), "with 'plain shown', stereo runs no filter")
         wait(lambda: default_sink() == SPEAKERS, "the speaker sink is the default again")
         wait(lambda: not filters(), "no filter process is left")
         wait(lambda: volume(SPEAKERS) == 0.40,
              "the speaker sink got the volume back (0.40), not left at 1.00", timeout=5)
+        helper("plain", "hidden")
 
         helper("set", "speakers", "user")
         wait(lambda: len(ours()) == 1 and "sadie-d2-dry.wav" not in conf_of(ours()[0])

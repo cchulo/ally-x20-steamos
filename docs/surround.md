@@ -242,6 +242,43 @@ exactly when it would have picked that hardware output. An output chosen by
 hand in Steam (Bluetooth, HDMI, or the plain built-in one) still wins, and
 choosing the plain built-in output there is a way to bypass the filter.
 
+### The name in Steam's output list
+
+The surround output is called after its output and profile, for example
+`Speakers (Surround - SADIE D2 Dry)` or
+`Headphones (Surround - MIT KEMAR Large Full)`; with your own file,
+`… (Surround - User)`. The plain outputs stay in the list next to it.
+Hiding them is not done: WirePlumber can hide a hardware output behind a
+filter it creates itself (its "software DSP" policy with `hide-parent`),
+but not behind a filter that runs as its own process, as this one does.
+That would be a different design and is not attempted here.
+
+### Volume
+
+What you hear is the surround output's volume multiplied by the plain
+output's volume behind it. The volume keys and Steam's slider move the
+default output, which is the surround one. A plain output left at 55 %
+would therefore cap everything at 55 % (seen on the X20 on 2026-11-21). So:
+
+| When | What the helper does |
+|---|---|
+| A filter is in front of a plain output | the surround output takes that output's volume and mute state, then the plain output goes to 100 % |
+| The profile or crosstalk setting changes | the new surround output gets the old one's volume before the old one stops |
+| The filter stops (`stereo`, the service stops, the other output takes over) | the plain output gets the volume back, then the filter stops |
+| The plain output is picked by hand in Steam | it gets the volume back at the next look (within 2 s), so it does not stay at 100 % |
+
+The writes always go "the quiet one first", so no step is louder than what
+was set. The volume in use is also kept in
+`~/.local/state/ally-x20-steamos/surround-volume.json`; if the service is
+killed while a plain output is at 100 %, that output gets the remembered
+volume back before the next filter starts.
+
+Checked on a private PipeWire 1.6.11 with real `wpctl`
+(`tests/surround/headless.py`): 0.50 on the speaker sink moves to the
+surround sink and the speaker sink goes to 1.00; 0.40 set on the surround
+sink follows a profile switch; with `stereo` the speaker sink is back at
+0.40.
+
 ### Switching
 
 A change of profile, of the crosstalk setting, of the user's file or of the
@@ -339,15 +376,18 @@ Nothing below has run on the X20 as part of this component.
   PipeWire restarts.
 - The jack: plugging and unplugging headphones moves the filter between the
   outputs within a few seconds, and the default output follows.
-- What Steam's output list shows. The surround sink appears as "Headphones
-  (7.1 surround)" or "Speakers (7.1 surround)" next to the plain outputs;
-  hiding the plain ones is not attempted. During a switch two entries with
-  the same name exist for about a second.
+- What Steam's output list shows: the surround output under its name
+  (`Speakers (Surround - SADIE D2 Dry)`) next to the plain outputs. Seen on
+  the X20 on 2026-11-21 with the earlier name: the surround sink was the
+  default without any default being forced. During a switch two surround
+  entries exist for about a second.
 - A game opens an 8-channel stream on the surround sink.
-- Volume keys and Steam's volume slider act on the surround sink as on the
-  plain one, and the level after a switch is sensible. A switch creates a
-  new sink (`_a`, then `_b`); whether the volume set on the old one carries
-  over to the new one is not known.
+- Volume on the device: the level is the same before and after the filter
+  starts, the volume keys and Steam's slider reach full volume, the level
+  does not jump on a profile switch or when the jack changes the output,
+  and no moment is louder than what was set. In particular the first two
+  seconds after a filter starts, and the moment the plain output is picked
+  by hand in Steam (it can be at 100 % for up to 2 s).
 - Resume from sleep.
 - The speaker path of the component as a whole: the default
   (`sadie-d2-dry`, `xtc 60 50`) playing after `apply`, the variant being

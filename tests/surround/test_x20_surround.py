@@ -92,7 +92,17 @@ def count_calls(monkeypatch, name):
     return calls
 
 
-def state(plugged=False, sinks=("headphones", "speakers"), running=()):
+SHOWN = {"headphones": "Headphones (Surround - SADIE D2 Dry)",
+         "speakers": "Speakers (Surround - SADIE D2 Dry)"}
+NODE_ID = {}
+
+
+def node_id(name):
+    """A stable object id per node name, as pw-dump would give."""
+    return NODE_ID.setdefault(name, 100 + len(NODE_ID))
+
+
+def state(plugged=False, sinks=("headphones", "speakers"), running=(), default=None):
     objs = [{"type": "PipeWire:Interface:Device",
              "info": {"props": {"device.name": "alsa_card.pci-0000_64_00.5-platform-amd_sdw"},
                       "params": {"EnumRoute": [
@@ -103,11 +113,16 @@ def state(plugged=False, sinks=("headphones", "speakers"), running=()):
                       "params": {"EnumRoute": [{"name": "[Out] Headphones", "available": "yes"}]}}}]
     for device, name, prio in (("headphones", HP, 1000), ("speakers", SPK, 712)):
         if device in sinks:
-            objs.append({"type": "PipeWire:Interface:Node", "info": {"props": {
+            objs.append({"id": node_id(name), "type": "PipeWire:Interface:Node", "info": {"props": {
                 "node.name": name, "media.class": "Audio/Sink", "priority.session": prio}}})
     for name in running:
-        objs.append({"type": "PipeWire:Interface:Node", "info": {"props": {
-            "node.name": name, "media.class": "Audio/Sink"}}})
+        objs.append({"id": node_id(name), "type": "PipeWire:Interface:Node", "info": {"props": {
+            "node.name": name, "media.class": "Audio/Sink",
+            "node.description": SHOWN["headphones" if "headphones" in name else "speakers"]}}})
+    if default is not None:
+        objs.append({"type": "PipeWire:Interface:Metadata", "metadata": [
+            {"key": "default.audio.sink", "value": {"name": default}},
+            {"key": "default.audio.source", "value": {"name": "mic"}}]})
     objs.append({"type": "PipeWire:Interface:Node", "info": {"props": {
         "node.name": "bluez_output.x.HiFi__Headphones__sink", "media.class": "Audio/Sink"}}})
     return objs
@@ -501,7 +516,8 @@ def test_look_finds_the_internal_sinks_and_the_jack():
     assert seen["running"] == {"ally_x20_surround_headphones_a", "ally_x20_surround_speakers_b"}
     # another card's "Headphones" route and a Bluetooth sink do not count
     assert not sur.look(state(plugged=False))["headphones_plugged"]
-    assert sur.look([]) == {"sinks": {}, "headphones_plugged": False, "running": set()}
+    assert sur.look([]) == {"sinks": {}, "headphones_plugged": False, "running": set(),
+                            "ids": {}, "default": None, "shown": {}}
 
 
 def test_active_device_follows_the_jack():
@@ -577,6 +593,9 @@ class World:
     def __init__(self, plugged=True):
         self.plugged = plugged
         self.gone = False
+        self.default = None     # node.name of the default sink, when a test sets it
+        self.volumes = {}       # object id -> [volume, muted]
+        self.volume_log = []    # ("set", name, value) in the order written
         self.hidden = set()
         self.stillborn = False
         self.spawned = []       # (config text, process)
@@ -587,7 +606,27 @@ class World:
         return [p.node for _, p in self.spawned if p.code is None and p.node not in self.hidden]
 
     def dump(self):
-        return None if self.gone else state(plugged=self.plugged, running=self.running())
+        return None if self.gone else state(plugged=self.plugged, running=self.running(),
+                                            default=self.default)
+
+    # the wpctl side: volumes by object id
+    def get(self, ident):
+        got = self.volumes.get(ident)
+        return (got[0], got[1]) if got else None
+
+    def set(self, ident, volume):
+        self.volumes.setdefault(ident, [1.0, False])[0] = round(float(volume), 4)
+        name = next((n for n, i in NODE_ID.items() if i == ident), ident)
+        self.volume_log.append(("set", name, round(float(volume), 4)))
+        self.events.append("vol %s %.2f" % (name, float(volume)))
+        return True
+
+    def mute(self, ident, muted):
+        self.volumes.setdefault(ident, [1.0, False])[1] = bool(muted)
+        return True
+
+    def vol(self, name):
+        return self.volumes.get(node_id(name), [None, None])[0]
 
     def spawn(self, conf_path):
         text = open(conf_path).read()
@@ -607,7 +646,7 @@ class World:
             self.events.append("sleep")
 
     def runner(self, paths):
-        return sur.Runner(paths, spawn=self.spawn, dump=self.dump, sleep=self.sleep)
+        return sur.Runner(paths, spawn=self.spawn, dump=self.dump, sleep=self.sleep, vol=self)
 
     def alive(self):
         return [p.node for _, p in self.spawned if p.code is None]
@@ -767,6 +806,204 @@ def test_a_hand_over_that_fails_falls_back_to_replacing_the_filter(paths, troubl
         assert world.slept == pytest.approx(sur.HANDOVER_TIMEOUT)
 
 
+# -- volume: the hardware sink is held at 100 % under a filter ----------------
+def volume_world(plugged=False, speakers=0.55, headphones=0.30):
+    world = World(plugged=plugged)
+    world.volumes[node_id(SPK)] = [speakers, False]
+    world.volumes[node_id(HP)] = [headphones, False]
+    return world
+
+
+def held(paths):
+    return sur.read_volume_state(paths.volume_state)
+
+
+def test_the_surround_sink_takes_the_volume_and_the_hardware_sink_goes_to_full(paths):
+    world = volume_world()
+    runner = world.runner(paths)
+    with redirect_stderr(io.StringIO()) as log:
+        runner.step(now=0)                       # the filter starts; its sink is not there yet
+        assert world.volume_log == []
+        runner.step(now=2)                       # now it is: the volume moves
+    # the surround sink first (quiet), then the hardware sink up: never louder
+    assert world.volume_log == [("set", SA, 0.55), ("set", SPK, 1.0)]
+    assert world.vol(SA) == 0.55 and world.vol(SPK) == 1.0
+    assert held(paths) == {SPK: {"held": True, "volume": 0.55, "muted": False}}
+    assert "volume 0.55 moved to the surround sink" in log.getvalue()
+    with redirect_stderr(io.StringIO()):
+        runner.step(now=4)
+    assert len(world.volume_log) == 2            # settled: nothing is written again
+
+
+def test_a_muted_output_stays_muted_under_the_filter(paths):
+    world = volume_world()
+    world.volumes[node_id(SPK)] = [0.4, True]
+    runner = world.runner(paths)
+    with redirect_stderr(io.StringIO()):
+        runner.step(now=0)
+        runner.step(now=2)
+    assert world.volumes[node_id(SA)] == [0.4, True]
+    assert world.volumes[node_id(SPK)] == [1.0, False]
+    assert held(paths)[SPK]["muted"] is True
+
+
+def test_the_volume_set_with_the_keys_follows_a_profile_switch(paths):
+    world = volume_world()
+    runner = world.runner(paths)
+    with redirect_stderr(io.StringIO()):
+        runner.step(now=0)
+        runner.step(now=2)
+        world.volumes[node_id(SA)][0] = 0.70     # the volume keys move the default sink
+        runner.step(now=4)
+        assert held(paths)[SPK]["volume"] == 0.70   # remembered
+        sur.write_settings(paths.settings, settings(xtc=(100, 30)))
+        runner.step(now=6)                       # hand-over to the other sink name
+    assert world.alive() == [SB]
+    assert world.vol(SB) == 0.70 and world.vol(SPK) == 1.0
+    # the new sink has the volume before the old one stops
+    assert world.events.index("vol %s 0.70" % SB) < world.events.index("stop " + SA)
+
+
+def test_stopping_the_filter_gives_the_volume_back_first(paths):
+    world = volume_world()
+    runner = world.runner(paths)
+    with redirect_stderr(io.StringIO()) as log:
+        runner.step(now=0)
+        runner.step(now=2)
+        world.volumes[node_id(SA)][0] = 0.62
+        sur.write_settings(paths.settings, settings(speakers="stereo"))
+        assert runner.step(now=4) is None
+    assert world.alive() == [] and world.vol(SPK) == 0.62
+    # the hardware sink comes down from 100 % before the filter goes
+    assert world.events.index("vol %s 0.62" % SPK) < world.events.index("stop " + SA)
+    assert held(paths)[SPK] == {"held": False, "volume": 0.62, "muted": False}
+    assert "volume 0.62 back on" in log.getvalue()
+
+
+def test_runner_stop_gives_the_volume_back(paths):
+    world = volume_world()
+    runner = world.runner(paths)
+    with redirect_stderr(io.StringIO()):
+        runner.step(now=0)
+        runner.step(now=2)
+        runner.stop()                            # the service is stopped
+    assert world.vol(SPK) == 0.55 and world.alive() == []
+    assert held(paths)[SPK]["held"] is False
+
+
+def test_a_filter_that_died_does_not_leave_the_hardware_sink_at_full(paths):
+    world = volume_world()
+    runner = world.runner(paths)
+    with redirect_stderr(io.StringIO()):
+        runner.step(now=0)
+        runner.step(now=2)
+        world.spawned[0][1].code = 1             # the filter process is gone
+        sur.write_settings(paths.settings, settings(speakers="stereo"))
+        runner.step(now=4)
+    assert world.vol(SPK) == 0.55                # from what was remembered
+
+
+def test_the_jack_moves_the_volume_per_output(paths):
+    world = volume_world()
+    runner = world.runner(paths)
+    with redirect_stderr(io.StringIO()):
+        runner.step(now=0)
+        runner.step(now=2)
+        world.volumes[node_id(SA)][0] = 0.80
+        world.plugged = True                     # headphones in
+        runner.step(now=4)
+    assert world.alive() == [HB]
+    assert world.vol(SPK) == 0.80                # the speakers got theirs back
+    assert world.vol(HB) == 0.30 and world.vol(HP) == 1.0   # the headphones' own volume
+    state_now = held(paths)
+    assert state_now[SPK]["held"] is False and state_now[HP] == {
+        "held": True, "volume": 0.30, "muted": False}
+    # nothing was ever written louder than the user had it, except the held sinks
+    for _, name, value in world.volume_log:
+        assert value <= 0.80 or name in (SPK, HP)
+
+
+def test_a_hardware_sink_left_at_full_gets_its_volume_back_before_a_filter_starts(paths):
+    # the service was killed (or the machine went down) while it held the speakers
+    sur.write_volume_state(paths.volume_state,
+                           {SPK: {"held": True, "volume": 0.40, "muted": False}})
+    world = volume_world(speakers=1.0)
+    runner = world.runner(paths)
+    with redirect_stderr(io.StringIO()):
+        runner.step(now=0)
+    assert world.events[0] == "vol %s 0.40" % SPK and world.events[1] == "start " + SA
+    with redirect_stderr(io.StringIO()):
+        runner.step(now=2)
+    assert world.vol(SA) == 0.40 and world.vol(SPK) == 1.0
+
+
+def test_the_plain_output_picked_by_hand_is_not_left_at_full(paths):
+    world = volume_world()
+    runner = world.runner(paths)
+    with redirect_stderr(io.StringIO()):
+        runner.step(now=0)
+        runner.step(now=2)
+        world.volumes[node_id(SA)][0] = 0.50
+        world.default = SPK                      # chosen in Steam: the plain speakers
+        runner.step(now=4)
+        assert world.vol(SPK) == 0.50 and world.alive() == [SA]
+        runner.step(now=6)
+        assert world.vol(SPK) == 0.50            # and it is left alone while that lasts
+        world.default = SA                       # back on the surround sink
+        runner.step(now=8)
+    assert world.vol(SPK) == 1.0 and world.vol(SA) == 0.50
+
+
+def test_without_wpctl_nothing_is_changed(paths):
+    world = World(plugged=False)                 # no volume can be read
+    runner = world.runner(paths)
+    with redirect_stderr(io.StringIO()):
+        runner.step(now=0)
+        runner.step(now=2)
+        runner.stop()
+    assert world.volume_log == [] and held(paths) == {}
+
+
+def test_volume_state_file_tolerates_junk(paths):
+    os.makedirs(os.path.dirname(paths.volume_state), exist_ok=True)
+    with open(paths.volume_state, "w") as f:
+        f.write("{not json")
+    assert sur.read_volume_state(paths.volume_state) == {}
+    with open(paths.volume_state, "w") as f:
+        f.write('{"a": {"held": 1, "volume": 7}, "b": "x", "c": {"volume": "loud"}}')
+    assert sur.read_volume_state(paths.volume_state) == {
+        "a": {"held": True, "volume": 1.0, "muted": False}}
+
+
+def test_wpctl_output_is_parsed(monkeypatch):
+    answers = {"get-volume": "Volume: 0.55\n"}
+    monkeypatch.setattr(sur.Volumes, "_run", staticmethod(lambda argv: answers.get(argv[1])))
+    assert sur.Volumes().get(56) == (0.55, False)
+    answers["get-volume"] = "Volume: 0.30 [MUTED]\n"
+    assert sur.Volumes().get(56) == (0.30, True)
+    answers["get-volume"] = "nonsense"
+    assert sur.Volumes().get(56) is None
+    assert sur.Volumes().set(56, 2.0) is False   # the stub knows no set-volume
+
+
+# -- the name the output shows ------------------------------------------------
+def test_output_names_are_readable(paths):
+    assert sur.profile_label("sadie-d2-dry") == "SADIE D2 Dry"
+    assert sur.profile_label("mit-kemar-large-full") == "MIT KEMAR Large Full"
+    assert sur.profile_label("hutubs-pp1-dry") == "HUTUBS PP1 Dry"
+    assert sur.profile_label("user") == "User"
+    for profile in sur.PROFILES:
+        if profile != sur.STEREO:
+            label = sur.profile_label(profile)
+            assert "-" not in label and "_" not in label and label[0].isupper()
+    assert sur.description("speakers", "sadie-d2-dry") == "Speakers (Surround - SADIE D2 Dry)"
+    assert sur.description("headphones", "user") == "Headphones (Surround - User)"
+    text = sur.render("speakers", "mit-kemar-dry", sadie_path(), SPK, -1.0, 713)
+    assert 'node.description = "Speakers (Surround - MIT KEMAR Dry)"' in text
+    assert 'node.nick        = "Speakers (Surround - MIT KEMAR Dry)"' in text
+    assert 'node.name        = "ally_x20_surround_speakers_a"' in text
+
+
 def test_runner_restarts_a_dead_filter_with_a_growing_pause(paths):
     world = World()
     runner = world.runner(paths)
@@ -908,7 +1145,7 @@ def test_status_shows_profiles_the_xtc_setting_the_file_and_its_trim(paths, monk
     assert "headphones sadie-d2-dry  (sadie-d2-dry.wav, trim -1.10 dB)\n" in out
     assert "speakers   sadie-d2-dry  (sadie-d2-dry.wav, trim -1.10 dB)  [in use]" in out
     assert "xtc        60 us / 50 %  (speakers only): not generated yet" in out
-    assert "running: Speakers (7.1 surround)" in out
+    assert "running: Speakers (Surround - SADIE D2 Dry)" in out
 
     file = sur.variant(paths, sadie_path(), (60, 50))["wav"]
     rc, out, _ = run(["status"], paths)
@@ -924,7 +1161,7 @@ def test_status_shows_profiles_the_xtc_setting_the_file_and_its_trim(paths, monk
     assert "speakers   mit-kemar-dry  (mit-kemar-dry.wav, trim -5.03 dB)\n" in out
     assert "           note: crosstalk cancellation 60 us / 70 % is not usable" in out
     assert "xtc        60 us / 70 %  (speakers only): not in use, see the note" in out
-    assert "running: Headphones (7.1 surround)" in out
+    assert "running: Headphones (Surround - SADIE D2 Dry)" in out
 
     sur.write_settings(paths.settings, settings(speakers="stereo", xtc=None))
     rc, out, _ = run(["status"], paths)

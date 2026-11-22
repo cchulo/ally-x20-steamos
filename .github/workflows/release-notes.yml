@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# The version in VERSION must have a section in CHANGELOG.md, because the
+# release job publishes that section as the GitHub release notes
+# (scripts/release-notes.sh). This runs when either file changes, so a
+# version bump is checked without the full test run, which skips changes to
+# Markdown files and VERSION.
+name: release-notes
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'VERSION'
+      - 'CHANGELOG.md'
+      - 'scripts/release-notes.sh'
+      - '.github/workflows/release-notes.yml'
+  pull_request:
+    paths:
+      - 'VERSION'
+      - 'CHANGELOG.md'
+      - 'scripts/release-notes.sh'
+      - '.github/workflows/release-notes.yml'
+permissions:
+  contents: read
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release notes for the version in VERSION
+        run: scripts/release-notes.sh "$(tr -d '[:space:]' < VERSION)"

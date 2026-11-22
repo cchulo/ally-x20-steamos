@@ -157,6 +157,19 @@ def node_name(device, slot):
 
 
 SINK_NAMES = {node_name(d, i): d for d in DEVICES for i in range(len(SLOTS))}
+# Steam's output list shows a virtual sink under its node.name and ignores
+# node.description and node.nick (seen on the X20 on 2026-11-21, and with a
+# null sink carrying a different word in each field). So the node.name is
+# the readable text, and the id above ("..._a", "..._b"), which the helper
+# uses to tell its sinks apart, rides along in this property.
+ID_PROP = "ally-x20-steamos.surround.id"
+
+
+def display_name(device, profile, ident):
+    """The node.name of a surround sink: what Steam shows. The two slots of
+    an output must not have the same name while both exist, so the second
+    one gets a trailing space, which no list shows."""
+    return description(device, profile) + (" " if ident.endswith("_" + SLOTS[1]) else "")
 
 
 def _beside(name):
@@ -640,9 +653,10 @@ def render(device, profile, wav, target, trim_db, priority, node=None):
         "                inputs  = [ %s ]\n" % " ".join('"copy%s:In"' % c for c in INPUTS),
         '                outputs = [ "limL:Out" "limR:Out" ]\n            }\n',
         "            capture.props = {\n",
-        '                node.name        = "%s"\n' % node,
+        '                node.name        = "%s"\n' % display_name(device, profile, node),
         '                node.description = "%s"\n' % name,
         '                node.nick        = "%s"\n' % name,
+        '                %s = "%s"\n' % (ID_PROP, node),
         "                media.class      = Audio/Sink\n",
         "                audio.channels   = %d\n" % len(INPUTS),
         "                audio.position   = [ %s ]\n" % " ".join(INPUTS),
@@ -680,10 +694,11 @@ def pw_dump():
 
 def look(objects):
     """What matters in a pw-dump: {"sinks": {device: (node.name, priority)},
-    "headphones_plugged": bool, "running": set of our sink names, "ids":
-    {node.name: object id} of those sinks, "default": node.name of the
-    default sink or None, "shown": {our sink name: its description}}."""
-    sinks, running, ids, shown = {}, set(), {}, {}
+    "headphones_plugged": bool, "running": set of our sinks' ids ("..._a"),
+    "ids": {hardware node.name or our sink's id: object id}, "default": the
+    default sink (our id for one of ours, else its node.name) or None,
+    "shown": {our sink's id: its description}}."""
+    sinks, running, ids, shown, named = {}, set(), {}, {}, {}
     plugged = False
     default = None
     for o in objects or ():
@@ -701,10 +716,12 @@ def look(objects):
                             priority = 0
                         sinks[device] = (name, priority)
                         ids[name] = o.get("id")
-                if name in SINK_NAMES:
-                    running.add(name)
-                    ids[name] = o.get("id")
-                    shown[name] = str(props.get("node.description") or name)
+                ident = str(props.get(ID_PROP) or name)
+                if ident in SINK_NAMES:
+                    running.add(ident)
+                    ids[ident] = o.get("id")
+                    shown[ident] = str(props.get("node.description") or name)
+                    named[name] = ident
         elif kind.endswith(":Device") and CARD_HINT in str(props.get("device.name") or ""):
             for route in (info.get("params") or {}).get("EnumRoute") or ():
                 if route.get("name") == HEADPHONE_ROUTE and route.get("available") == "yes":
@@ -715,8 +732,9 @@ def look(objects):
                     value = entry.get("value")
                     if isinstance(value, dict):
                         default = value.get("name")
+    # The default sink is reported by node.name; ours are known by their id.
     return {"sinks": sinks, "headphones_plugged": plugged, "running": running,
-            "ids": ids, "default": default, "shown": shown}
+            "ids": ids, "default": named.get(default, default), "shown": shown}
 
 
 def active_device(state):

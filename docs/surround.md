@@ -247,11 +247,25 @@ choosing the plain built-in output there is a way to bypass the filter.
 The surround output is called after its output and profile, for example
 `Speakers (Surround - SADIE D2 Dry)` or
 `Headphones (Surround - MIT KEMAR Large Full)`; with your own file,
-`… (Surround - User)`. The plain outputs stay in the list next to it.
-Hiding them is not done: WirePlumber can hide a hardware output behind a
-filter it creates itself (its "software DSP" policy with `hide-parent`),
-but not behind a filter that runs as its own process, as this one does.
-That would be a different design and is not attempted here.
+`… (Surround - User)`. With Steam's output on "Default" the list's first
+line reads `Default (Speakers (Surround - SADIE D2 Dry))`.
+
+Steam shows a virtual output under its `node.name` and ignores
+`node.description` and `node.nick`. Seen on the X20 on 2026-11-21: with
+only the description and nick set, the list showed
+`ally_x20_surround_speakers_a`; and a null sink carrying a different word
+in each field showed up under its name. So the readable text is the
+`node.name` (and also the description and nick). The id the helper uses to
+tell its sinks apart, `ally_x20_surround_<output>_a` or `_b`, rides in the
+property `ally-x20-steamos.surround.id`. The second of an output's two
+sinks has a trailing space in its name, so that two sinks never share a
+name while both exist during a switch; no list shows the space.
+
+The plain outputs stay in the list next to it. Hiding them is not done:
+WirePlumber can hide a hardware output behind a filter it creates itself
+(its "software DSP" policy with `hide-parent`), but not behind a filter
+that runs as its own process, as this one does. That would be a different
+design and is not attempted here.
 
 ### Volume
 
@@ -376,11 +390,12 @@ Nothing below has run on the X20 as part of this component.
   PipeWire restarts.
 - The jack: plugging and unplugging headphones moves the filter between the
   outputs within a few seconds, and the default output follows.
-- What Steam's output list shows: the surround output under its name
-  (`Speakers (Surround - SADIE D2 Dry)`) next to the plain outputs. Seen on
-  the X20 on 2026-11-21 with the earlier name: the surround sink was the
-  default without any default being forced. During a switch two surround
-  entries exist for about a second.
+- What Steam's output list shows with the readable `node.name`: the entry
+  `Speakers (Surround - SADIE D2 Dry)` next to the plain outputs, and
+  `Default (…)` with it. Seen on the X20 on 2026-11-21 with the earlier
+  internal name: the surround sink was the default without any default
+  being forced. During a switch two surround entries exist for about a
+  second.
 - A game opens an 8-channel stream on the surround sink.
 - Volume on the device: the level is the same before and after the filter
   starts, the volume keys and Steam's slider reach full volume, the level

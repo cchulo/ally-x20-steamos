@@ -41,6 +41,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 HELPER = os.path.join(HERE, os.pardir, os.pardir, "overlay", "bin", "x20-surround.py")
 SPEAKERS = "alsa_output.pci-0000_64_00.5-platform-amd_sdw.HiFi__Speaker__sink"
 OURS = "ally_x20_surround_speakers_"
+ID_PROP = "ally-x20-steamos.surround.id"
 STREAM = "x20-headless-71"
 
 
@@ -67,22 +68,30 @@ def main():
         except ValueError:
             return []
 
+    def key(props):
+        """How this check names a node: a surround sink by the helper's id
+        (its node.name is the text Steam shows), anything else by node.name."""
+        return props.get(ID_PROP) or props.get("node.name")
+
     def sinks(objects=None):
         found = {}
         for o in dump() if objects is None else objects:
             props = (o.get("info") or {}).get("props") or {}
             if props.get("media.class") == "Audio/Sink":
-                found[props.get("node.name")] = props
+                found[key(props)] = props
         return found
 
     def ours(objects=None):
         return sorted(n for n in sinks(objects) if n and n.startswith(OURS))
 
     def default_sink(objects=None):
-        for o in dump() if objects is None else objects:
+        objects = dump() if objects is None else objects
+        by_name = {p.get("node.name"): k for k, p in sinks(objects).items()}
+        for o in objects:
             for m in o.get("metadata") or ():
                 if m.get("key") == "default.audio.sink":
-                    return (m.get("value") or {}).get("name")
+                    name = (m.get("value") or {}).get("name")
+                    return by_name.get(name, name)
         return None
 
     def stream_sinks(objects):
@@ -91,7 +100,7 @@ def main():
         for o in objects:
             props = (o.get("info") or {}).get("props") or {}
             if str(o.get("type", "")).endswith(":Node"):
-                names[o.get("id")] = props.get("node.name")
+                names[o.get("id")] = key(props)
                 if props.get("node.name") == STREAM:
                     stream = o.get("id")
         linked = set()
@@ -121,7 +130,7 @@ def main():
 
     def node_id(name):
         for o in dump():
-            if ((o.get("info") or {}).get("props") or {}).get("node.name") == name:
+            if key((o.get("info") or {}).get("props") or {}) == name:
                 return o.get("id")
         return None
 
@@ -224,9 +233,10 @@ def main():
         wait(lambda: ours() == [OURS + "a"], "the surround sink appears as ..._a")
         wait(lambda: volume(OURS + "a") == 0.50 and volume(SPEAKERS) == 1.00,
              "the surround sink took the volume (0.50) and the speaker sink is held at 1.00")
-        check((sinks().get(OURS + "a") or {}).get("node.description")
-              == "Speakers (Surround - SADIE D2 Dry)",
-              "the sink is called 'Speakers (Surround - SADIE D2 Dry)'")
+        first = sinks().get(OURS + "a") or {}
+        check(first.get("node.name") == "Speakers (Surround - SADIE D2 Dry)"
+              and first.get("node.description") == "Speakers (Surround - SADIE D2 Dry)",
+              "its node.name, which Steam shows, is 'Speakers (Surround - SADIE D2 Dry)'")
         props = sinks().get(OURS + "a") or {}
         check(str(props.get("audio.channels")) == "8" and
               int(props.get("priority.session") or 0) == 713,
@@ -254,8 +264,10 @@ def main():
         wait(lambda: volume(now) == 0.40 and volume(SPEAKERS) == 1.00,
              "the volume (0.40) went along to the new sink; the speaker sink is still at 1.00",
              timeout=5)
-        check((sinks().get(now) or {}).get("node.description")
-              == "Speakers (Surround - HUTUBS PP1 Dry)", "and it shows the new profile's name")
+        second = sinks().get(now) or {}
+        check(second.get("node.name") == "Speakers (Surround - HUTUBS PP1 Dry) "
+              and second.get("node.description") == "Speakers (Surround - HUTUBS PP1 Dry)",
+              "and it shows the new profile's name (the second slot with a trailing space)")
         check((sinks().get(now) or {}).get("priority.session") == 714,
               "the second slot has priority 714")
         now = hand_over("profile b->a", "profile: mit-kemar-dry\n", "set", "speakers",

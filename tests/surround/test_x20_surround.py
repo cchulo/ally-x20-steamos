@@ -520,6 +520,29 @@ def test_look_finds_the_internal_sinks_and_the_jack():
                             "ids": {}, "default": None, "shown": {}}
 
 
+def test_look_knows_our_sinks_by_their_id_property_and_translates_the_default():
+    shown = "Speakers (Surround - SADIE D2 Dry)"
+    objs = state(plugged=False) + [
+        {"id": 100, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "node.name": shown, "node.description": shown, "media.class": "Audio/Sink",
+            sur.ID_PROP: SA}}},
+        {"id": 101, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "node.name": shown + " ", "node.description": shown, "media.class": "Audio/Sink",
+            sur.ID_PROP: SB}}},
+        # somebody else's sink that merely has a similar name
+        {"id": 102, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "node.name": "Speakers (Surround - Other)", "media.class": "Audio/Sink"}}},
+        {"type": "PipeWire:Interface:Metadata", "metadata": [
+            {"key": "default.audio.sink", "value": {"name": shown + " "}}]}]
+    seen = sur.look(objs)
+    assert seen["running"] == {SA, SB}
+    assert seen["ids"][SA] == 100 and seen["ids"][SB] == 101
+    assert seen["shown"] == {SA: shown, SB: shown}
+    assert seen["default"] == SB                 # reported by name, known by id
+    assert sur.display_name("speakers", "sadie-d2-dry", SA) == shown
+    assert sur.display_name("speakers", "sadie-d2-dry", SB) == shown + " "
+
+
 def test_active_device_follows_the_jack():
     assert sur.active_device(sur.look(state(plugged=True))) == "headphones"
     assert sur.active_device(sur.look(state(plugged=False))) == "speakers"
@@ -551,7 +574,9 @@ def test_render_is_a_71_sink_pinned_to_the_target(paths):
     assert text.count("label = convolver") == 16
     assert 'filename = "%s" channel = 13' % wav in text
     assert "audio.channels   = 8" in text and "audio.position   = [ FL FR FC LFE RL RR SL SR ]" in text
-    assert 'node.name        = "ally_x20_surround_headphones_a"' in text
+    # node.name is what Steam shows; the helper's own id rides in a property
+    assert 'node.name        = "Headphones (Surround - SADIE D2 Dry)"' in text
+    assert 'ally-x20-steamos.surround.id = "ally_x20_surround_headphones_a"' in text
     assert 'node.name          = "ally_x20_surround_headphones_a.output"' in text
     assert "priority.session = 1001" in text
     assert 'target.object      = "%s"' % HP in text
@@ -559,8 +584,13 @@ def test_render_is_a_71_sink_pinned_to_the_target(paths):
     assert '"Gain 1" = %.6f' % 10 ** (-1.10 / 20) in text      # the trim
     assert '"Gain 8" = %.6f' % (0.5 * 10 ** (-1.10 / 20)) in text  # the LFE at half
     assert '"Min" = -0.8910 "Max" = 0.8910' in text
-    other = sur.render("speakers", "x", wav, SPK, 0.0, 714, sur.node_name("speakers", 1))
-    assert 'node.name        = "ally_x20_surround_speakers_b"' in other
+    other = sur.render("speakers", "sadie-d2-dry", wav, SPK, 0.0, 714,
+                       sur.node_name("speakers", 1))
+    # the second slot: the same text plus a trailing space, so that two sinks
+    # of one output never share a name while both exist
+    assert 'node.name        = "Speakers (Surround - SADIE D2 Dry) "' in other
+    assert 'node.description = "Speakers (Surround - SADIE D2 Dry)"' in other
+    assert 'ally-x20-steamos.surround.id = "ally_x20_surround_speakers_b"' in other
     assert 'node.name          = "ally_x20_surround_speakers_b.output"' in other
     assert text.count("ally_x20_surround") == other.count("ally_x20_surround") == 2
     with pytest.raises(sur.Problem):
@@ -630,7 +660,7 @@ class World:
 
     def spawn(self, conf_path):
         text = open(conf_path).read()
-        node = re.search(r'node\.name        = "(\S+)"', text).group(1)
+        node = re.search(r'ally-x20-steamos\.surround\.id = "(\S+)"', text).group(1)
         assert os.path.basename(conf_path) == "%s-%s.conf" % (
             "headphones" if "headphones" in node else "speakers", node[-1])
         proc = FakeProc(self, node)
@@ -1001,7 +1031,8 @@ def test_output_names_are_readable(paths):
     text = sur.render("speakers", "mit-kemar-dry", sadie_path(), SPK, -1.0, 713)
     assert 'node.description = "Speakers (Surround - MIT KEMAR Dry)"' in text
     assert 'node.nick        = "Speakers (Surround - MIT KEMAR Dry)"' in text
-    assert 'node.name        = "ally_x20_surround_speakers_a"' in text
+    assert 'node.name        = "Speakers (Surround - MIT KEMAR Dry)"' in text
+    assert 'ally-x20-steamos.surround.id = "ally_x20_surround_speakers_a"' in text
 
 
 def test_runner_restarts_a_dead_filter_with_a_growing_pause(paths):

@@ -8,7 +8,7 @@ pushed, the release job takes that version's section from here
 released: the tests fail for the `VERSION` file, and the release job fails
 for the tag. How to add an entry: [docs/contributing.md](docs/contributing.md#release-notes).
 
-## v0.2.0 (unreleased)
+## v0.2.0 (2026-11-21)
 
 - **Virtual 7.1 surround** for the built-in speakers and headphones (component `surround`; #76, #80, #81). Games can send 7.1 and you hear it as virtual surround.
   - Profiles per output: four heads, each as `-dry` (recommended, the default) and `-full`, plus `stereo` and `user`, your own HeSuVi file (for example Dolby Atmos for Headphones). `surround set headphones|speakers <profile>` switches while a game runs.

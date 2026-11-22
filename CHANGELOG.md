@@ -8,7 +8,7 @@ pushed, the release job takes that version's section from here
 released: the tests fail for the `VERSION` file, and the release job fails
 for the tag. How to add an entry: [docs/contributing.md](docs/contributing.md#release-notes).
 
-## Unreleased
+## v0.2.1 (2026-11-21)
 
 - **HDR in Desktop Mode without a manual build** (component `hdr`). Desktop Mode (KDE) needs a rebuilt libdisplay-info that nothing built or installed until now; `apply` only pointed at a script that cannot be run on the device. Game Mode HDR is unchanged and already worked.
   - The library is built by CI and attached to each release (`hdr-libdisplay-info-0.3.0.tar.zst`). `install`, `apply` and `self-update` download it, check it (sha256, built from this version's pins and patches, loadable on this system) and install it; a device that was offline gets it on a later boot. Offline or without a prebuilt copy nothing fails: Desktop Mode HDR stays off and one notice says how to get it.

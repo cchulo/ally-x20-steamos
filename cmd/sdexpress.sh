@@ -20,15 +20,18 @@ usage: $AX20_NAME sdexpress <command>
   format [--label <l>] [--full] [--validate]
                               erase the card and format it like Steam formats a
                               microSD card: GPT, one ext4 partition (casefold,
-                              owned by deck), then mount it. Label: 1-16 chars
-                              of A-Za-z0-9._- (default sdcard). --full issues
+                              owned by deck), then mount it. No label unless
+                              --label is given (1-16 chars of A-Za-z0-9._-),
+                              as Steam's own format does: the card is then
+                              mounted under its filesystem UUID, so two cards
+                              never share a path. --full issues
                               discards for the whole card; --validate runs
                               f3probe --destructive first (slow). Asks you to
                               type 'erase' unless --yes; --dry-run prints the
                               commands only.
   mount                       hand an inserted, formatted card to the stock
                               automount script (udisks mount under
-                              /run/media/deck/<label>)
+                              /run/media/deck/<label or UUID>)
   root-port [<bdf>]           show the slot's PCIe root port, or record one
                               (e.g. 0000:00:02.2) and re-apply the rule
 
@@ -118,16 +121,19 @@ _sdexpress_confirm_erase() {
 }
 
 _sdexpress_cmd_format() {
-    local label=sdcard discard=nodiscard validate=0 disk part dev pdev model size mp tool
+    local label="" has_label=0 discard=nodiscard validate=0 disk part dev pdev model size mp tool
+    local -a label_args=()
     while [ $# -gt 0 ]; do
         case "$1" in
             --label)
                 [ $# -ge 2 ] || die 2 "--label needs a value"
                 label=$2
+                has_label=1
                 shift 2
                 ;;
             --label=*)
                 label=${1#--label=}
+                has_label=1
                 shift
                 ;;
             --full)
@@ -145,8 +151,14 @@ _sdexpress_cmd_format() {
             *) die 2 "unknown sdexpress format option: $1" ;;
         esac
     done
-    printf '%s\n' "$label" | grep -Eq '^[A-Za-z0-9._-]{1,16}$' \
-        || die 2 "sdexpress format: label '$label' must be 1-16 characters of A-Za-z0-9._-"
+    # No label by default, like format-device.sh: udisks then mounts the card
+    # under its filesystem UUID. A fixed default label put every card at the
+    # same path, and Steam took two cards for one library (issue #89).
+    if [ "$has_label" = 1 ]; then
+        printf '%s\n' "$label" | grep -Eq '^[A-Za-z0-9._-]{1,16}$' \
+            || die 2 "sdexpress format: label '$label' must be 1-16 characters of A-Za-z0-9._-"
+        label_args=(-L "$label")
+    fi
     [ "$AX20_DRY_RUN" = 1 ] || require_root sdexpress format
     disk=$(_sdexpress_require_card)
     part=$(sdexpress_partition "$disk")
@@ -160,7 +172,7 @@ _sdexpress_cmd_format() {
         done
         [ "$validate" = 0 ] || ax20_have f3probe || die "sdexpress format: --validate needs f3probe"
     fi
-    log_info "sdexpress: card /dev/$disk ($model, $size GiB) behind root port $(sdexpress_root_port); label '$label', $discard"
+    log_info "sdexpress: card /dev/$disk ($model, $size GiB) behind root port $(sdexpress_root_port); ${label:+label '$label'}${label:-no label}, $discard"
     _sdexpress_confirm_erase "$disk" "$model" "$size"
     _sdexpress_automount remove "$part" || true
     _sdexpress_disk_mounts "$disk" | while IFS= read -r mp; do
@@ -175,10 +187,10 @@ _sdexpress_cmd_format() {
     ax20_run sync
     ax20_run parted --script "$dev" mklabel gpt mkpart primary 0% 100% || die "sdexpress format: parted failed on $dev"
     ax20_run udevadm settle
-    ax20_run mkfs.ext4 -m 0 -O casefold -E "$discard,root_owner=1000:1000" -L "$label" -F "$pdev" || die "sdexpress format: mkfs.ext4 failed on $pdev"
+    ax20_run mkfs.ext4 -m 0 -O casefold -E "$discard,root_owner=1000:1000" ${label_args[@]+"${label_args[@]}"} -F "$pdev" || die "sdexpress format: mkfs.ext4 failed on $pdev"
     ax20_run udevadm settle
     _sdexpress_automount add "$part" || log_warn "sdexpress: holo-automount.sh add $part failed; see: journalctl -t holo-automount"
-    log_info "sdexpress: /dev/$part formatted as ext4 '$label'; expect it at /run/media/deck/$label (then add it in Steam: Settings > Storage)"
+    log_info "sdexpress: /dev/$part formatted as ext4; expect it at /run/media/deck/${label:-<its filesystem UUID>} (then add it in Steam: Settings > Storage)"
 }
 
 _sdexpress_cmd_mount() {

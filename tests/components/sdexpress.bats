@@ -194,7 +194,10 @@ LABEL="holo_automount_end"
     component_apply sdexpress
     r="$AX20_ROOT$RULE"
     body=$(grep -v '^[[:space:]]*#' "$r" | grep -v '^$')
-    assert_equal "$(printf '%s\n' "$body" | wc -l | tr -d ' ')" 8
+    assert_equal "$(printf '%s\n' "$body" | wc -l | tr -d ' ')" 9
+    # udisks reads the media type from the NVMe controller (issue #89)
+    assert_equal "$(printf '%s\n' "$body" | sed -n 1p)" 'SUBSYSTEM=="nvme", KERNEL=="nvme[0-9]*", DEVPATH=="*/0000:00:02.2/*", ENV{ID_DRIVE_FLASH_SD}="1", ENV{ID_DRIVE_MEDIA_FLASH_SD}="1"'
+    body=$(printf '%s\n' "$body" | sed 1d)
     assert_equal "$(printf '%s\n' "$body" | sed -n 1p)" 'SUBSYSTEM!="block", GOTO="ally_x20_sdexpress_end"'
     assert_equal "$(printf '%s\n' "$body" | sed -n 2p)" 'DEVPATH!="*/0000:00:02.2/*", GOTO="ally_x20_sdexpress_end"'
     assert_equal "$(printf '%s\n' "$body" | sed -n 3p)" 'KERNEL=="nvme*n[0-9]", ENV{ID_DRIVE_FLASH_SD}="1", ENV{ID_DRIVE_MEDIA_FLASH_SD}="1", ENV{ID_DRIVE_MEDIA_FLASH}="1"'

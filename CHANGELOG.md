@@ -8,6 +8,12 @@ pushed, the release job takes that version's section from here
 released: the tests fail for the `VERSION` file, and the release job fails
 for the tag. How to add an entry: [docs/contributing.md](docs/contributing.md#release-notes).
 
+## Unreleased
+
+- **`sdexpress format` no longer names every card `sdcard`** (#89): like Steam's own format, it writes no label unless `--label` is given, and the card is mounted under its own unique ID. Two cards formatted before this share the path `/run/media/deck/sdcard`, and Steam takes them for the same library; format one of them again.
+- **SD Express: the card is reported as SD media** (#89): the SD flags are now also set on the card's NVMe controller, where udisks reads them. Steam's Storage page looks the same as before.
+- **SD Express: swapping cards while the device is on is documented as not supported** (#89), and so is a card that is missing after a long sleep. The user guide says what to do.
+
 ## v0.2.1 (2026-11-21)
 
 - **HDR in Desktop Mode without a manual build** (component `hdr`). Desktop Mode (KDE) needs a rebuilt libdisplay-info that nothing built or installed until now; `apply` only pointed at a script that cannot be run on the device. Game Mode HDR is unchanged and already worked.

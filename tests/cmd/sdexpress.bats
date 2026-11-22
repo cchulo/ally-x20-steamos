@@ -92,7 +92,9 @@ card_as() { nvme_dev "$1" "$CARD_PORT" 0000:62:00.0 'ST51271_WDC SanDisk SD Expr
     assert_output_contains '[dry-run] sync'
     assert_output_contains "[dry-run] parted --script $AX20_ROOT/dev/nvme1n1 mklabel gpt mkpart primary 0% 100%"
     assert_output_contains '[dry-run] udevadm settle'
-    assert_output_contains "[dry-run] mkfs.ext4 -m 0 -O casefold -E nodiscard,root_owner=1000:1000 -L sdcard -F $AX20_ROOT/dev/nvme1n1p1"
+    assert_output_contains "[dry-run] mkfs.ext4 -m 0 -O casefold -E nodiscard,root_owner=1000:1000 -F $AX20_ROOT/dev/nvme1n1p1"
+    # no label unless asked for, like the stock format script (issue #89)
+    [[ "$output" != *" -L "* ]]
     assert_output_contains "[dry-run] $AX20_ROOT$AUTOMOUNT add nvme1n1p1"
     [[ "$output" != *"nvme0n1"* ]]
     [[ "$output" != *"f3probe"* ]]

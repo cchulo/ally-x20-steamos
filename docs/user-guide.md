@@ -370,19 +370,25 @@ library in Steam → Settings → Storage. **Steam's own Format button does not
 work for this slot** (its script rejects this kind of device), so a card is
 formatted from the command line.
 
-**Insert the card before you turn the device on, and eject it before you
-take it out.** For now the slot only works reliably that way
-([#89](https://github.com/cchulo/ally-x20-steamos/issues/89)):
+**Swapping cards while the device is on is not supported.** Insert the card
+with the device turned off, and turn the device off before you take the card
+out ([#89](https://github.com/cchulo/ally-x20-steamos/issues/89)). What
+happens otherwise:
 
-- A card inserted while the system is running may not be seen at all, and
-  after a card has been taken out the slot sees no card until the next boot.
-  If `sdexpress status` says `card: none under that root port` with a card
-  in the slot, restart with the card in.
-- That restart has hung twice here. If the screen stays on the restart
-  logo for more than a minute, hold the power button until the device turns
-  off, then turn it on again.
-- Before taking a card out, eject it in Steam → Settings → Storage (select
-  the card, then Eject). Pulling a mounted card can damage its files.
+- Steam keeps showing a card that is gone. Its entry in Settings → Storage
+  stays, as "External Drive ()" with 0 B, until the card is back or Steam is
+  restarted.
+- A card inserted while the device is on takes up to a minute to appear, and
+  sometimes does not appear at all until a restart.
+- Pulling a card that is in use can damage the files being written. The
+  filesystem is checked and repaired the next time the card is mounted.
+
+**After a long sleep the card can be missing.** Seen once here after two
+hours of sleep; shorter sleeps were fine. Games on the card then fail to
+start and Storage shows the card with 0 B. Take the card out and put it back
+in, wait a minute, or restart the device. The cause is not known yet. If a
+restart stays on the logo for more than a minute, hold the power button
+until the device turns off, then turn it on again.
 
 **Formatting erases everything on the card.**
 
@@ -416,11 +422,15 @@ take it out.** For now the slot only works reliably that way
    sudo ./ally-x20-steamos.sh sdexpress format
    ```
 
-   Options: `--label games` names the card (default `sdcard`; 1 to 16
-   letters, digits, `.`, `_` or `-`), `--full` also trims the whole card,
-   `--validate` tests the card for fake capacity first (slow).
-6. The card is then mounted at `/run/media/deck/sdcard` (or your label). Add
-   it in Steam → Settings → Storage.
+   Options: `--label games` names the card (1 to 16 letters, digits, `.`,
+   `_` or `-`), `--full` also trims the whole card, `--validate` tests the
+   card for fake capacity first (slow).
+6. The card is then mounted under `/run/media/deck/`, in a folder named
+   after your label, or after the card's own unique ID when you gave none.
+   Add it in Steam → Settings → Storage.
+
+If you own two cards that were formatted with v0.2.1 or older, both are
+named `sdcard` and Steam mixes them up. Format one of them again.
 
 The card and the internal drive can swap their `nvme0`/`nvme1` names
 between boots. The command does not go by those names; it finds the card

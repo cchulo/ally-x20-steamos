@@ -93,15 +93,22 @@ dd if=/dev/zero of=/dev/<card> bs=512 count=1024 status=none
 sync
 parted --script /dev/<card> mklabel gpt mkpart primary 0% 100%
 udevadm settle
-mkfs.ext4 -m 0 -O casefold -E nodiscard,root_owner=1000:1000 -L <label> -F /dev/<card>p1
+mkfs.ext4 -m 0 -O casefold -E nodiscard,root_owner=1000:1000 [-L <label>] -F /dev/<card>p1
 udevadm settle
 /usr/lib/hwsupport/holo-automount.sh add <card>p1
 ```
 
 `--full` uses `discard` instead of `nodiscard` (trims the whole card, as
 Steam's "full format"). `--validate` runs `f3probe --destructive` first, as
-Steam does by default; it is slow and exits 14 when the card fails. The
-label defaults to `sdcard` and must be 1 to 16 characters of `A-Za-z0-9._-`.
+Steam does by default; it is slow and exits 14 when the card fails.
+`--label` names the card (1 to 16 characters of `A-Za-z0-9._-`). Without it
+the filesystem gets no label, as with the stock script, and udisks mounts
+the card under its filesystem UUID (`/run/media/deck/<UUID>`), which is
+different for every card. Up to v0.2.1 every card was labeled `sdcard`, so
+two cards were mounted at the same path and Steam took them for one library
+(seen on the X20 on 2026-11-22, issue #89: a 512 GB card listed the games
+installed on a 1 TB card). Give two cards formatted that way different
+labels, or format one of them again.
 `--dry-run` prints the commands without running them; do that once and check
 that every line names the card's node.
 
@@ -116,7 +123,8 @@ failed with "unable to inform the kernel of the change ... in use", and
 Remove the fstab line first (next section); the command does not check for
 it.
 
-Afterwards the card is mounted at `/run/media/deck/<label>` and can be added
+Afterwards the card is mounted at `/run/media/deck/<UUID>` (or
+`/run/media/deck/<label>` with `--label`) and can be added
 as a library in Steam → Settings → Storage.
 
 **Why Steam's Format button cannot work.** It runs `format-device.sh`, which
@@ -186,6 +194,60 @@ The probe looks for the stock rule under `/usr/lib/udev/rules.d` that calls
 - **UHS-I fallback.** Plain microSD cards (and SD Express cards in UHS-I
   mode) appear as `mmcblk*`, which stock SteamOS already handles. The
   component leaves them alone.
-- **The "MicroSD Card" label in Steam.** The SD flags on the disk node are a
-  best-effort hint; whether Steam shows "MicroSD Card" or "External Drive"
-  for the card has not been verified.
+- **Swapping cards while the device is on.** See the next section.
+- **Keeping the card across a long sleep.** See the next section.
+
+## Removal, insertion and sleep (issue #89)
+
+Measured on the X20 on 2026-11-22: SteamOS 3.9.5, kernel
+`7.2.7-valve2-2-neptune-72`, BIOS RC74XA.303, a SanDisk SD Express 1 TB and
+a 512 GB card (both `15b7:5007`).
+
+**The hardware.** The slot is a Genesys GL9767 reader (`17a0:9767`,
+`sdhci-pci`) at `0000:62:00.0` behind the hotplug root port `0000:00:02.2`
+(ACPI `\_SB.PCI0.GPP4`, with a power resource `PWSR`). With an SD Express
+card the reader leaves the bus and the card takes its place at the same
+address as an NVMe device. When the card goes, the reader comes back.
+
+**Insertion and removal at the kernel level work, slowly.** Every pull and
+insert of that day was seen by `pciehp`. After an insert the reader appears
+within a second; the card replaced it as NVMe after 1, 16, 24 and 54 s on
+different tries. A pull of a mounted card is a surprise removal: the kernel
+logs `Buffer I/O error` and aborts the journal, and `fsck` repairs it at the
+next mount. Earlier that day (in the first text of the issue) the slot also
+stopped seeing cards until a reboot; that did not happen again.
+
+**Steam keeps the library of a card that is gone.** Its `content_log.txt`
+shows `Drive removed: /run/media/deck/<name>` at every removal and
+`NotifyAddDrive: re-adding drive folder` plus `Mounted library folder` within
+a second of every mount, so Steam sees both. In between it keeps the library
+as an entry "External Drive ()" with 0 B (for a moment under the path
+`/run/host/root/run/media/...`, the same mount as seen from inside Steam's
+container). What did not change that:
+
+| tried | result |
+|---|---|
+| `steam://removelibraryfolder/<path>`, as the stock mount script sent until Steam took drive handling over (library path, mount point, encoded and plain) | Steam logs `ExecuteSteamURL` and does nothing |
+| SD flags on the NVMe controller, so that udisks reports `flash_sd` | no change in Steam |
+
+Not tried: a library at the top folder of the card, where Steam puts the
+library of a card it adopts itself (ours is `<card>/SteamLibrary`, added by
+hand). Bazzite's automount rule skips NVMe devices altogether, and Anatase's
+documentation says of current Steam that unmounting drives does not work and
+to shut down before taking a card out. So: **swapping cards while the device
+is on is not supported**; insert and remove the card with the device off.
+
+**After a long sleep the card can be gone.** Five sleeps were logged with a
+card in:
+
+| sleep | card after resume |
+|---|---|
+| 12 min, 12 min (2026-11-21), 9 s, 87 s (83 s of it in hardware sleep) | still there, still mounted |
+| 2 h 9 min | `pciehp: Slot(0-1): Card not present` during resume, with the filesystem mounted; no device on the bus until the card was pulled and put back 3.5 min later |
+
+Bazzite has the same report for the X20, after boot and after resume, with
+an SD Express and a plain microSD card
+([ublue-os/bazzite#6226](https://github.com/ublue-os/bazzite/issues/6226)),
+so this is the platform and not this component. Whether it depends on how
+long the device sleeps, and what brings the card back without touching it,
+is not known.

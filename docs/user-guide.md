@@ -31,7 +31,7 @@ override, so read what you run and use it at your own risk.
 | Steam's **Performance** tab has no power profile switch. | **Low power**, **Balanced** and **Performance** profiles are there (about 12, 16-21 and 25-30 W for the processor on battery). Balanced is the default. |
 | The battery stops charging at 80 % although Steam shows no charge limit. | The battery charges to 100 %, or to the charge limit you set in Steam (Settings → Power), and that limit is kept across reboots. |
 | Games only send stereo to the built-in headphone jack and speakers. | Games can send 7.1 and you hear it as virtual surround, on headphones in the jack and on the speakers. It is on after the install; [Sound](#sound-virtual-surround) shows how to pick another profile, use your own (for example Dolby Atmos for Headphones), or go back to plain stereo. |
-| An SD Express card in the slot never shows up, and Steam's **Format** button fails on it. | The card mounts at `/run/media/deck/<label>` when inserted, like a microSD card, and can be added in Settings → Storage. Format it with `sudo ./ally-x20-steamos.sh sdexpress format` (Steam's button still fails for this slot: it runs a stock script that rejects NVMe devices). |
+| An SD Express card in the slot never shows up, and Steam's **Format** button fails on it. | The card mounts at `/run/media/deck/<label>` when inserted, like a microSD card, and can be added in Settings → Storage. Steam's button still fails for this slot; [format the card from the command line](#sd-express-card). |
 | Steam's controller screens show a generic handheld outline. | They show the Xbox Ally X, which has the same shell, screen and controls. |
 
 ## What it does not do yet
@@ -361,6 +361,72 @@ rumbles every few seconds, because the connection keeps dropping and Steam
 plays its charger sound each time.
 
 More: [power.md](power.md).
+
+### SD Express card
+
+A card that is in the SD Express slot at boot mounts by itself at
+`/run/media/deck/<label>`, like a microSD card, and can be added as a
+library in Steam → Settings → Storage. **Steam's own Format button does not
+work for this slot** (its script rejects this kind of device), so a card is
+formatted from the command line.
+
+**Insert the card before you turn the device on, and eject it before you
+take it out.** For now the slot only works reliably that way
+([#89](https://github.com/cchulo/ally-x20-steamos/issues/89)):
+
+- A card inserted while the system is running may not be seen at all, and
+  after a card has been taken out the slot sees no card until the next boot.
+  If `sdexpress status` says `card: none under that root port` with a card
+  in the slot, restart with the card in.
+- That restart has hung twice here. If the screen stays on the restart
+  logo for more than a minute, hold the power button until the device turns
+  off, then turn it on again.
+- Before taking a card out, eject it in Steam → Settings → Storage (select
+  the card, then Eject). Pulling a mounted card can damage its files.
+
+**Formatting erases everything on the card.**
+
+1. Check that the card is seen, and what it is called:
+
+   ```sh
+   sudo ./ally-x20-steamos.sh sdexpress status
+   ```
+
+2. If you ever added the card to `/etc/fstab` yourself, take that line out
+   first; a card mounted that way must not be formatted. Check with:
+
+   ```sh
+   grep -n -iE "sdcard|nvme|UUID" /etc/fstab
+   ```
+
+   No output means there is nothing to remove. Otherwise follow
+   [sdexpress.md](sdexpress.md#do-not-mount-the-card-through-etcfstab).
+3. In Steam → Settings → Storage, remove a library that is on the card, and
+   close any game or file manager that uses it.
+4. See what would happen, without changing anything. Every line must name
+   the card, not the internal drive:
+
+   ```sh
+   sudo ./ally-x20-steamos.sh --dry-run --yes sdexpress format
+   ```
+
+5. Format it. You are asked to type `erase` to confirm:
+
+   ```sh
+   sudo ./ally-x20-steamos.sh sdexpress format
+   ```
+
+   Options: `--label games` names the card (default `sdcard`; 1 to 16
+   letters, digits, `.`, `_` or `-`), `--full` also trims the whole card,
+   `--validate` tests the card for fake capacity first (slow).
+6. The card is then mounted at `/run/media/deck/sdcard` (or your label). Add
+   it in Steam → Settings → Storage.
+
+The card and the internal drive can swap their `nvme0`/`nvme1` names
+between boots. The command does not go by those names; it finds the card
+by the slot it sits in.
+
+More: [sdexpress.md](sdexpress.md).
 
 ### Buttons and the Xbox light
 

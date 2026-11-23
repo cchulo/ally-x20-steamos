@@ -342,7 +342,7 @@ what they send.
    targets send `Guide` as `BTN_MODE`, `QuickAccess` as Guide, then A
    160 ms later, and `Screenshot` as `KEY_RECORD`.
 
-### What the owner saw, explained (2026-10-31, 0.78.0, first 0012)
+### What I saw, explained (2026-10-31, 0.78.0, first 0012)
 
 These are from before the `legacy` layout existed and explain why it, and
 patch 0015, look the way they do.
@@ -384,7 +384,7 @@ Notes:
   map. No kernel change is needed.
 - **Command Center.** No public capture shows a separate Command Center code
   on the X20. The buttons that reach Linux are Xbox, Armoury Crate, View,
-  the top-right button and Menu. If the bottom-left button the owner calls
+  the top-right button and Menu. If the bottom-left button I call
   Command Center is the Xbox button, it stays the Steam button (`Guide`),
   like the Xbox button on Windows, which opens the Game Bar. If it sends a
   `5a` code of its own, it will show up in `watch-buttons.py` and needs a

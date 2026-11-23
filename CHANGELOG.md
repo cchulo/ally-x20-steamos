@@ -16,7 +16,7 @@ for the tag. How to add an entry: [docs/contributing.md](docs/contributing.md#re
   - If Desktop Mode ever fails to start with the library: Ctrl+Alt+F3, log in, `sudo /var/lib/ally-x20-steamos/src/ally-x20-steamos.sh hdr remove`. The library then stays out until `hdr fetch`.
   - Nothing is installed when SteamOS ships another libdisplay-info than 0.3.0; from 0.4.0 on SteamOS reads the panel's HDR data itself.
 
-Tested on the device: Desktop Mode HDR with this library, built by hand in the container, is confirmed on the owner's X20 (SteamOS 3.9.5, 2026-11-22); with the library moved aside HDR is unavailable again. Not tested on the device: the copy CI builds, the automatic download and install, and the `hdr` command.
+Tested on the device: Desktop Mode HDR with this library, built by hand in the container, is confirmed on my X20 (SteamOS 3.9.5, 2026-11-22); with the library moved aside HDR is unavailable again. Not tested on the device: the copy CI builds, the automatic download and install, and the `hdr` command.
 
 ## v0.2.0 (2026-11-21)
 
@@ -32,7 +32,7 @@ Tested on the device: Desktop Mode HDR with this library, built by hand in the c
 
 No kernel patch changed since v0.1.11.
 
-Tested on the device: the charge limit, surround on the speakers (default profile and the owner's own file), the volume range. Not tested on the device: headphones through the surround component, plugging headphones in and out, and the new button layout.
+Tested on the device: the charge limit, surround on the speakers (default profile and my own file), the volume range. Not tested on the device: headphones through the surround component, plugging headphones in and out, and the new button layout.
 
 ## v0.1.11 (2026-11-20)
 

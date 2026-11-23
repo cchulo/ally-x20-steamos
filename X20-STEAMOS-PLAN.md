@@ -9,7 +9,7 @@ source, surviving SteamOS A/B updates, fully reversible, and testable in a VM
 before touching the device.
 
 Conventions for the implementing agent:
-- All git commits are authored by the repo owner only. No AI co-author or
+- All git commits are authored by me only. No AI co-author or
   attribution lines in commits.
 - License: **GPL-2.0-only** for the repository (same as the Linux kernel; the
   kernel patches are derivative works of GPL-2.0 code, so this is required,
@@ -110,7 +110,7 @@ stoneharborent/aquarius-os PR #40, anatase-org/kernel-anatase 7.2.7-an22):
   brightness differences in Game Mode are separate and not covered here.
 
 ### 1.5 Virtual surround for headphones + speaker chain (PipeWire, userspace, /home only) — REMOVED 2026-11-01
-**Removed (2026-11-01, owner):** in a level-matched A/B at 80 % on the
+**Removed (2026-11-01, by me):** in a level-matched A/B at 80 % on the
 device (Resident Evil 2 and 9) the raw speakers beat `x20-speakers` and the
 raw jack beat the hybrid `x20-headphones`; raw is also what stock SteamOS,
 Anatase and Bazzite ship on this hardware. The component, its command, its
@@ -155,7 +155,7 @@ Pieces (all user-session config, survive updates, trivially reversible):
    head/speaker geometry; designed or measured filter loaded as a convolver.
    Document findings even if it ends up not shipping. **Tried and removed
    (2026-10-31):** a parametric RACE version shipped briefly as
-   `x20-speakers-surround`; the owner found it muffled on the device
+   `x20-speakers-surround`; I found it muffled on the device
    ("like sand in my ears") and `x20-speakers` crisper. Findings and what a
    better attempt would need in docs/xtc-notes.md (now in git history, see
    docs/audio-dsp-history.md).
@@ -178,27 +178,27 @@ opt out. The speaker chain output is pinned to the hardware speaker sink,
 and the HRTF outputs only link to available headphones. Reason:
 an unpinned output followed the fallback to the unplugged jack sink
 (silence). Details in docs/audio-dsp.md (git history).
-**Changed again (2026-10-31, owner):** one headphone sink, `x20-headphones`
+**Changed again (2026-10-31, by me):** one headphone sink, `x20-headphones`
 (7.1, conf `50-x20-headphones.conf`), replaces `x20-virtual-surround-71` and
 the 5.1 sink of item 1: a 5.1 stream on the 7.1 sink fills FL FR FC LFE
 RL RR and leaves the sides silent. While one of our sinks is the default,
 every sink under it (down to the hardware sink) is held at 100 % so Steam's
 slider is the only volume (`audio-dsp hardware-volume`, docs/audio-dsp.md
 "Volumes"). The first A/B against the raw speakers was unfair because of
-that stacking; with the hardware at 100 % the owner preferred the processed
+that stacking; with the hardware at 100 % I preferred the processed
 chain.
-**Changed again (2026-10-31, owner, on the device):** the speaker virtual
+**Changed again (2026-10-31, by me, on the device):** the speaker virtual
 surround `x20-speakers-surround` (item 5) is removed: it sounded muffled,
 `x20-speakers` crisper and closer to Windows. The automatic default on the
 speakers is `x20-speakers`; `stereo-surround`, `speaker-surround` and `xtc`
 are gone (docs/xtc-notes.md).
-**Changed again (2026-10-31, owner, on the device):** `x20-headphones` is
+**Changed again (2026-10-31, by me, on the device):** `x20-headphones` is
 hybrid: FL/FR/FC play dry (no HRTF), only rears and sides are spatialized,
 because the generic HRTF made frontal sounds "sandy";
 `audio-dsp headphones-fronts hrtf` restores item 1 (docs/audio-dsp.md).
 
 ### 1.6 TDP limit slider and power profiles in Steam (added 2026-10-31)
-Owner request: Steam's Performance menu TDP Limit slider and power profile
+My request: Steam's Performance menu TDP Limit slider and power profile
 switch must work on stock SteamOS 3.9.5, with no Decky plugin and no
 replacement daemon (Steam → steamos-manager → asus-armoury, all stock).
 Measured on the device: `asus_armoury` loads and registers

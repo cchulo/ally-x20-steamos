@@ -2,7 +2,7 @@
 
 ## Ground rules (from the plan; enforced by tests where possible)
 
-1. Commits are authored by the repository owner only. No co-author or
+1. Commits are authored by me only. No co-author or
    AI-attribution trailers.
 2. GPL-2.0-only with an SPDX header on every source/script file
    (`scripts/check-spdx.sh`). Third-party files keep their license verbatim

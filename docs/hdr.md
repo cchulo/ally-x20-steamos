@@ -33,7 +33,7 @@ else (Steam → Settings → Display → Enable HDR, then in the game). **Deskto
 Mode HDR** needs the library in the second row, which the installer now
 downloads for you.
 
-Desktop Mode HDR with this library is confirmed on the owner's X20 (SteamOS
+Desktop Mode HDR with this library is confirmed on my X20 (SteamOS
 3.9.5, 2026-11-22), built by hand in the container: with the library in
 place the desktop starts normally and HDR can be switched on; with it moved
 aside HDR is unavailable again. `TODO(hw)`: the copy CI builds, the

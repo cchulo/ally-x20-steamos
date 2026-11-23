@@ -6,14 +6,14 @@ built from source, survives SteamOS A/B updates, is fully reversible, and is
 testable in a VM before it ever touches the device.
 
 > **AI-assisted.** The code, patches, tests and documentation in this
-> repository were written with AI assistance (Claude) under the owner's
-> direction, and reviewed and tested by the owner on a single ROG Xbox Ally
+> repository were written with AI assistance (Claude) under my
+> direction, and reviewed and tested by me on a single ROG Xbox Ally
 > X20. It ships patched kernel modules and an ACPI table override: read what
 > you run, back up what matters to you, and use it at your own risk. Issues
 > and reports are welcome.
 >
-> **Use at your own discretion.** This is a hobby project by one owner for
-> one device. The owner is not responsible for a broken, bricked or
+> **Use at your own discretion.** This is a hobby project by one person for
+> one device. I am not responsible for a broken, bricked or
 > warranty-voided Ally X20, lost data, or anything else that follows from
 > using it. If you are not comfortable with patched kernel modules, boot
 > entry edits and an ACPI override on your handheld, wait for official
@@ -68,7 +68,7 @@ safe and moves the installed copy to that release.
 SteamOS updates and troubleshooting: [user guide](docs/user-guide.md),
 [docs/install.md](docs/install.md), [docs/self-update.md](docs/self-update.md).
 
-> **Status: first release.** Tested by the owner on one X20 (BIOS
+> **Status: first release.** Tested by me on one X20 (BIOS
 > `RC74XA.303`, SteamOS 3.9.5, kernel `7.2.7-valve2`). Other BIOS, SteamOS or
 > kernel versions may behave differently.
 > [`docs/hardware-data.md`](docs/hardware-data.md) lists what is still
@@ -86,7 +86,7 @@ SteamOS updates and troubleshooting: [user guide](docs/user-guide.md),
 | **HDR not detected** (panel metadata lives in a DisplayID 2 block). | libdisplay-info 0.3.0 + DisplayID 2 backport via `ld.so.conf.d` (Desktop Mode; built by CI, downloaded at install, `hdr status\|fetch\|build\|remove`); gamescope Lua display profile for the panel, loaded by stock gamescope (Game Mode); optional custom gamescope behind a stock-fallback wrapper | `hdr` · [docs/hdr.md](docs/hdr.md) |
 | **No power profiles in Steam's Performance menu.** steamos-manager 26.4.1 has no X20 device file. | The upstream steamos-manager RC74XA entry, merged into `/usr/share/steamos-manager/devices` by a boot-time bind mount of a copy in `/run` (nothing written to `/usr`, steps aside once SteamOS ships it): Low power / Balanced / Performance hold the APU at about 12 / 16-21 / 25-30 W on battery. No TDP slider on purpose: BIOS `RC74XA.303` ignores PPT writes (`power tdp-slider on` to re-test; the mainline `asus-armoury` RC74XA table is still built) | `power`, `modules` · [docs/power.md](docs/power.md) |
 | **Battery stops charging at 80 %** with no limit shown in Steam. With its charge limit off, Steam writes `0` ("no limit" on a Steam Deck) to `charge_control_end_threshold`; this firmware takes only `100` as "no limit" and stops at about 80 % with `0`. | A unit writes the recorded limit (100 % when none) before Steam starts, then replaces every `0` by `100` and records a real limit set in Steam, which is left alone; a second unit writes it again after resume; `charge-limit follow\|off\|<20-100>` picks the behaviour | `chargelimit` · [docs/power.md](docs/power.md#10-battery-charge-limit-component-chargelimit) |
-| **Built-in headphones and speakers are stereo only**, so games send a stereo mix. | A user service puts an 8-channel PipeWire sink in front of the built-in output in use and convolves it with a head-related impulse response set; it becomes the default by priority, no default is forced. Four heads, each as `-dry` (fronts unfiltered) and `-full`; `-dry` is recommended on both outputs (by the owner's ear, `-full` makes the fronts sound quieter on the speakers and may suit headphones for sharper positioning). Each output has its own profile: headphones default to `sadie-d2-dry`, speakers to `sadie-d2-dry` with crosstalk cancellation (60 µs, 50 %), which is generated on the device and applies to the speakers only. `surround set <headphones\|speakers> <profile>` switches on the fly, the new filter starting before the old one stops, and `user` takes your own HeSuVi file | `surround` · [docs/surround.md](docs/surround.md) |
+| **Built-in headphones and speakers are stereo only**, so games send a stereo mix. | A user service puts an 8-channel PipeWire sink in front of the built-in output in use and convolves it with a head-related impulse response set; it becomes the default by priority, no default is forced. Four heads, each as `-dry` (fronts unfiltered) and `-full`; `-dry` is recommended on both outputs (by my ear, `-full` makes the fronts sound quieter on the speakers and may suit headphones for sharper positioning). Each output has its own profile: headphones default to `sadie-d2-dry`, speakers to `sadie-d2-dry` with crosstalk cancellation (60 µs, 50 %), which is generated on the device and applies to the speakers only. `surround set <headphones\|speakers> <profile>` switches on the fly, the new filter starting before the old one stops, and `user` takes your own HeSuVi file | `surround` · [docs/surround.md](docs/surround.md) |
 | **SD Express card never mounts; Steam's Format button fails on it.** The card is a PCIe/NVMe device and stock's automount rule only matches `mmcblk*\|sd*`; `format-device.sh` rejects nvme nodes. | One udev rule that hands the card's partitions to the stock `block-device-event.sh` / `holo-automount.sh` (udisks mount at `/run/media/deck/<label>`), matched by the slot's PCIe root port because the card and the SSD swap `nvmeN` names between boots; `sdexpress format` runs the stock format sequence (GPT, ext4 casefold, owned by deck). **Not fully supported:** a card can be missing after a long sleep and cannot be swapped while the device is on; firmware or kernel support may be the cause ([#89](https://github.com/cchulo/ally-x20-steamos/issues/89)) | `sdexpress` · [docs/sdexpress.md](docs/sdexpress.md) |
 | **SteamOS updates wipe out-of-tree changes.** | RAUC pre/post-install handlers, boot service, user notifier; `block`/`degrade` policy when modules cannot be built for an incoming kernel | `update` · [docs/update-survival.md](docs/update-survival.md) |
 
@@ -185,7 +185,7 @@ Read [docs/contributing.md](docs/contributing.md) before opening a PR.
 
 ## Roadmap
 
-Milestones 1 to 8 of the plan exist as code and run on the owner's X20;
+Milestones 1 to 8 of the plan exist as code and run on my X20;
 v0.1.0 is the first release, with CI-built module artifacts attached to
 the GitHub release. Still open: the `TODO(hw)` items in
 [docs/hardware-data.md](docs/hardware-data.md), a real SteamOS A/B update on
@@ -193,7 +193,7 @@ the device, the VM round-trip tests, and the optional Decky plugin.
 
 ## FAQ and gotchas
 
-Things the owner ran into that you may run into too.
+Things I ran into that you may run into too.
 
 **Which button opens Quick Access, and how do I take a screenshot?**
 In versions after v0.1.11 the action button (top right) opens Steam's Quick Access
@@ -250,7 +250,7 @@ Yes, as the `user` profile. The file is not shipped, because it is not ours
 to redistribute; you supply it:
 
 1. Get an Atmos impulse response file for HeSuVi: a `.wav` with 14 channels
-   at 48 kHz. The owner's came from the HRIR collection at
+   at 48 kHz. Mine came from the HRIR collection at
    <https://airtable.com/appayGNkn3nSuXkaz/shruimhjdSakUPg2m/tbloLjoZKWJDnLtTc>
    (look for the Atmos entry and download its 14-channel 48 kHz `.wav`).
 2. Copy it to the device, into `~/.config/ally-x20-steamos/surround-user/`.

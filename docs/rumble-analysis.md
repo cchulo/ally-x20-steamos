@@ -5,11 +5,11 @@ and public pages. **None of it has been tested on an X20.** Each claim is
 marked:
 
 - **[source]**: read in the source at the commit listed under [Sources](#sources).
-- **[inferred]**: a conclusion drawn from the source and the owner's
+- **[inferred]**: a conclusion drawn from the source and my
   observations, not verified.
-- **[owner]**: observed by the owner on a real X20.
+- **[observed]**: observed by me on a real X20.
 
-## 1. What the owner sees [owner]
+## 1. What I see [observed]
 
 Setup: ROG Xbox Ally X20 (N-KEY USB `0b05:1b4c`), SteamOS 3.9.5, kernel
 `7.2.7-valve2` with our `hid-asus-ally` patches 0010-0013, stock
@@ -33,7 +33,7 @@ the stock-adapted variant, see [inputplumber.md](inputplumber.md)).
   no output code at all. It only sets sysfs attributes. In a game, rumble
   goes game → Steam → InputPlumber's virtual Xbox Elite pad (uinput) →
   InputPlumber → `EVIOCSFF`/`EV_FF` on "ASUS ROG Ally X Gamepad" →
-  `hid-asus-ally` → MCU. That is **the same kernel function the owner's test
+  `hid-asus-ally` → MCU. That is **the same kernel function my test
   used** [source]. Only InputPlumber ≥ 0.83.0 writes raw reports, and only
   on `RC73XA`/`RC74XA` (§3.2).
 - **The kernel scales rumble wrong. This is verified.** `hid-asus-ally`
@@ -148,9 +148,9 @@ magnitude changes over time, and (for Deck haptics) burst length differ.
 
 | # | hypothesis | for | against | how to test (§7) |
 |---|---|---|---|---|
-| 1 | **Electrical coupling.** Motor drive current, especially fast changes (each new 0x0d report restarts the effect and the motor current jumps), shows up on the supply or ground the TAS2783 amps share. A muted but powered class-D amp then plays it as hiss. | The hiss does not depend on audio samples: it stays with ALSA mute and DSP off [owner]. It appears only during *strong* in-game rumble [owner]. Games update rumble every frame. The owner's test only sent steady levels or 20 Hz pulses. | The steady 75 % test (`/512` → 96, the strongest level the kernel can reach if values above 100 misbehave) caused no hiss, so steady strength alone is not enough [owner]. | Matrix steps F, G, H (high report rates, varying magnitudes). Repeat with the speaker sink suspended so the amps power down: if the hiss goes away, it enters through the amps. `usbmon` during RE2 to see the real report rate and values. |
-| 2 | **Out-of-range magnitudes (101..127)** put the MCU into undefined behaviour (wrap, clamp, or something else). | Verified that the kernel sends them [source]. Fits "100 % feels like 25 %" [owner] if the firmware wraps. Games often send full-scale rumble. | The test sent 127 at 100 % without hiss [owner], so 127 alone does not cause it. | `sweep` (90, 100, 101, 110, 127) and matrix A vs B vs I. |
-| 3 | **Steam Deck haptics bursts.** If Steam drives InputPlumber's Deck target, trackpad haptics become 50/150 ms motor bursts. | Possible on SteamOS [source]. Bursts match a "strong rumble" feel. | The owner's profile targets `xbox-elite`. Whether Steam changes the target at runtime was not checked. | `busctl tree org.shadowblip.InputPlumber` during a game; InputPlumber debug log (§7.4). |
+| 1 | **Electrical coupling.** Motor drive current, especially fast changes (each new 0x0d report restarts the effect and the motor current jumps), shows up on the supply or ground the TAS2783 amps share. A muted but powered class-D amp then plays it as hiss. | The hiss does not depend on audio samples: it stays with ALSA mute and DSP off [observed]. It appears only during *strong* in-game rumble [observed]. Games update rumble every frame. My test only sent steady levels or 20 Hz pulses. | The steady 75 % test (`/512` → 96, the strongest level the kernel can reach if values above 100 misbehave) caused no hiss, so steady strength alone is not enough [observed]. | Matrix steps F, G, H (high report rates, varying magnitudes). Repeat with the speaker sink suspended so the amps power down: if the hiss goes away, it enters through the amps. `usbmon` during RE2 to see the real report rate and values. |
+| 2 | **Out-of-range magnitudes (101..127)** put the MCU into undefined behaviour (wrap, clamp, or something else). | Verified that the kernel sends them [source]. Fits "100 % feels like 25 %" [observed] if the firmware wraps. Games often send full-scale rumble. | The test sent 127 at 100 % without hiss [observed], so 127 alone does not cause it. | `sweep` (90, 100, 101, 110, 127) and matrix A vs B vs I. |
+| 3 | **Steam Deck haptics bursts.** If Steam drives InputPlumber's Deck target, trackpad haptics become 50/150 ms motor bursts. | Possible on SteamOS [source]. Bursts match a "strong rumble" feel. | My profile targets `xbox-elite`. Whether Steam changes the target at runtime was not checked. | `busctl tree org.shadowblip.InputPlumber` during a game; InputPlumber debug log (§7.4). |
 | 4 | **Trigger motors.** The enable mask `0x0f` turns on the X20's trigger actuators with magnitude 0. Their driver may idle noisily or behave differently on this firmware. | The X20 has trigger motors [source]. | They are enabled the same way in the test [source]. | Matrix D (enable `0x03`) and E (triggers only). |
 | 5 | **InputPlumber writes raw reports in the wrong format** (the original hypothesis). | — | **Refuted for 0.78.0**: it writes no HID reports [source]. 0.83.x writes reports that match the spec (0..100). | Only relevant with the fallback 0.83.1 build. |
 | 6 | **An MCU audio or haptics mode drives the speakers.** | — | No source has such a command [source]. The speakers hang off the ACP SoundWire TAS2783 amps, not off the MCU ([audio.md](audio.md)). | Ruled out if matrix A-I and §7.3 all stay quiet while a game still hisses. |
@@ -198,7 +198,7 @@ it up (`modules-hid.list` does not list it, and the tests only look at
    to five.
 
 Expected effect: 100 % becomes the strongest level. If hypothesis 2 is right,
-it also gets *much* stronger than today's 100 %, so the owner should re-run
+it also gets *much* stronger than today's 100 %, so I should re-run
 the evdev test after it. Stronger motors may then reproduce the hiss through
 the kernel path too.
 
@@ -233,7 +233,7 @@ Matrix steps:
 | H | output | same as G | 250 Hz | same, output transport |
 | I | feature | `0d 0f 00 00 6e 6e ff 00 eb` | once | out of range (110) |
 
-## 7. Procedure for the owner
+## 7. Procedure for me
 
 Close the game. InputPlumber can keep running.
 

@@ -135,8 +135,8 @@ The stock-adapted profile differs from upstream in three places only:
    convention: old = Lᵀ·new = `x: [-1,0,0]`, `y: [0,-1,0]`, `z: [0,0,-1]`.
    This is the 0.78.0 ROG Ally X matrix (`[1,0,0],[0,-1,0],[0,0,-1]`) with x
    flipped, which matches how the upstream X20 and Ally X matrices differ.
-   **TODO(hw)**: verify on a real X20, for example with the Steam controller
-   gyro test.
+   Verified on a real X20 with the stock 0.78 daemon: the gyro works and
+   pitch, yaw, and roll are neither inverted nor swapped.
 2. `capability_map_id: ally_x20_steamos_aly2`, so it gets the X20 button
    map (§6) instead of the Xbox Ally's `aly2`.
 3. The evdev source's `include` list also has `Keyboard:KeyProg2`, the key

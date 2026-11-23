@@ -10,7 +10,7 @@
 #     0.82.0 also changed the target axis convention (upstream commit
 #     ace01953cb: new = L * old, L = [[1,0,0],[0,0,-1],[0,1,0]] for every
 #     re-verified handheld), so the upstream X20 matrix is converted with
-#     old = L^T * new.  TODO(hw): verify gyro/accel axes on a real X20.
+#     old = L^T * new.  Gyro axes verified on a real X20 (2026-11-23).
 #  2. capability_map_id: points at the X20 button map shipped by
 #     ally-x20-steamos under its own id
 #     (capability_maps.d/ally-x20-steamos-aly2.yaml, or its .legacy.yaml

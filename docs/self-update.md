@@ -66,7 +66,7 @@ new modules; never reload `hid-asus-ally` live.
 
 ## Signing and the pinned key
 
-Release tags are signed by the project owner, with either an OpenPGP key or
+Release tags are signed by me, with either an OpenPGP key or
 an SSH key. The public half lives in [`keys/`](../keys/README.md):
 
 - `keys/*.asc`: ASCII-armored OpenPGP public keys (used via a throwaway
@@ -83,8 +83,8 @@ key while still signing it with the old key, and ask users to run
 `sudo ally-x20-steamos.sh install --repin-keys` after updating.
 
 Releases up to v0.1.3 shipped placeholder key files, so devices installed
-from them have nothing real pinned. Since v0.1.4 the repository ships the
-owner's OpenPGP key (`keys/release-signing.asc`, fingerprint
+from them have nothing real pinned. Since v0.1.4 the repository ships my
+OpenPGP key (`keys/release-signing.asc`, fingerprint
 `786B 5C9C 5199 A907 58C0 106A 951A 981E 25C1 5FA1`) and a pin that holds
 only placeholders is treated as no pin at all, because there is no trust
 to protect yet:

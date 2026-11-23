@@ -1,8 +1,8 @@
 # Audio DSP (removed 2026-11-01)
 
 From 2026-10 until 2026-11-01 the `audio_dsp` component (plan §1.5) added
-processed PipeWire sinks to the `deck` user's session. It is gone: the
-owner prefers the raw hardware. This page records what was built, how it
+processed PipeWire sinks to the `deck` user's session. It is gone: I
+prefer the raw hardware. This page records what was built, how it
 was judged, why it went, and the two lessons worth keeping. The code, its
 tests and the full design notes (`docs/audio-dsp.md`, `docs/xtc-notes.md`)
 are in commit
@@ -24,7 +24,7 @@ them back.
 
 ## How it was judged
 
-All on the X20, by the owner, with Resident Evil 2 and 9.
+All on the X20, by me, with Resident Evil 2 and 9.
 
 | Date | Comparison | Verdict |
 |---|---|---|
@@ -43,7 +43,7 @@ matched.
 Raw won both level-matched comparisons. Raw is also what everyone else
 ships on this hardware: stock SteamOS, Anatase (UCM only) and Bazzite (raw
 on the Ally X and the Xbox Ally; its convolver DSP exists only for the
-original RC71L). The owner first made raw the default and kept the sinks as
+original RC71L). I first made raw the default and kept the sinks as
 manual picks, then dropped them: "get rid of the sinks for dsp and hybrid
 headphones, pointless, I won't use them anymore".
 

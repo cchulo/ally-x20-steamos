@@ -56,7 +56,7 @@ override, so read what you run and use it at your own risk.
   but it has not yet been through many real SteamOS updates. If something
   stops working after an update, see [Troubleshooting](#troubleshooting).
 - **Virtual surround is new.** On the device so far: the speakers with the
-  default profile and with the owner's own file, the volume range, and the
+  default profile and with my own file, the volume range, and the
   profile commands. Not tried on the device yet: headphones through this
   component (the profiles were chosen in listening tests on headphones with
   a separate test tool), plugging headphones in and out, sleep, and whether
@@ -269,7 +269,7 @@ Steam may need a restart before it lists them again.
 
 Any HeSuVi impulse response file works: a `.wav` with 14 channels at
 48 kHz. Such files are not included because they are not ours to pass on.
-The owner's Atmos file came from the HRIR collection at
+My Atmos file came from the HRIR collection at
 <https://airtable.com/appayGNkn3nSuXkaz/shruimhjdSakUPg2m/tbloLjoZKWJDnLtTc>.
 
 1. Copy the file to the device, into

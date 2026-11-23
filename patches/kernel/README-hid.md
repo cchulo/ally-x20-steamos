@@ -176,7 +176,7 @@ interface, and the driver only knew `0xa6`.
   `legacy`); see `docs/inputplumber.md` §6. The patch itself is unchanged.
 - The first version of 0012 (PR #4) reported `KEY_F16` for `0xa0`, the same
   key as `0xa6`, and the Xbox+A chord with `qam_mode=1`. Under InputPlumber
-  both top buttons then did the same thing (Steam+X), which is what the owner
+  both top buttons then did the same thing (Steam+X), which is what I
   saw on 2026-10-31.
 - The right place is `hid-asus-ally`, not `hid-asus`. `asus_probe()` returns
   `-ENODEV` for the Ally endpoints `0x83`/`0x87`/`0x04` when

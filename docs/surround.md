@@ -50,12 +50,12 @@ filter.
 > **Recommendation: use a `-dry` profile, on both outputs.** Both defaults
 > are `-dry`.
 >
-> - **Speakers:** `-full` is not recommended. To the owner's ear it makes
+> - **Speakers:** `-full` is not recommended. To my ear it makes
 >   the front channels sound quieter on the X20's speakers.
 > - **Headphones:** `-full` may suit those who want sharper positioning.
 >   The default is `-dry` all the same.
 >
-> This is what the owner heard on his X20. Nothing was measured for it.
+> This is what I heard on my X20. Nothing was measured for it.
 
 Sources, licences and what was changed: `overlay/surround/NOTICE.md`
 (installed next to the files).
@@ -103,12 +103,12 @@ ally-x20-steamos surround prepare          # speakers: generate and check the xt
   order is used.
 - This is how to use a Dolby Atmos for Headphones profile, or any other
   HeSuVi impulse response: such files are not shipped because they are not
-  ours to redistribute. The owner's Atmos file came from the HRIR collection
+  ours to redistribute. My Atmos file came from the HRIR collection
   at <https://airtable.com/appayGNkn3nSuXkaz/shruimhjdSakUPg2m/tbloLjoZKWJDnLtTc>
   (the 14-channel 48 kHz `.wav` of the Atmos entry) and was used as it is.
   In the headphone listening tests it was preferred over stereo in both game
   comparisons it was part of. On the speakers, with crosstalk cancellation,
-  it was the owner's personal favourite.
+  it was my personal favourite.
 - It must be a 14-channel, 48 kHz impulse response set in the HeSuVi channel
   order (PCM 16/24/32-bit or 32-bit float), at most one second long.
 - With no file, or a file that is not usable, the output's default profile
@@ -200,7 +200,7 @@ How long it takes, in plain Python:
 | File | Where | Time |
 |---|---|---|
 | shipped sets (256 to 558 samples) | a desktop | well under a second per variant |
-| a 5147-sample file (the owner's Atmos file) | the X20, with the test rig | about 2 s per variant; 26 s for 13 variants |
+| a 5147-sample file (my Atmos file) | the X20, with the test rig | about 2 s per variant; 26 s for 13 variants |
 
 The cache can be deleted at any time; what is needed is made again.
 
@@ -360,24 +360,24 @@ test rig (pull request #70, 2026-11-20, one listener):
 
 The full forms located sounds best but changed the tone of everything, and
 lost against stereo on music 0 to 3. The dry forms were preferred, so a dry
-form is the default; the full forms ship as an option. `sadie-d2-dry` is the
-owner's pick. The project's pass rule for the rig (better than stereo at
+form is the default; the full forms ship as an option. `sadie-d2-dry` is my
+pick. The project's pass rule for the rig (better than stereo at
 locating sounds and not worse in tone, on two different days) was not
 completed; this is a choice by ear.
 
-**Speakers.** Chosen by ear on the owner's X20 on 2026-11-20, with the test
+**Speakers.** Chosen by ear on my X20 on 2026-11-20, with the test
 rig, one listener, in a game that sends 8 channels (NieR:Automata). The
 session was not blind, and no blind test was run on the speakers.
 
 - Of the shipped sets, `sadie-d2-dry` with crosstalk cancellation at 60 µs
   and 50 % sounded best. That is the speaker default.
-- The owner's own Atmos file with crosstalk cancellation was his personal
+- My own Atmos file with crosstalk cancellation was my personal
   favourite. It is not shipped; see [Your own file](#your-own-file).
 - `-full` profiles made the front channels sound quieter on the speakers,
   so `-dry` is recommended there (an impression by ear, not a measurement).
 
 **Per-output profiles.** Each output keeps its own profile and `set` always
-names the output. That is the owner's decision. The two defaults use the
+names the output. That is my decision. The two defaults use the
 same head because it was the pick on each output, not because the setting
 is shared.
 
@@ -450,5 +450,5 @@ Nothing below has run on the X20 as part of this component.
 - An explicit choice in Steam: when the surround sink was picked by hand
   in Steam's output list, what Steam shows and plays on after a switch has
   replaced that sink with its twin.
-- The owner's impression that `-full` makes the fronts quieter on the
+- My impression that `-full` makes the fronts quieter on the
   speakers: not measured.

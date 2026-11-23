@@ -15,7 +15,7 @@ for testing after a BIOS update (section 7).
 
 ## 1. Status (measured 2026-10-31)
 
-Measured by the owner on the X20 (RC74XA, BIOS `RC74XA.303`, SteamOS 3.9.5,
+Measured by me on the X20 (RC74XA, BIOS `RC74XA.303`, SteamOS 3.9.5,
 kernel `7.2.7-valve2` with our patched `asus-armoury` that has the RC74XA
 power-limit table, steamos-manager 26.4.1 with our device file), under a
 steady game load (Resident Evil 9). APU power is amdgpu hwmon
@@ -37,14 +37,14 @@ each profile, and they clearly cap package power:
 
 The presets follow the power source by themselves: the firmware keeps
 separate AC and DC limits per profile (Turbo goes from 25-30 W on battery to
-34-35 W on the charger without any write from us). The owner used the same
+34-35 W on the charger without any write from us). I used the same
 presets on Windows and accepts profiles without a slider.
 
 The device entry suggests `balanced` as the default profile. Upstream says
 `performance` with the comment "until custom mode is added", which goes with
 its slider existing only in that profile; without a slider that reason is
 gone. Balanced is the firmware's own boot profile, and on
-battery, where the owner mostly plays, it runs the APU at 16-21 W instead
+battery, where I mostly play, it runs the APU at 16-21 W instead
 of Performance's 25-30 W. Performance is one tap away in Steam.
 
 ### 1.2 What does not work: TDP limits (PPT writes)
@@ -462,7 +462,7 @@ other value, `0` included, stores the value and sets the flag. With `0`
 stored the controller stops charging at about 80 %. The battery then stops
 at 80 % while Steam shows no limit.
 
-Measured on the owner's X20:
+Measured on my X20:
 
 | Date | Observation |
 |---|---|

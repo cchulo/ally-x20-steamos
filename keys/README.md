@@ -4,7 +4,7 @@
 the keys here **as pinned on the device** (`install` copies this directory
 to `/var/lib/ally-x20-steamos/keys`; see [docs/self-update.md](../docs/self-update.md)).
 
-Status: `release-signing.asc` is the owner's OpenPGP key (ed25519,
+Status: `release-signing.asc` is my OpenPGP key (ed25519,
 fingerprint `786B 5C9C 5199 A907 58C0 106A 951A 981E 25C1 5FA1`); every
 `v*` tag from v0.1.0 on is signed with it. `allowed_signers` is still a placeholder (no SSH key). Devices installed
 from a release before v0.1.4 have placeholder pins; `install` and
@@ -17,7 +17,7 @@ a tag verified by either is accepted.
 ## SSH key (recommended)
 
 ```sh
-# once, on the owner's machine (keep the private key offline / on a hardware key)
+# once, on my machine (keep the private key offline / on a hardware key)
 ssh-keygen -t ed25519 -C "ally-x20-steamos release key" -f ~/.ssh/ally-x20-steamos-release
 
 # pin the public key
@@ -30,7 +30,7 @@ git -c gpg.format=ssh -c user.signingkey=~/.ssh/ally-x20-steamos-release \
 git push origin v0.2.0
 ```
 
-Replace `owner@example.invalid` with the owner's address. Verify locally with
+Replace `owner@example.invalid` with the real address. Verify locally with
 `git -c gpg.ssh.allowedSignersFile=keys/allowed_signers verify-tag v0.2.0`.
 
 ## OpenPGP key
